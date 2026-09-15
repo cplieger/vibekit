@@ -46,13 +46,13 @@ import { bindSubagentTail } from "./subagent-tail.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
 import { buildSteerNote } from "./fundamentals/steer-note.js";
 import { mountToolCallCard, disposeToolSlot } from "./messages-tools.js";
-import { expandToolDetails } from "./tool-card.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import {
   buildToolGroupShell,
   groupBody,
   refreshGroupHeader,
   autoCollapseGroup,
+  setGroupSuperseded,
 } from "./tool-group.js";
 
 // Re-exported for messages.ts to inject into messages-tools' status-flip path.
@@ -62,7 +62,7 @@ import { parseStepSubtask } from "./step-subtask.js";
 import { buildRunCard, type RunCardView, type RunDisclosure } from "./fundamentals/run-card.js";
 import { invalidateRun, runState, forgetRun } from "./run-store.js";
 import { runPendingAsks } from "./decision-dock.js";
-import { buildPath } from "./router.js";
+import { buildPath } from "./route-path.js";
 
 // Callbacks injected by messages.ts, which owns avatar markup and the
 // streaming-effect registry.
@@ -620,15 +620,19 @@ function updateBody(
 /** The class the CSS slice keys on. */
 const CLS_TRUNCATION_NOTE = "msg-truncated-note";
 
-/** What the note says. The reader's question is "is this the whole reply", so the
- *  answer leads and the remedy follows; no byte counts, which are diagnostics a
- *  reader cannot act on. */
-const TRUNCATION_NOTE_TEXT = "You are seeing the end of this reply; the rest is still loading.";
+/** What the note says. The reader's question is "is this the whole reply", so the answer
+ *  leads and the CONDITION under which the rest shows up follows. No remedy is named,
+ *  because a GET that says `truncated` will cut the same turn again on a reload. The
+ *  condition is what holds — the marker is cleared at turn end, and `message_appended`
+ *  carries the whole message. And no byte counts, which are diagnostics a reader cannot
+ *  act on. */
+const TRUNCATION_NOTE_TEXT =
+  "You are seeing the end of this reply; the earlier part arrives when the turn finishes.";
 
 /** Mount or drop the withheld-output note at the TOP of a truncated message's body. A
  *  STATIC note, never a show-more: the withheld bytes are not on the wire. Idempotent,
- *  because the marker is set on the connect frame and cleared at turn end and neither
- *  moment rebuilds the body, so both paths ask and read the answer fresh. */
+ *  because the marker is set when a capped `live_turn` is adopted and cleared at turn end
+ *  and neither moment rebuilds the body, so both paths ask and read the answer fresh. */
 function syncTruncationNote(wrap: HTMLElement, chatID: string, msgID: string): void {
   const existing = wrap.querySelector(`:scope > .${CLS_TRUNCATION_NOTE}`);
   if (!isTruncatedSnapshot(chatID, msgID)) {
@@ -1360,7 +1364,7 @@ function subagentOpenerFor(st: MsgRender, subtask: string): { open?: SubagentOpe
       open: () => {
         void import("./subagent-view.js")
           .then(({ openSubagentView }) => {
-            openSubagentView(chatID, subtask);
+            void openSubagentView(chatID, subtask);
           })
           .catch(() => {
             /* noop: the link degrades to its href on the next click */
@@ -1553,7 +1557,7 @@ function runCardFor(st: MsgRender, workflowID: string, name: string, owner = fal
         .then(({ openRunView }) => {
           // The third argument is what makes a step row a DOOR: two args means "the
           // run", a row passes its own node path and means "the run, at this step".
-          openRunView(id, label, chatID, focusNode ?? "");
+          void openRunView(id, label, chatID, focusNode ?? "");
         })
         .catch(() => {
           /* noop: the link degrades to its href on the next click */
@@ -1833,7 +1837,20 @@ function placeBlock(
         mountTodo(st, m.id, container, tc, i);
         return;
       }
-      mountToolCard(st, m.id, container, subtask, tc, i, groupRunStart(idx, subtask, i));
+      // The run's key AND the verdict about it, resolved here because only this pass
+      // holds the index: the group's own region is created in that state rather than
+      // opened and folded by `syncContainerCollapse` a few statements later.
+      const runStart = groupRunStart(idx, subtask, i);
+      mountToolCard(
+        st,
+        m.id,
+        container,
+        subtask,
+        tc,
+        i,
+        runStart,
+        runFollowed(idx, subtask, runStart),
+      );
       return;
     }
   }
@@ -1971,17 +1988,22 @@ function mountToolCard(
   tc: ToolCall,
   i: number,
   runStart: number,
+  superseded: boolean,
 ): void {
   const group = toolGroupFor(st, container, key, runStart);
-  const card = mountToolCallCard(st.chatID, tc);
+  // BEFORE the refresh below, which is the group's one disclosure-creation site: a
+  // verdict arriving after it would reach a region already open, and closing that is
+  // the animation this ordering exists to avoid.
+  setGroupSuperseded(group, superseded);
+  // A card whose details the reader had open is built open rather than opened after
+  // the mount, for the group's reason one level down: the region's open height would
+  // be committed first and the reveal would animate on a repaint.
+  const card = mountToolCallCard(st.chatID, tc, containerOpen(`tool:${tc.id}`) === true);
   card.setAttribute(RECONCILE_KEY, tc.id);
   stampBlock(st, card, msgId, i);
   // Cards live in the group's body region (the disclosure-collapsible
   // container), not on the group root beside the header.
   placeInContainer(st, groupBody(group), card);
-  if (containerOpen(`tool:${tc.id}`) === true) {
-    expandToolDetails(card); // a drop took this card while the reader had it open
-  }
   refreshGroupHeader(group);
   // The slot is THIS render's, disposed with it: the transcript's card and the
   // subagent page's detached card for the same call come and go independently
@@ -2094,8 +2116,6 @@ function delegateOutcome(status: ToolStatus): TurnOutcome {
  *  rather than adding counts — two stages that touched one file each report that
  *  file's own totals, and adding them would double-count it. */
 function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
-  let commands = 0;
-  let reads = 0;
   let toolMs = 0;
   let delegateCount = 0;
   let delegateMs = 0;
@@ -2103,8 +2123,6 @@ function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
   const changed: Record<string, FileChange> = {};
   for (const subtask of st.pipelineStages.get(invocation.id) ?? []) {
     const stage = subagentSummary(st, subtask, invocation);
-    commands += stage.commands ?? 0;
-    reads += stage.reads ?? 0;
     toolMs += stage.toolMs ?? 0;
     for (const [kind, n] of Object.entries(stage.kindCounts ?? {}) as [ToolKind, number][]) {
       kindCounts[kind] = (kindCounts[kind] ?? 0) + n;
@@ -2123,8 +2141,6 @@ function pipelineSummary(st: MsgRender, invocation: ToolCall): TurnSummaryData {
     }
   }
   const out: TurnSummaryData = {
-    commands,
-    reads,
     changedFiles: changed,
     toolMs,
     kindCounts,
@@ -2222,8 +2238,6 @@ function bindSubagent(
  *  which would report zeros; membership is EITHER side's stamp. The store mutates that
  *  array in place, so a member's late diff is here by the time the invocation settles. */
 function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): TurnSummaryData {
-  let commands = 0;
-  let reads = 0;
   let toolMs = 0;
   let delegateCount = 0;
   let delegateMs = 0;
@@ -2241,11 +2255,6 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
       tc.id === invocation.id
     ) {
       continue;
-    }
-    if (tc.kind === "execute" || tc.kind === "shell" || tc.kind === "command") {
-      commands++;
-    } else if (tc.kind === "read") {
-      reads++;
     }
     kindCounts[tc.kind] = (kindCounts[tc.kind] ?? 0) + 1;
     const ms = tc.duration_ms ?? 0;
@@ -2270,8 +2279,6 @@ function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): 
   }
   const settled = !isToolActive(invocation.status);
   const out: TurnSummaryData = {
-    commands,
-    reads,
     changedFiles: changed,
     toolMs,
     kindCounts,

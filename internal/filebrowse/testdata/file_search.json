@@ -1,0 +1,161 @@
+{
+  "_comment": [
+    "A GET /api/files/search reply, produced by the real handler over a seeded tree",
+    "mounted at /workspace.",
+    "",
+    "filebrowse.FileSearchResult, FileMatch and FileMatchKind are wiregen-registered;",
+    "TestFileSearchWireContract (Go) asserts the handler's reply marshals to exactly these",
+    "bytes, and files-search.node.test.ts (TypeScript) decodes it through the generated",
+    "decodeFileSearchResult. All three kinds appear; one file is cut at the per-file cap,",
+    "so `matched` exceeds the row count while `truncated` stays false.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/filebrowse/ -run TestFileSearchWireContract",
+    "then re-run the TS half: npx vitest --run files-search.node.test.ts (from static-src/)."
+  ],
+  "query": "needle",
+  "result": {
+    "matches": [
+      {
+        "path": "/workspace/needle-dir",
+        "excerpt": "",
+        "kind": "dir",
+        "line": 0
+      },
+      {
+        "path": "/workspace/notes-needle.md",
+        "excerpt": "",
+        "kind": "name",
+        "line": 0
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 1
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 2
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 3
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 4
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 5
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 6
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 7
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 8
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 9
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 10
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 11
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 12
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 13
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 14
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 15
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 16
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 17
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 18
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 19
+      },
+      {
+        "path": "/workspace/many.txt",
+        "excerpt": "needle again",
+        "kind": "content",
+        "line": 20
+      },
+      {
+        "path": "/workspace/notes-needle.md",
+        "excerpt": "the needle is on line three",
+        "kind": "content",
+        "line": 3
+      }
+    ],
+    "scanned": 4,
+    "matched": 24,
+    "truncated": false
+  }
+}

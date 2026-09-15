@@ -227,22 +227,12 @@ func TestHandleRunStepFrame_ReportsRunProgress(t *testing.T) {
 }
 
 // TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards pins the report's PLACEMENT.
-// Both guards below it are rendering decisions and neither says whether KAS is producing
-// frames, which is the only question the idle window asks — reported under them,
-// hooks.showStatus off cancels a working unattended run as stalled.
+// The guard below it is a rendering decision and says nothing about whether KAS is
+// producing frames, which is the only question the idle window asks — reported under it,
+// an unrenderable frame cancels a working unattended run as stalled.
 func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
 	t.Parallel()
 	for name, meta := range map[string]map[string]any{
-		// A hook ask with hooks.showStatus off: the card is dropped, the run is not.
-		"a hook ask whose card is suppressed": {
-			"workflow": map[string]any{
-				"workflowId": "wf_1",
-				"nodeId":     "coder",
-				"nodePath":   []string{"seq", "coder"},
-				"type":       "step",
-			},
-			"hookAsk": map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"},
-		},
 		// A workflow block naming the run but no node: there is no step row to render
 		// into, and the run is still producing frames.
 		"a step frame with no address to render at": {
@@ -252,8 +242,7 @@ func TestHandleRunStepFrame_ReportsProgressAboveTheRenderGuards(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			base := newBaseDeps()
-			deps := &hookStatusDeps{baseDeps: base, enabled: false}
-			tr := New(rolesOf(deps))
+			tr := New(rolesOf(base))
 
 			tr.HandleRunStepFrame(t.Context(), "wf_1", mustJSON(t, map[string]any{
 				"sessionId": "sess_step",

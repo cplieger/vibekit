@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -28,11 +29,6 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// ENFORCEMENT, so sat under them a display preference decides a cancellation.
 	// Deliberately apart from countStepTurn, which needs a step key this does not.
 	t.reportRunProgress(tc.Meta.Kiro.Workflow)
-	// A pre-tool-use hook's ask-permission gate arrives as a kind:"other" call
-	// tagged _meta.kiro.hookAsk; drop the card when hooks.showStatus is off.
-	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
-		return
-	}
 	// Internal engine bookkeeping never reaches the transcript. Dropped before
 	// TurnFoldTarget, which would open a wire turn and split the user's own — the
 	// cloud-config fetch runs during session creation, before the prompt's turn.
@@ -53,29 +49,36 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	// whatever the following update repeats.
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	diffs := content.diffs
-	call := toolCallFromWire(&tc, subtask, attr.SubSessionID, content)
-	turn := buf.AppendToolCall(&call) + 1
+	call := toolCallFromWire(&tc, subtask, attr.SubSessionID, content, time.Now().UnixMilli())
+	idx, _ := buf.AppendToolCall(&call)
+	turn := idx + 1
 	// Always a new block: back-to-back tool calls each get their own.
-	blockIndex := buf.AppendToolUseBlock(call.ID, subtask)
-	buf.RecordToolStart(tc.ToolCallID)
+	blockIndex, _ := buf.AppendToolUseBlock(call.ID, subtask)
+	// The frame carries the LAST write's version: the buffer's state the client
+	// reaches after applying it is the state that version names.
+	version := buf.RecordToolStart(tc.ToolCallID)
 	if len(diffs) > 0 {
 		isNew := tc.Kind == vibekit.ToolKindEdit && tc.Status == vibekit.ToolPending
-		buf.TrackFileChanges(diffs, isNew)
+		version = buf.TrackFileChanges(diffs, isNew)
 		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
-		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex}))
+	frame := vibekit.NewEvent(vibekit.EventToolCall, chatID,
+		vibekit.ToolCallPayload{MessageID: buf.MessageID, ToolCall: call, BlockIndex: blockIndex})
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	t.bus.Broadcast(ctx, frame)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
 		vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelForKind(tc.Kind, tc.Title)}))
 }
 
 // toolCallFromWire builds the domain tool call a `tool_call` frame describes.
 //
-// Shared with the run-bridge path (workflow_step_content.go) so one frame decodes
-// one way; a second copy of this literal is a second place a field can be
-// forgotten, which is how a run card ends up with no diffs or no denial notice.
+// Shared with the run-bridge path and the session/load replay projection so one frame
+// decodes one way; a second copy of this literal is a second place a field can be
+// forgotten, which is how a run card ends up with no diffs — precisely the defect the
+// projection carried. ts is the CALLER's, because a replayed call must keep the frame's
+// own timestamp or a resumed transcript claims it ran just now.
 func toolCallFromWire(
-	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent,
+	tc *ACPToolCallWire, subtask, subSessionID string, content toolUpdateContent, ts int64,
 ) vibekit.ToolCall {
 	return vibekit.ToolCall{
 		ID:             tc.ToolCallID,
@@ -90,7 +93,7 @@ func toolCallFromWire(
 		Diffs:          content.diffs,
 		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
 		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
-		Ts:             time.Now().UnixMilli(),
+		Ts:             ts,
 	}
 }
 
@@ -123,9 +126,11 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	// struct copy is enough: every field the fold writes is replaced or appended to.
 	before := tc
 	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, attr.SubSessionID)
-	buf.SetToolCall(idx, &tc)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
-		toolCallDelta(buf.MessageID, &before, &tc)))
+	version := buf.SetToolCall(idx, &tc)
+	frame := vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+		toolCallDelta(buf.MessageID, &before, &tc))
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	t.bus.Broadcast(ctx, frame)
 }
 
 // toolCallDelta describes what one fold changed about a tool call.
@@ -238,6 +243,19 @@ func derefCheckpoint(c *vibekit.ToolCheckpoint) vibekit.ToolCheckpoint {
 // card subscribe to that stream. toolCallID is carried for the two Debug lines,
 // where a content block vibekit does not model disappears.
 func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCallContentBlock) toolUpdateContent {
+	return parseToolContent(t.relPath, toolCallID, items)
+}
+
+// parseToolContent is the parser itself, taking the path normalizer as a parameter so
+// the session/load replay projection can reuse it rather than growing a second switch
+// over the same content union — which is how the projection came to drop every diff and
+// every terminal link while the live path decoded both.
+//
+// A func-typed first parameter rather than a workDir string, so the two adjacent
+// same-typed strings a transposition hides in never exist.
+func parseToolContent(
+	relPath func(string) string, toolCallID string, items []ACPToolCallContentBlock,
+) toolUpdateContent {
 	var out toolUpdateContent
 	var outputDelta strings.Builder
 	for _, item := range items {
@@ -247,7 +265,7 @@ func (t *Translator) parseToolUpdateContent(toolCallID string, items []ACPToolCa
 			outputDelta.WriteByte('\n')
 		case item.Type == ContentTypeDiff && item.Path != "":
 			out.diffs = append(out.diffs, vibekit.ToolDiff{
-				Path: t.relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
+				Path: relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
 		case item.Type == ContentTypeTerminal && item.TerminalID != "":
 			out.terminalID = item.TerminalID
@@ -414,7 +432,7 @@ func (t *Translator) applyToolCallStatus(
 	// Assigning it unconditionally wrote that 0 over a correct duration, which the
 	// markdown export then dropped. The sibling read below is non-destructive too.
 	if tc.DurationMs == 0 {
-		tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
+		tc.DurationMs, _ = buf.ComputeDuration(tu.ToolCallID)
 	}
 	t.adoptTerminalOutput(chatID, tc)
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID,
@@ -566,8 +584,15 @@ func localPath(ref string) string {
 // spelling this function exists to remove. The escape test is separator-precise
 // (pathinside.RelEscapes), where a leading-".." string test would leak the path.
 func (t *Translator) relPath(ref string) string {
+	return relPathIn(t.workDir, ref)
+}
+
+// relPathIn is relPath's rule without a Translator, so the session/load replay
+// projection — which holds no Translator — normalizes a diff path the same way. A
+// projected path that stayed absolute would key ChangedFiles differently from a live
+// row's and would leak the workspace root to the client.
+func relPathIn(workDir, ref string) string {
 	abs := localPath(ref)
-	workDir := t.workDir
 	if workDir == "" {
 		return abs
 	}
@@ -586,7 +611,7 @@ func (t *Translator) relPath(ref string) string {
 // It owns no crash durability: a turn interrupted mid-flight is rebuilt from KAS's
 // own log by the session/load replay projection.
 func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
-	if !buf.StartTurn(t.newMsgID()) {
+	if opened, _ := buf.StartTurn(t.newMsgID()); !opened {
 		return
 	}
 	// Fallback attribution only: a prompt latches the model at dispatch. This read

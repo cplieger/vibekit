@@ -2,7 +2,7 @@
 // Error classification table: maps server ErrorCode to UI surface.
 // ---------------------------------------------------------------------------
 
-import type { SettingsTab } from "../router.js";
+import type { SettingsTab } from "../route-path.js";
 import type { ErrorCode } from "../wire/types.gen.js";
 
 /** The in-app jump a routed error offers, as DATA rather than a callback so the

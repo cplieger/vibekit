@@ -51,7 +51,7 @@ import { STATE_WORD, paintStateMark, stateOf, withAsk } from "../exec-view/statu
 import { chevronEl } from "../chevron.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_TAB_RUN, ICON_EXTERNAL } from "../icons.js";
-import { buildPath } from "../router.js";
+import { buildPath } from "../route-path.js";
 import { preserveReadingPosition } from "../scroll.js";
 import { formatElapsed, truncate } from "../strings.js";
 import type { ToolStatus } from "../types.js";
@@ -216,7 +216,7 @@ export function buildRunCard(
   /** The run's own route — what the FOOT link means, which is "the run" rather
    *  than any step in it, so it carries no node.
    *
-   *  Through `buildPath` rather than a hand-built literal: `router.ts` has zero
+   *  Through `buildPath` rather than a hand-built literal: `route-path.ts` has zero
    *  imports, so a `fundamentals/` view reaching it still points strictly
    *  downward, and the producer then cannot spell the route differently from the
    *  parser (`messages-blocks.ts` already does this for the subagent href). */

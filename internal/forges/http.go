@@ -41,7 +41,7 @@ import (
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.

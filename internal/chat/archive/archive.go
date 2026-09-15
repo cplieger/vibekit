@@ -4,6 +4,7 @@
 package archive
 
 import (
+	"context"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -29,9 +30,10 @@ type RetentionHeader struct {
 type StoreAccess interface {
 	// Lock returns the per-chat mutex.
 	Lock(chatID vibekit.ChatID) *sync.Mutex
-	// Remove deletes the chat and records its tombstone. The caller must hold
-	// Lock for chatID across this call.
-	Remove(chatID vibekit.ChatID) error
+	// Remove deletes the chat and records its tombstone, returning the `chats`
+	// version the removal minted. The caller must hold Lock for chatID across
+	// this call.
+	Remove(chatID vibekit.ChatID) (string, error)
 	// Dir returns the store's base directory.
 	Dir() string
 	// LoadRetentionHeader reads a chat's retention projection without
@@ -43,6 +45,9 @@ type StoreAccess interface {
 type Service struct {
 	store   StoreAccess
 	onPurge func(chatID vibekit.ChatID, sessionChain []string)
+	// broadcast carries the chat_deleted frame a purge produces to every client;
+	// nil drops it.
+	broadcast func(ctx context.Context, evt vibekit.ServerEvent)
 	// isLive reports a running bridge; such a chat is never purged, however old.
 	isLive func(chatID vibekit.ChatID) bool
 	// hasOpenTab reports an open TAB, a different fact from isLive: a reader can
@@ -76,6 +81,14 @@ func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
 // because this package cannot see the tab store.
 func WithOpenTabs(fn func(chatID vibekit.ChatID) bool) Option {
 	return func(s *Service) { s.hasOpenTab = fn }
+}
+
+// WithBroadcaster registers the SSE fan-out a purge announces its deletions
+// through. A purge is a delete like any other, so a client holding the row must
+// learn of it the same way: through chat_deleted, stamped with the `chats`
+// version Remove minted.
+func WithBroadcaster(fn func(ctx context.Context, evt vibekit.ServerEvent)) Option {
+	return func(s *Service) { s.broadcast = fn }
 }
 
 // WithOnPurge registers a callback fired after a chat is purged, carrying every

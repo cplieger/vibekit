@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {

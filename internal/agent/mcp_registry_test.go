@@ -99,7 +99,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 
 func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.RecordInitFailure(t.Context(), "broken", "connection refused")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -130,7 +130,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h.mcpRegistry.RecordConnected(t.Context(), "a", nil, nil, nil)
 	h.mcpRegistry.RecordConnected(t.Context(), "b", nil, nil, nil)
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll(t.Context())
 
 	if len(h.mcpRegistry.Snapshot()) != 0 {
@@ -150,9 +150,9 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	h.mcpRegistry.clearAll(t.Context())
-	if _, head := h.bus.fanout.Bounds(); head != before {
+	if head := h.bus.fanout.Position().Head; head != before {
 		t.Error("clearAll on empty registry emitted events")
 	}
 }

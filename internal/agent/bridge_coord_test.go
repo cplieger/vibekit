@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -77,6 +78,7 @@ func (p *recordingPush) HasSubscribers() bool                     { return !p.no
 func (p *recordingPush) SetPreferences(map[vibekit.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)        { p.reloads.Add(1) }
 func (p *recordingPush) Close()                                   {}
+func (p *recordingPush) Retract(vibekit.PushSubject)              {}
 func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKind, subject vibekit.PushSubject) {
 	p.subject = subject
 	select {
@@ -92,7 +94,7 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKi
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-chat"
 		return true // no ACPSessionID -> fresh session/new path
@@ -113,6 +115,62 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	}
 }
 
+// A RESUME carries the chat's supervised choice on its own door. KAS's fork copies
+// no autopilot, so a supervised chat's tangent would otherwise load into autopilot
+// while its record still reads supervised — writes applied with nobody asked.
+func TestGetOrCreateBridge_CarriesSupervisedOntoTheLoadDoor(t *testing.T) {
+	// A fresh bridge per spawn, and the load's door is found by its session id: the
+	// rehydrate sweep this load fires starts the utility bridge on the same factory,
+	// and a shared recorder would report THAT door — no session, not supervised — as
+	// the load's.
+	var mu sync.Mutex
+	var spawned []*recordingStartBridge
+	cs := newFakeChatStore()
+	h := New(t.Context(), t.TempDir(), func() ACPBridge {
+		rb := newRecordingStartBridge()
+		mu.Lock()
+		spawned = append(spawned, rb)
+		mu.Unlock()
+		return rb
+	}, cs)
+	cs.Bus = h
+	h.mcpRegistry.SignalReady()
+
+	ctx := t.Context()
+	const acpSession = "sess_forked"
+	if _, err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "A"
+		c.SupervisedMode = true
+		c.RecordSession(acpSession) // -> the session/load path
+		return true
+	}); err != nil {
+		t.Fatalf("seed the chat: %v", err)
+	}
+
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
+	}
+
+	var opts vibekit.StartOpts
+	var found bool
+	mu.Lock()
+	for _, rb := range spawned {
+		if o := rb.startOpts(); o.SessionID == acpSession {
+			opts, found = o, true
+		}
+	}
+	mu.Unlock()
+	if !found {
+		// Without a Start naming the stored session there was no load to assert on,
+		// so every check below would pass or fail for an unrelated reason.
+		t.Fatalf("no bridge was started with SessionID %q, so the resume never happened", acpSession)
+	}
+	if !opts.Supervised {
+		t.Error("the resume's StartOpts.Supervised = false although the chat is supervised, " +
+			"so KAS runs the loaded session in autopilot and its writes are applied unreviewed")
+	}
+}
+
 // --- TryFastModelSwitch ---
 
 // A successful in-session SetModel returns true, and the chat's reasoning-effort
@@ -122,7 +180,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -146,7 +204,7 @@ func TestTryFastModelSwitch_SucceedsAndReAppliesEffort(t *testing.T) {
 func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -182,7 +240,7 @@ func TestTryFastModelSwitch_ClosesTheTurnInFlight(t *testing.T) {
 func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -206,7 +264,7 @@ func TestTryFastModelSwitch_LeavesThePromptsOwnTurnOpen(t *testing.T) {
 func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -228,7 +286,7 @@ func TestTryFastModelSwitch_NoEffortChoiceSendsNoEffortCall(t *testing.T) {
 func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Effort = "max"
 		return true
@@ -255,7 +313,7 @@ func TestOpenBridge_RepairsTheEffortOnAnOpenBridge(t *testing.T) {
 func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 	h, cs, br := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -274,36 +332,44 @@ func TestOpenBridge_RepairsNothingWithoutAChoice(t *testing.T) {
 
 // --- effortFor ---
 
-// effortFor prefers the chat's own choice, falls back to the last level the user
-// picked anywhere — but only when that pick was made under the chat's OWN model —
-// and refuses a level too malformed to be a tier id. Shape only: the tier
-// vocabulary is per model and KAS's to judge, so a well-formed unknown seed flows.
+// writeEffortSeed writes a config.json carrying only the per-model effort seed.
+func writeEffortSeed(t *testing.T, dir string, seed map[string]string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{settings.KeyLastEffortByModel: seed})
+	if err != nil {
+		t.Fatalf("marshal the seed map: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+}
+
+// effortFor prefers the chat's own choice, falls back to the level remembered for
+// the chat's OWN model, and refuses a level too malformed to be a tier id. Shape
+// only: the tier vocabulary is per model and KAS's to judge, so a well-formed
+// unknown seed flows. No catalog is loaded here, so the model-default rung
+// contributes nothing and every miss reads as "send none".
 func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 	tests := map[string]struct {
 		chatEffort string
 		chatModel  string
-		setting    string
-		seedModel  string
+		seed       map[string]string
 		want       string
 	}{
-		"chat choice wins over the seed":       {chatEffort: "max", chatModel: "m1", setting: "low", seedModel: "m1", want: "max"},
-		"seed answers for an unset chat":       {chatEffort: "", chatModel: "m1", setting: "xhigh", seedModel: "m1", want: "xhigh"},
-		"no choice and no seed sends none":     {chatEffort: "", chatModel: "m1", setting: "", seedModel: "", want: ""},
-		"a malformed seed level is refused":    {chatEffort: "", chatModel: "m1", setting: "TURBO", seedModel: "m1", want: ""},
-		"a well-formed unknown level flows":    {chatEffort: "", chatModel: "m1", setting: "none", seedModel: "m1", want: "none"},
-		"a seed picked under ANOTHER model":    {chatEffort: "", chatModel: "m2", setting: "max", seedModel: "m1", want: ""},
-		"a pairless seed (pre-pair install)":   {chatEffort: "", chatModel: "m1", setting: "max", seedModel: "", want: ""},
-		"a modelless chat never takes a seed":  {chatEffort: "", chatModel: "", setting: "max", seedModel: "m1", want: ""},
-		"the choice survives a model mismatch": {chatEffort: "high", chatModel: "m2", setting: "max", seedModel: "m1", want: "high"},
+		"chat choice wins over the seed":        {chatEffort: "max", chatModel: "m1", seed: map[string]string{"m1": "low"}, want: "max"},
+		"seed answers for an unset chat":        {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "xhigh"}, want: "xhigh"},
+		"no choice and no seed sends none":      {chatEffort: "", chatModel: "m1", want: ""},
+		"a malformed seed level is refused":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "TURBO"}, want: ""},
+		"a well-formed unknown level flows":     {chatEffort: "", chatModel: "m1", seed: map[string]string{"m1": "none"}, want: "none"},
+		"another model's entry is not this one": {chatEffort: "", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: ""},
+		"a modelless chat never takes a seed":   {chatEffort: "", chatModel: "", seed: map[string]string{"m1": "max"}, want: ""},
+		"the choice survives a seed miss":       {chatEffort: "high", chatModel: "m2", seed: map[string]string{"m1": "max"}, want: "high"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if test.setting != "" {
-				body := `{"last_effort":"` + test.setting + `","last_effort_model":"` + test.seedModel + `"}`
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
-					t.Fatalf("write config.json: %v", err)
-				}
+			if test.seed != nil {
+				writeEffortSeed(t, dir, test.seed)
 			}
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
@@ -311,39 +377,69 @@ func TestEffortFor_PrefersTheChatThenTheSeed(t *testing.T) {
 			got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Effort: test.chatEffort, Model: test.chatModel})
 
 			if got != test.want {
-				t.Errorf("effortFor(chat=%q, model=%q, last_effort=%q under %q) = %q, want %q",
-					test.chatEffort, test.chatModel, test.setting, test.seedModel, got, test.want)
+				t.Errorf("effortFor(chat=%q, model=%q, last_effort_by_model=%v) = %q, want %q",
+					test.chatEffort, test.chatModel, test.seed, got, test.want)
 			}
 		})
 	}
 }
 
-// EffortForSwitch resolves against the TARGET model: the seed when it was picked
-// under that model, else the target's own default from the WORKSPACE catalog.
+// A pick on one model must not retract another model's remembered level. This is
+// the whole reason the seed is a map: with one slot for the app, resolving either
+// chat answered "" for the other, so no chat's drift could be repaired.
+func TestEffortFor_OneModelsPickDoesNotRetractAnother(t *testing.T) {
+	dir := t.TempDir()
+	writeEffortSeed(t, dir, map[string]string{"m1": "max", "m2": "low"})
+	h, _, _ := newTestHub()
+	h.coord.lifecycle.configDir = dir
+
+	for model, want := range map[string]string{"m1": "max", "m2": "low"} {
+		if got := h.coord.effortSeedFor(t.Context(), model); got != want {
+			t.Errorf("effortSeedFor(%q) = %q, want %q — each model keeps its own remembered level", model, got, want)
+		}
+		if got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c-" + model, Model: model}); got != want {
+			t.Errorf("effortFor(chat on %q) = %q, want %q — each model keeps its own remembered level", model, got, want)
+		}
+	}
+}
+
+// A chat that has chosen nothing and whose model has no remembered level resolves
+// that MODEL's catalog default, not "". Both repair paths return on an empty level,
+// so without this rung a drifted chat has no level to be corrected against.
+func TestEffortFor_FallsBackToTheModelsCatalogDefault(t *testing.T) {
+	h, _, _ := newTestHub()
+	h.coord.lifecycle.configDir = t.TempDir()
+	h.coord.catalog.SetModels([]vibekit.SessionModel{{ID: "m1", DefaultEffortLevel: "high"}})
+
+	got := h.coord.effortFor(t.Context(), &vibekit.Chat{ID: "c1", Model: "m1"})
+
+	if got != "high" {
+		t.Errorf("effortFor(chat on m1, no choice and no seed) = %q, want high — the model's own default_effort_level is the last rung", got)
+	}
+}
+
+// EffortForSwitch resolves against the TARGET model: the level remembered for that
+// model, else the target's own default from the WORKSPACE catalog.
 func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 	catalog := []vibekit.SessionModel{
 		{ID: "m1", DefaultEffortLevel: "high"},
 		{ID: "m2", DefaultEffortLevel: "medium"},
 	}
 	tests := map[string]struct {
-		setting   string
-		seedModel string
-		target    string
-		want      string
+		seed   map[string]string
+		target string
+		want   string
 	}{
-		"seed picked under the target wins":       {setting: "max", seedModel: "m2", target: "m2", want: "max"},
-		"seed under another model yields default": {setting: "max", seedModel: "m1", target: "m2", want: "medium"},
-		"no seed yields the target's default":     {setting: "", seedModel: "", target: "m1", want: "high"},
-		"unknown target yields nothing":           {setting: "", seedModel: "", target: "m9", want: ""},
+		"the target's own entry wins":            {seed: map[string]string{"m2": "max"}, target: "m2", want: "max"},
+		"another model's entry yields a default": {seed: map[string]string{"m1": "max"}, target: "m2", want: "medium"},
+		"no seed yields the target's default":    {target: "m1", want: "high"},
+		"unknown target yields nothing":          {target: "m9", want: ""},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if test.setting != "" {
-				body := `{"last_effort":"` + test.setting + `","last_effort_model":"` + test.seedModel + `"}`
-				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
-					t.Fatalf("write config.json: %v", err)
-				}
+			if test.seed != nil {
+				writeEffortSeed(t, dir, test.seed)
 			}
 			h, _, _ := newTestHub()
 			h.coord.lifecycle.configDir = dir
@@ -352,8 +448,8 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 			got := h.coord.EffortForSwitch(t.Context(), test.target)
 
 			if got != test.want {
-				t.Errorf("EffortForSwitch(target=%q, seed=%q under %q) = %q, want %q — the chat's own choice must never leak into a switch",
-					test.target, test.setting, test.seedModel, got, test.want)
+				t.Errorf("EffortForSwitch(target=%q, last_effort_by_model=%v) = %q, want %q — the chat's own choice must never leak into a switch",
+					test.target, test.seed, got, test.want)
 			}
 		})
 	}
@@ -363,9 +459,7 @@ func TestEffortForSwitch_SeedThenModelDefault(t *testing.T) {
 // onto the chat record, or that chat stops following the setting forever.
 func TestEffortFor_DoesNotWriteTheSeedOntoTheChat(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"last_effort":"max","last_effort_model":"m1"}`), 0o600); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
+	writeEffortSeed(t, dir, map[string]string{"m1": "max"})
 	h, _, _ := newTestHub()
 	h.coord.lifecycle.configDir = dir
 	chat := &vibekit.Chat{ID: "c1", Model: "m1"}
@@ -423,7 +517,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
@@ -446,7 +540,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch, buf := h.stagePromptTurn(t, "c1")
 	buf.Started = true
@@ -469,7 +563,7 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
 	h.coord.PersistModelSwitch(ctx, "c1", "m-new", 1234)
@@ -833,13 +927,13 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.currentMode = tc.actual
 			br.mu.Unlock()
-			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.CurrentModeID = tc.requested
 				return true
 			})
 
-			_, since := h.bus.fanout.Bounds()
+			since := h.bus.fanout.Position().Head
 			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
 
 			// The record always holds the mode the session is really in.
@@ -895,13 +989,13 @@ func TestSpawnBridge_ReportsSupervisedThatWasNotApplied(t *testing.T) {
 			h := New(t.Context(), "/tmp/work", func() ACPBridge { return br }, cs)
 			cs.Bus = h
 			h.mcpRegistry.SignalReady()
-			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.SupervisedMode = tc.supervised
 				return true
 			})
 
-			_, since := h.bus.fanout.Bounds()
+			since := h.bus.fanout.Position().Head
 			if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 				t.Fatalf("OpenBridge: %v", err)
 			}
@@ -973,7 +1067,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			t.Cleanup(func() { shutdownHub(t, h) })
 
 			ctx := t.Context()
-			if err := cs.Mutate(ctx, "c-owner", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := cs.Mutate(ctx, "c-owner", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "owner"
 				c.RecordSession("sess_owned")
 				return true
@@ -1063,7 +1157,7 @@ func TestSessionLoad_HealsTheChatsRestartPausedRuns(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owned")
 		return true
@@ -1095,7 +1189,7 @@ func TestTurnFoldTarget_ReadsTheChatOnlyWhenItOpensATurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The first frame has no turn to fold into, so it opens one and pays for the facts.
 	h.coord.TurnFoldTarget(ctx, chatID, vibekit.TurnSourceWireTurnStart)

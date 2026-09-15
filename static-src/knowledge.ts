@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { join } from "@cplieger/keyenc";
+import { sigChanged } from "./paint-sig.js";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
@@ -248,28 +248,20 @@ function mountRow(c: KnowledgeContext): HTMLElement {
   return row;
 }
 
-/** Rebuild a row's children only when its rendered state changed, so a stable
- *  row keeps its DOM identity (and any focus) across polls; only the indexing
- *  row — whose items_display advances — actually re-renders each tick.
- *
- *  The signature is built with keyenc `join` rather than a "|"-joined template:
- *  `items_display` and `path` are adjacent free-form fields (a filesystem path
- *  can contain "|"), so the old form let one field's content impersonate a
- *  field boundary and two genuinely different states collapse to one signature.
- *  The consequence was bounded but real — the signature only gates whether
- *  `replaceChildren` runs (row identity is `kb:${name}`, see renderList), so a
- *  collision left a STALE ROW rather than a wrong or missing one. */
+/** Rebuild a row's children only when its rendered state changed, so a stable row
+ *  keeps its DOM identity (and any focus) across polls. Guard owned by
+ *  `paint-sig.ts`. */
 function fillRow(row: HTMLElement, c: KnowledgeContext): void {
-  const sig = join(
-    c.indexing === true ? "1" : "0",
-    String(c.item_count),
-    c.items_display ?? "",
-    c.path ?? "",
-  );
-  if (row.getAttribute("data-sig") === sig) {
+  if (
+    !sigChanged(row, [
+      c.indexing === true ? "1" : "0",
+      String(c.item_count),
+      c.items_display ?? "",
+      c.path ?? "",
+    ])
+  ) {
     return;
   }
-  row.setAttribute("data-sig", sig);
   row.classList.toggle("knowledge-indexing", c.indexing === true);
   row.replaceChildren(...rowChildren(c));
 }

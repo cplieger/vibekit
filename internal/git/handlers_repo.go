@@ -19,7 +19,7 @@ import (
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/workspace"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/errgroup"
 )
 

@@ -77,7 +77,7 @@ func (rt *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientComman
 // reset, no bridge. Clears Effort, since a tier picked under the previous model
 // does not carry onto this one.
 func (rt *Runtime) persistModelPick(ctx context.Context, chatID vibekit.ChatID, model string) {
-	if err := rt.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := rt.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}

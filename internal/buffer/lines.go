@@ -128,7 +128,7 @@ func (lt *LineTracker) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.To
 
 // Get returns the line ranges for a file in a chat.
 //
-// A COPY, for the same reason Snapshot clones its three slices: the production
+// A COPY, for the same reason SnapshotCapped clones its three slices: the production
 // caller is an HTTP handler (agent/line_tracker.go) that reads the result after
 // this returns and drops the read lock, while the dispatch loop keeps calling
 // Record on the same key. Handing out the tracker's own slice made the handler's

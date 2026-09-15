@@ -243,6 +243,9 @@ func TestHandleRun_GradesAFailedReadThreeWays(t *testing.T) {
 	}
 }
 
+// testEpoch stands in for the hub epoch on a runRoutes built without a runtime.
+func testEpoch() string { return "test-epoch" }
+
 func getLiveRuns(t *testing.T, rr *runRoutes) vibekit.LiveRunsResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -383,7 +386,7 @@ func TestHandleLiveRuns_ServesPersistedLeasesAcrossARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	out := getLiveRuns(t, &runRoutes{runs: &Runs{leases: reopened}})
+	out := getLiveRuns(t, &runRoutes{runs: &Runs{leases: reopened}, epoch: testEpoch})
 
 	if len(out.Runs) != 1 || out.Runs[0].WorkflowID != "wf_agent" || out.Runs[0].ChatID != "c-live" {
 		t.Fatalf("the projection after a restart = %+v, want the persisted lease with its chat",
@@ -442,7 +445,7 @@ func TestHandleLiveRuns_APreUpgradeLeaseRowProjectsWithNoChat(t *testing.T) {
 		t.Fatalf("NewStore over a pre-upgrade file: %v", err)
 	}
 
-	out := getLiveRuns(t, &runRoutes{runs: &Runs{leases: st}})
+	out := getLiveRuns(t, &runRoutes{runs: &Runs{leases: st}, epoch: testEpoch})
 
 	if len(out.Runs) != 1 || out.Runs[0].WorkflowID != "wf_old" {
 		t.Fatalf("the pre-upgrade lease is not projected: %+v", out.Runs)
@@ -1150,7 +1153,7 @@ func TestHandleStepStatus_DeclineIsAConflict(t *testing.T) {
 		),
 		methodKiroWorkflowInspect: stepTargetInspect(t, "wf_1", "review"),
 	}
-	rr := &runRoutes{runs: h.runs}
+	rr := &runRoutes{runs: h.runs, epoch: h.Epoch}
 	req := httptest.NewRequest(http.MethodPost, "/api/runs/wf_1/step",
 		strings.NewReader(`{"node_id":"review","status":"completed"}`))
 	req.SetPathValue("id", "wf_1")

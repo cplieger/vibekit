@@ -2477,6 +2477,29 @@ done
 // effort level and autopilot on the same method name, so a caller names the configId too.
 func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoContains ...string) string {
 	t.Helper()
+	data := captureRequests(t, opts)
+	needles := append([]string{`"method":"` + method + `"`}, alsoContains...)
+	for line := range strings.SplitSeq(strings.TrimSpace(data), "\n") {
+		matched := true
+		for _, needle := range needles {
+			if !strings.Contains(line, needle) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return line
+		}
+	}
+	t.Fatalf("no %s request matching %q in the capture; got:\n%s", method, alsoContains, data)
+	return ""
+}
+
+// captureRequests is captureRequest's whole capture, for an assertion about a call the
+// start must NOT make: captureRequest fails on a miss, which is right for "the call
+// carried the wrong shape" and cannot express "the call did not happen".
+func captureRequests(t *testing.T, opts *vibekit.StartOpts) string {
+	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "fake-kiro-cli")
 	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
@@ -2497,21 +2520,7 @@ func captureRequest(t *testing.T, method string, opts *vibekit.StartOpts, alsoCo
 	if err != nil {
 		t.Fatalf("read rpc capture: %v", err)
 	}
-	needles := append([]string{`"method":"` + method + `"`}, alsoContains...)
-	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
-		matched := true
-		for _, needle := range needles {
-			if !strings.Contains(line, needle) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return line
-		}
-	}
-	t.Fatalf("no %s request matching %q in the capture; got:\n%s", method, alsoContains, data)
-	return ""
+	return string(data)
 }
 
 // digObject walks a captured request down a chain of nested objects, failing at the first
@@ -2756,6 +2765,35 @@ func TestApplySupervised_RecordsWhetherTheSessionTookIt(t *testing.T) {
 					"whether to tell the user the chat is running unsupervised", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLoadSession_ReAssertsSupervised pins the resume half of the same gate. A resume
+// looks like it should not need it — KAS persists `autopilot` per session — and a FORKED
+// session is the case that falsifies that: forkSession's new-metadata literal copies no
+// autopilot, and hydrateSessionForLoad applies it only when the metadata defines it, so a
+// supervised chat's tangent runs in AUTOPILOT while vibekit's record says supervised.
+// Measured on the pinned kiro-cli: the parent's load reports `autopilot: "off"`, the
+// fork's reports `"on"`.
+func TestLoadSession_ReAssertsSupervised(t *testing.T) {
+	line := captureRequest(t, "session/set_config_option",
+		&vibekit.StartOpts{Lifetime: t.Context(), SessionID: "sess_forked", Supervised: true},
+		`"configId":"`+vibekit.ConfigOptionAutopilot+`"`)
+	if !strings.Contains(line, `"value":"`+vibekit.ConfigValueAutopilotOff+`"`) {
+		t.Errorf(`a supervised resume did not carry "value":%q; the forked session then runs
+every turn without asking. Captured:
+%s`, vibekit.ConfigValueAutopilotOff, line)
+	}
+}
+
+// And the no-op half, which is what makes the line above safe on every OTHER resume: an
+// unsupervised chat must send nothing, or a restart would pin autopilot off for a reader
+// who never asked to review a write.
+func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
+	data := captureRequests(t, &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
+	if strings.Contains(data, `"`+vibekit.ConfigOptionAutopilot+`"`) {
+		t.Errorf("an unsupervised resume sent the autopilot option:\n%s", data)
+
 	}
 }
 

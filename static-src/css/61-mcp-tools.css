@@ -84,13 +84,6 @@
   --chev-turn: 0deg;
 }
 
-/* Tool duration badge */
-.tool-duration {
-  color: var(--c-text-tertiary);
-  font-size: 0.75rem;
-  margin-left: 0.5rem;
-}
-
 /* .turn-footer MOVED to 29-turns.css. It sat here while it was a per-message
  * node; it is the turn card's bottom band now, and it belongs beside the header
  * band it mirrors. */
@@ -359,9 +352,17 @@
 /* stylelint-disable declaration-no-important -- fullscreen override needs specificity */
 .shell-panel.shell-fullscreen {
   position: fixed !important;
-  inset: 0 !important;
+
+  /* `bottom` is AUTO because the stated height governs, and the inline offsets
+   * stay because they are what gives the panel its width — the base rule sets
+   * none, so in flow it spans as a block-level flex child and here it has to be
+   * told. Written `inset: 0` this rule was over-constrained on the block axis
+   * (top, bottom AND a non-auto height), which CSS 2.1 section 10.6.4 resolves
+   * by ignoring `bottom` — the same result, from a rule that does not say which
+   * of the two it meant. */
+  inset: 0 0 auto !important;
   z-index: 9999;
-  height: 100dvh !important;
+  height: var(--app-h) !important;
   max-height: none !important;
   border-radius: 0;
 
@@ -451,11 +452,15 @@
  *    own declared `height` and the floor lifts the BOX around it, which is how
  *    `.pill` has always reached its touch size.
  * 2. A class declaring its own `min-width` BEATS this (0,1,0 against 0,0,0), and
- *    that is relied upon: `.send-btn` stays 36px wide against 44px tall, which
- *    clears 2.5.8 and matches the pills beside it. The properties stay PHYSICAL
- *    for this reason — a logical `min-inline-size` here would be a DIFFERENT
- *    property, resolved against the physical one by cascade ORDER rather than by
- *    specificity, so that override would silently stop working.
+ *    that is relied upon: `.send-btn` opts out of both axes (`min-width: 0`,
+ *    `min-height: 0`) so its painted box stays the composer's one control height —
+ *    32px on a mouse, 36px on a finger, square at both — and holds the TARGET at
+ *    this floor through its own `::after` expander instead. The properties stay
+ *    PHYSICAL for this reason — a logical `min-inline-size` here would be a
+ *    DIFFERENT property, resolved against the physical one by cascade ORDER rather
+ *    than by specificity, so that override would silently stop working.
+ *    (This used to read "stays 36px wide against 44px tall", which was true before
+ *    the square amendment and describes no rule now.)
  * 3. A floor-widened icon button must also centre its glyph or it renders
  *    visibly off-centre; `.icon-btn` and `.list-row-btn` carry
  *    `justify-content: center` for exactly that.
@@ -466,17 +471,19 @@
  *
  * A control that must stay visually small grows its TARGET rather than its box,
  * with an absolutely positioned `::after` expander sized by `inset` off
- * `--hit-floor`, so it follows the tier with no second declaration. Two named
- * members, `.status-dot` (10-shell-app.css) and `.shell-resize`
- * (21-shell-panel.css), plus the native box controls below.
+ * `--hit-floor`, so it follows the tier with no second declaration. One named
+ * member, `.shell-resize` (21-shell-panel.css), plus the native box controls below.
+ * `.status-dot` used to be the second: it is a decorative SPAN inside
+ * `.account-btn` now, so it is not a control and takes no target at all.
  *
  * `all: unset` ESCAPES this floor, and it is the trap worth knowing. It resets
  * `min-width`/`min-height` to their initial `auto` at whatever specificity the
  * declaring selector carries, which for a single class is (0,1,0) against this
  * rule's zero — so the control is not overriding the floor, it is invisible to
- * it. `.status-dot` is the live case: an 8px button at every tier, and the one
- * undersize the desktop audit still reported after this rule landed. A control
- * built that way needs an expander, not a list entry.
+ * it. `.status-dot` WAS the live case, an 8px button at every tier and the one
+ * undersize the desktop audit still reported after this rule landed; it is a
+ * decorative span now and its whole 60-line phone treatment went with the button.
+ * The trap stands: a control built that way needs an expander, not a list entry.
  *
  * A LINK IS A TARGET, so `a[href]` is IN, and the ruling is recorded here the way
  * the focus ring records its own (40-a11y.css:45 includes `a[href]`) and the press

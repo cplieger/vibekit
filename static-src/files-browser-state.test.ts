@@ -21,10 +21,14 @@ vi.mock("./tabs.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   setGitTab: undefined,
-  toggleGitView: undefined,
+  openGitView: undefined,
   toggleFilesView: vi.fn(() => Promise.resolve()),
-  showFilesView: vi.fn(() => Promise.resolve()),
+  openFilesView: vi.fn(() => Promise.resolve()),
   getActiveTabKind: vi.fn(() => "files"),
+  setFilesRoute: vi.fn(),
+  renameTab: vi.fn(),
+  filesTabIdFor: vi.fn(() => ""),
+  openTab: vi.fn(() => Promise.resolve("opened")),
 }));
 vi.mock("./editor-openers.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this
@@ -34,6 +38,7 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: undefined,
   openFileDiff: undefined,
   openFile: vi.fn(),
+  openFileInBackground: vi.fn(),
 }));
 vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));
@@ -47,13 +52,19 @@ vi.mock("./icons.js", () => ({
   ICON_SAVE_OK: "",
   ICON_SAVE_FAIL: "",
 }));
-vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
 // files-search.ts is the browser's other satellite, stubbed for the same reason
 // as the drop module: this file tests FileBrowserState, and the search bar's own
 // behaviour is files-search.test.ts's.
-vi.mock("./files-search.js", () => ({ initFilesSearch: vi.fn(), resetFilesSearch: vi.fn() }));
+// closeFilesSearch is inert here but the NAME has to exist: Browser Mode links
+// ESM for real, so every name anything in this file's import graph reaches must
+// be on the mock — files.ts imports it for the search bar's folder door.
+vi.mock("./files-search.js", () => ({
+  initFilesSearch: vi.fn(),
+  resetFilesSearch: vi.fn(),
+  closeFilesSearch: vi.fn(),
+}));
 vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
 vi.mock("./api-client.js", () => ({
   apiPost: vi.fn(),
@@ -92,12 +103,8 @@ vi.mock("./store.js", () => ({
   tabStatusFor: vi.fn(() => ""),
 }));
 
-import {
-  FileBrowserState,
-  restoreFileBrowser,
-  loadFileBrowser,
-  resetFileBrowser,
-} from "./files.js";
+import { FileBrowserState, pointFilesTab, releaseFilesTab, showFilesTab } from "./files.js";
+import { FB_ROOT } from "./files-shared.js";
 import { apiGet } from "./api-client.js";
 
 /** The rows placeholder's ARM. The mock never runs the paint closure, and this
@@ -256,7 +263,95 @@ describe("FileBrowserState", () => {
     }
   });
 
+  // A browser is opened AT a folder now, so the constructor is what makes a freshly
+  // bound tab's trail one entry long. Both toolbar nav buttons read exactly the two
+  // fields asserted here (files.ts `updateNavButtons`), so a state pointed at its
+  // folder by `navigate` instead would render Back ENABLED and walk to a mounts
+  // listing that tab was never at.
+  describe("constructed at a directory", () => {
+    it("starts with a one-entry trail, so both nav buttons are disabled", () => {
+      const s = new FileBrowserState("/workspace/x");
+      expect(s.currentPath).toBe("/workspace/x");
+      expect(s.history).toEqual(["/workspace/x"]);
+      expect(s.historyIdx).toBe(0);
+      // What the two buttons compute.
+      expect(s.historyIdx <= 0).toBe(true);
+      expect(s.historyIdx >= s.history.length - 1).toBe(true);
+    });
+
+    it("defaults to the mounts listing", () => {
+      expect(new FileBrowserState().currentPath).toBe("/");
+    });
+
+    it("gives each browser its own trail", () => {
+      const a = new FileBrowserState("/a");
+      const b = new FileBrowserState("/b");
+      a.navigate("/a/deep");
+      expect(b.history).toEqual(["/b"]);
+      expect(b.currentPath).toBe("/b");
+    });
+  });
+
+  // The document trail and a tab's own trail are the SAME trail while the browser is
+  // active, so a route-driven move onto an adjacent entry has to STEP rather than
+  // push: without it repeated Back presses grow `history` without bound and the
+  // toolbar Back button stops meaning what the reader's trail says.
+  describe("pointTo", () => {
+    it("steps BACK onto the previous entry rather than pushing", () => {
+      const s = new FileBrowserState("/a");
+      s.navigate("/b");
+      s.pointTo("/a");
+      expect(s.currentPath).toBe("/a");
+      expect(s.history).toEqual(["/a", "/b"]);
+      expect(s.historyIdx).toBe(0);
+    });
+
+    // A THREE-entry trail, because a two-entry one cannot tell a forward step from a
+    // push: both leave ["/a", "/b"]. The surviving "/c" is the discriminator — a push
+    // truncates at historyIdx + 1 and takes it.
+    it("steps FORWARD onto the next entry, keeping the trail beyond it", () => {
+      const s = new FileBrowserState("/a");
+      s.navigate("/b");
+      s.navigate("/c");
+      s.goBack();
+      s.goBack();
+      s.pointTo("/b");
+      expect(s.currentPath).toBe("/b");
+      expect(s.history).toEqual(["/a", "/b", "/c"]);
+      expect(s.historyIdx).toBe(1);
+    });
+
+    it("pushes an unrelated folder, because that is a genuine arrival", () => {
+      const s = new FileBrowserState("/a");
+      s.navigate("/b");
+      s.pointTo("/z");
+      expect(s.currentPath).toBe("/z");
+      expect(s.history).toEqual(["/a", "/b", "/z"]);
+      expect(s.historyIdx).toBe(2);
+    });
+
+    it("is a no-op for the folder already showing", () => {
+      const s = new FileBrowserState("/a");
+      s.selectEntry("keep.txt");
+      s.pointTo("/a");
+      expect(s.history).toEqual(["/a"]);
+      expect(s.historyIdx).toBe(0);
+      // navigate() clears the selection, so a no-op that pushed would be visible here.
+      expect(s.selected.has("keep.txt")).toBe(true);
+    });
+  });
+
   describe("reset", () => {
+    // Back to the MOUNTS listing rather than to the tab's origin: the one caller is
+    // the auto-heal, and a heal back to an unreachable origin would loop.
+    it("lands on the mounts listing, not on the folder the browser opened at", () => {
+      const s = new FileBrowserState("/workspace/x");
+      s.reset();
+      expect(s.currentPath).toBe("/");
+      expect(s.history).toEqual(["/"]);
+      expect(s.historyIdx).toBe(0);
+    });
+
     it("restores initial state", () => {
       const s = new FileBrowserState();
       s.navigate("deep/path");
@@ -300,12 +395,14 @@ describe("FileBrowserState", () => {
   });
 });
 
-describe("restoreFileBrowser normalises what it is handed", () => {
-  // Its two callers both pass a path from OUTSIDE this module — the persisted
-  // `fb_path` and a `/files/<path>` deep link — so neither can be trusted to be
-  // in the browser's space. The listing request is the observable: whatever the
-  // caller spelled, the fetch is container-absolute.
+describe("pointFilesTab normalises what it is handed", () => {
+  // Its two callers both pass a path from OUTSIDE this module — a document history
+  // entry and a `/files/<path>` deep link — so neither can be trusted to be in the
+  // browser's space. The listing request is the observable: whatever the caller
+  // spelled, the fetch is container-absolute.
   beforeEach(() => {
+    releaseFilesTab(FB_ROOT);
+    showFilesTab(FB_ROOT);
     vi.mocked(apiGet).mockClear();
   });
 
@@ -317,15 +414,14 @@ describe("restoreFileBrowser normalises what it is handed", () => {
 
   for (const [name, saved] of cases) {
     it(`fetches the absolute listing for ${name}`, () => {
-      restoreFileBrowser(saved);
-      loadFileBrowser();
+      pointFilesTab(FB_ROOT, saved);
       expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2Fworkspace%2Fvibekit");
     });
   }
 
-  it("leaves the browser on its own root when nothing was saved", () => {
-    restoreFileBrowser("");
-    loadFileBrowser();
+  it("leaves the browser where it is when handed nothing", () => {
+    pointFilesTab(FB_ROOT, "");
+    showFilesTab(FB_ROOT);
     expect(vi.mocked(apiGet).mock.calls[0]?.[0]).toBe("/api/files?path=%2F");
   });
 });
@@ -335,22 +431,25 @@ describe("the rows placeholder's arm", () => {
     armSkeleton.mockClear();
     vi.mocked(apiGet).mockReset();
     vi.mocked(apiGet).mockResolvedValue({ files: [], writable: true });
-    resetFileBrowser();
+    releaseFilesTab(FB_ROOT);
   });
 
+  // `showFilesTab` stands in for the deleted loader: bindFilesTab early-returns once
+  // the ref is already bound, so a repeat call is a pure load and the counts below
+  // mean what they did.
   it("arms one for a directory this client has never read", () => {
-    loadFileBrowser();
+    showFilesTab(FB_ROOT);
     expect(armSkeleton).toHaveBeenCalledTimes(1);
   });
 
   it("arms nothing for an EMPTY directory the route has already answered", async () => {
-    loadFileBrowser();
+    showFilesTab(FB_ROOT);
     expect(armSkeleton).toHaveBeenCalledTimes(1);
     // A macrotask, so the answer has provably landed rather than merely not having
     // been scheduled yet.
     await new Promise((r) => setTimeout(r, 0));
 
-    loadFileBrowser();
+    showFilesTab(FB_ROOT);
     expect(armSkeleton).toHaveBeenCalledTimes(1);
   });
 

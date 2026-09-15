@@ -233,7 +233,7 @@ type ringEvent struct {
 func captureTerminalEvents(t *testing.T, h *Runtime) []ringEvent {
 	t.Helper()
 	var out []ringEvent
-	for _, e := range h.bus.fanout.Buffered() {
+	for _, e := range h.bus.fanout.Snapshot() {
 		var env struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -247,7 +247,7 @@ func captureTerminalEvents(t *testing.T, h *Runtime) []ringEvent {
 		switch env.Type {
 		case string(vibekit.EventTerminalCreated), string(vibekit.EventTerminalOutput), string(vibekit.EventTerminalExited):
 			out = append(out, ringEvent{
-				eventID: e.ID,
+				eventID: e.Offset,
 				typ:     env.Type,
 				termID:  env.Payload.TerminalID,
 				data:    env.Payload.Data,
@@ -445,7 +445,7 @@ func (r *sizeChunkReader) Read(p []byte) (int, error) {
 // concatenation of every terminal_output payload the pump broadcast.
 func pumpBroadcast(t *testing.T, h *Runtime, data []byte, size int) (ring, broadcast []byte) {
 	t.Helper()
-	_, preSeq := h.bus.fanout.Bounds()
+	preSeq := h.bus.fanout.Position().Head
 	term := newAgentTerminal(nil, "c1", 1<<20)
 	h.agentTerms.pumpOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: size})
 	for _, e := range bufferedSince(h, preSeq) {

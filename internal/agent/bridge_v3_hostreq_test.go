@@ -42,7 +42,7 @@ func openExternalURLMsg(t *testing.T, id int64, url string) *vibekit.RPCResponse
 func TestHandleOpenExternalURL(t *testing.T) {
 	t.Run("SafeURLBroadcasts", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		_, before := h.bus.fanout.Bounds()
+		before := h.bus.fanout.Position().Head
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
 		if missing := missingEvents(types, string(vibekit.EventOpenExternalURL)); len(missing) > 0 {
@@ -52,7 +52,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 
 	t.Run("UnsafeURLDoesNotBroadcast", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		_, before := h.bus.fanout.Bounds()
+		before := h.bus.fanout.Position().Head
 		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
 		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {

@@ -172,7 +172,13 @@ vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
 vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({ apiGetTyped: m.tabListRead() })),
+  import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiGetTyped: m.tabListRead(),
+    // Present-but-inert so real-ESM linking succeeds: tabs.ts imports
+    // `normalizeDirPath` from files-shared.js, which imports this name. No case
+    // here reaches a listing fetch.
+    apiGet: vi.fn(() => Promise.resolve(null)),
+  })),
 );
 
 import {
@@ -192,8 +198,9 @@ import {
   activeChatRef,
   setOnEmpty,
   setTabPinned,
-  showFilesView,
+  openFilesView,
   toggleFilesView,
+  filesTabForRoute,
   refreshActiveView,
   subscribeTabCues,
   _resetForTest,
@@ -201,7 +208,7 @@ import {
 // The REAL freshness leaf: `viewStale` is what the dispatcher spends, so a case
 // that wants a FRESH view records a load the way `loadMessages` does rather than
 // faking the verdict. `chat` is the one kind whose ledger can answer "fresh" at all.
-import { noteLoaded, syncEpoch, _resetForTest as _resetFreshnessForTest } from "./tab-freshness.js";
+import { observeStamp, _resetForTest as _resetFreshnessForTest } from "./subject-versions.js";
 import { closeTabCommand } from "./actions/tabs.js";
 import { restoreFailedSend, retargetComposer } from "./composer-state.js";
 import { info as toastInfo, error as toastErrorFn } from "./toast.js";
@@ -1320,6 +1327,27 @@ describe("tabIdForRoute", () => {
     expect(tabIdForRoute({ kind: "settings", tab: "tools" })).toBe(tabIdFor("settings"));
   });
 
+  // A files route names a FOLDER rather than a tab, so its arm goes through
+  // `filesTabForRoute` instead of `subjectForRoute` + `tabIdFor`. That is the
+  // whole of the defect this unit fixes: through the generic path a folder no tab
+  // was opened at answers "" — no subject carries that ref — so a history entry
+  // onto it redirected away from a browser sitting right there, and a deep link
+  // minted a second browser rather than moving the open one. The resolver's own
+  // fallbacks are pinned in "the file browser is multi-instance" below; what this
+  // pins is that this lookup consults it at all.
+  it("resolves a files route to the OPEN browser, not only to an exact ref match", async () => {
+    expect.assertions(3);
+    // Nothing open: there is no browser to move, so the redirect is correct.
+    expect(tabIdForRoute({ kind: "files", path: "/workspace/_ui-qa" })).toBe("");
+
+    await openTab({ kind: "files", ref: "/workspace" });
+    const open = tabIdFor("files", "/workspace");
+    // The exact folder resolves, as any generic lookup would.
+    expect(tabIdForRoute({ kind: "files", path: "/workspace" })).toBe(open);
+    // And so does a DIFFERENT folder, which is the arm's reason for existing.
+    expect(tabIdForRoute({ kind: "files", path: "/workspace/_ui-qa" })).toBe(open);
+  });
+
   // "/" names no chat, so it resolves to nothing even with chats open. That is
   // what sends a back press onto "/" through the redirect, which canonicalizes it
   // to whatever is on screen — the same thing applyInitialRoute does on load.
@@ -2330,55 +2358,170 @@ describe("pinned tabs", () => {
   });
 });
 
-describe("showFilesView vs toggleFilesView", () => {
+describe("openFilesView vs toggleFilesView", () => {
   // "Toggle" and "go to" are different verbs, and the files view only had the
   // toggle. So a caller whose intent was "the browser must be visible for what I
   // am about to render into it" CLOSED it whenever it already was — which is what
   // find-in-files did from the browser's own search button. The search bar then
   // opened over a departed view and the browser came back in search mode on its
   // next open, read by the user as a search state leaking between tabs.
+  //
+  // Both now take the folder to open AT, because the kind is multi-instance: there
+  // is no single browser to look up by kind alone, so every assertion here names a
+  // ref. `hasTab("files")` with no ref answers false for every open browser.
+  const HOME = "/workspace";
 
   it("shows the browser when it is not open", async () => {
     expect.assertions(2);
     await openChat("c-1");
-    await showFilesView();
-    expect(hasTab("files")).toBe(true);
-    expect(getActiveTabId()).toBe(tabIdFor("files"));
+    await openFilesView(HOME);
+    expect(hasTab("files", HOME)).toBe(true);
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
   });
 
   it("activates the browser when it is open but not active", async () => {
     expect.assertions(2);
-    await showFilesView();
+    await openFilesView(HOME);
     await openChat("c-1");
     expect(getActiveTabId()).toBe(chatID("c-1"));
-    await showFilesView();
-    expect(getActiveTabId()).toBe(tabIdFor("files"));
+    await openFilesView(HOME);
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
   });
 
   it("is a NO-OP when the browser is already active, where the toggle closes", async () => {
     expect.assertions(4);
-    await showFilesView();
-    expect(getActiveTabId()).toBe(tabIdFor("files"));
+    await openFilesView(HOME);
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
 
-    await showFilesView();
-    expect(hasTab("files"), "show must never close the tab it is asked to show").toBe(true);
-    expect(getActiveTabId()).toBe(tabIdFor("files"));
+    await openFilesView(HOME);
+    expect(hasTab("files", HOME), "an open must never close the tab it is asked to open").toBe(
+      true,
+    );
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
 
     // The contrast is the point: the toolbar button still wants a toggle.
-    await toggleFilesView();
-    expect(hasTab("files")).toBe(false);
+    await toggleFilesView(HOME);
+    expect(hasTab("files", HOME)).toBe(false);
   });
 
   // A show that closed the tab ran the files view's teardown (the factory's
   // `onClose`, which drops the listing and the search bar) against a search the
   // caller was in the middle of opening.
-  it("dispatches nothing at all on a second show", async () => {
+  it("dispatches nothing at all on a second open", async () => {
     expect.assertions(2);
-    await showFilesView();
+    await openFilesView(HOME);
     const before = tabServer.sent().length;
-    await showFilesView();
+    await openFilesView(HOME);
     expect(tabServer.sent()).toHaveLength(before);
     expect(tabServer.sentOfType("close_tab")).toHaveLength(0);
+  });
+
+  // The toggle's three-way shape. `openAt` decides only the OPEN arm: a browser that
+  // is already open is brought forward or closed at whatever folder it holds, which
+  // is why the second case's argument is deliberately a folder no tab was opened at.
+  it("opens at the folder it is handed when no browser is open", async () => {
+    expect.assertions(2);
+    await openChat("c-1");
+    await toggleFilesView(HOME);
+    expect(hasTab("files", HOME)).toBe(true);
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
+  });
+
+  it("activates the most recent browser rather than opening a second one", async () => {
+    expect.assertions(3);
+    await openFilesView(HOME);
+    await openChat("c-1");
+    await toggleFilesView("/elsewhere");
+    expect(getActiveTabId()).toBe(tabIdFor("files", HOME));
+    expect(hasTab("files", "/elsewhere")).toBe(false);
+    expect(tabServer.sentOfType("open_tab")).toHaveLength(2);
+  });
+
+  it("closes the ACTIVE browser, and only that one", async () => {
+    expect.assertions(3);
+    await openFilesView("/a");
+    await openTab({ kind: "files", ref: "/b" });
+    await settleTabs();
+    expect(getActiveTabId()).toBe(tabIdFor("files", "/b"));
+    await toggleFilesView(HOME);
+    expect(hasTab("files", "/b")).toBe(false);
+    expect(hasTab("files", "/a")).toBe(true);
+  });
+});
+
+describe("the file browser is multi-instance", () => {
+  // The whole point of item 7: a folder is content any browser can show, and a tab's
+  // ref is where it was OPENED. So two browsers coexist, and a route resolves to ONE
+  // of them rather than minting a third.
+  it("keeps two browsers open at once", async () => {
+    expect.assertions(3);
+    await openTab({ kind: "files", ref: "/a" });
+    await openTab({ kind: "files", ref: "/b" });
+    await settleTabs();
+    expect(hasTab("files", "/a")).toBe(true);
+    expect(hasTab("files", "/b")).toBe(true);
+    expect(tabIdFor("files", "/a")).not.toBe(tabIdFor("files", "/b"));
+  });
+
+  it("resolves a route to the browser OPENED at that folder", async () => {
+    expect.assertions(2);
+    await openTab({ kind: "files", ref: "/a" });
+    await openTab({ kind: "files", ref: "/b" });
+    await settleTabs();
+    // /b is active, so rung 1 has to beat rung 2 for this to answer /a.
+    expect(filesTabForRoute("/a")).toEqual({ id: tabIdFor("files", "/a"), ref: "/a" });
+    expect(filesTabForRoute("/b")).toEqual({ id: tabIdFor("files", "/b"), ref: "/b" });
+  });
+
+  it("normalises its own argument, so a legacy spelling still resolves", async () => {
+    expect.assertions(2);
+    await openTab({ kind: "files", ref: "/a" });
+    await settleTabs();
+    expect(filesTabForRoute("a")).toEqual({ id: tabIdFor("files", "/a"), ref: "/a" });
+    expect(filesTabForRoute("/a/")).toEqual({ id: tabIdFor("files", "/a"), ref: "/a" });
+  });
+
+  it("falls back to the ACTIVE browser for a folder no tab was opened at", async () => {
+    expect.assertions(1);
+    await openTab({ kind: "files", ref: "/a" });
+    await openTab({ kind: "files", ref: "/b" });
+    await settleTabs();
+    expect(filesTabForRoute("/somewhere/else")).toEqual({
+      id: tabIdFor("files", "/b"),
+      ref: "/b",
+    });
+  });
+
+  it("falls back to the MOST RECENT browser when the active tab is not one", async () => {
+    expect.assertions(1);
+    await openTab({ kind: "files", ref: "/a" });
+    await openTab({ kind: "files", ref: "/b" });
+    await settleTabs();
+    await openChat("c-1");
+    expect(filesTabForRoute("/somewhere/else")).toEqual({
+      id: tabIdFor("files", "/b"),
+      ref: "/b",
+    });
+  });
+
+  it("answers nothing at all when no browser is open", async () => {
+    expect.assertions(1);
+    await openChat("c-1");
+    expect(filesTabForRoute("/a")).toEqual({ id: "", ref: "" });
+  });
+
+  // What `admitLocation` spends: a history entry may only ACTIVATE something already
+  // open, so a files route resolves to a tab while ANY browser is open — including
+  // one opened at a different folder — and to "" when none is, which is what makes
+  // the router canonicalise instead of re-opening a browser nobody has.
+  it("admits a files route while any browser is open, and refuses one when none is", async () => {
+    expect.assertions(3);
+    await openChat("c-1");
+    expect(tabIdForRoute({ kind: "files", path: "/deep/inside" })).toBe("");
+    await openTab({ kind: "files", ref: "/a" });
+    await settleTabs();
+    expect(tabIdForRoute({ kind: "files", path: "/deep/inside" })).toBe(tabIdFor("files", "/a"));
+    expect(tabIdForRoute({ kind: "files", path: "/a" })).toBe(tabIdFor("files", "/a"));
   });
 });
 
@@ -2852,7 +2995,7 @@ describe("the freshness dispatcher", () => {
   });
 
   it("refreshes nothing when the view is already fresh", async () => {
-    noteLoaded("chat", "a", syncEpoch());
+    observeStamp({ kind: "chat", ref: "a", version: "1" });
     await openChat("a");
     expect(openers.chatShow).toHaveBeenCalledWith("a");
     expect(openers.chatRefresh).not.toHaveBeenCalled();
@@ -2908,7 +3051,7 @@ describe("the freshness dispatcher", () => {
   // destroy its subject, so a reopened chat keeps its loaded window and costs zero
   // message fetches. Adding a `forgetView` call there turns this red.
   it("a closed chat tab reopens without refetching", async () => {
-    noteLoaded("chat", "a", syncEpoch());
+    observeStamp({ kind: "chat", ref: "a", version: "1" });
     await openChat("a");
     await closeTab(chatID("a"));
     openers.chatRefresh.mockClear();

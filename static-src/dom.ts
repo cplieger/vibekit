@@ -118,7 +118,17 @@ class Elements {
   get settingsBtn(): HTMLButtonElement {
     return byId("settings-btn");
   }
-  get statusDot(): HTMLButtonElement {
+  /** The footer's identity control: the connection mark and the address are ONE
+   *  button, and it is the status popup's trigger. `status.ts` writes its
+   *  `data-tooltip` (the live connection state, which is the DESCRIPTION rather
+   *  than the name), and `app.ts` hands it to `makeExpandable`. */
+  get accountBtn(): HTMLButtonElement {
+    return byId("account-btn");
+  }
+  /** The connection mark, a DECORATIVE span inside `#account-btn` — not a button
+   *  any more, so the type is `HTMLElement`. `setStatus` still toggles its
+   *  `.connected` / `.error` classes; nothing else reads it. */
+  get statusDot(): HTMLElement {
     return byId("status-dot");
   }
   get userEmail(): HTMLElement {
@@ -251,6 +261,12 @@ class Elements {
   get stAuth(): HTMLElement {
     return byId("st-auth");
   }
+  /** The auth row's separator. It hides and shows WITH the row — two elements,
+   *  one fact — which is why `settings.ts`'s `setAuthLine` writes both and nothing
+   *  else touches either. */
+  get stAuthSep(): HTMLElement {
+    return byId("st-auth-sep");
+  }
   get stAccount(): HTMLElement {
     return byId("st-account");
   }
@@ -259,6 +275,9 @@ class Elements {
   }
   get acctMeter(): HTMLElement {
     return byId("acct-meter");
+  }
+  get acctOverage(): HTMLElement {
+    return byId("acct-overage");
   }
 
   // Settings
@@ -342,9 +361,6 @@ class Elements {
   }
   get fbAddToChat(): HTMLButtonElement {
     return byId("fb-add-to-chat");
-  }
-  get fbChatFilter(): HTMLButtonElement {
-    return byId("fb-chat-filter");
   }
   // Chat options (the composer's set-once switches menu)
   get chatOptionsBtn(): HTMLButtonElement {

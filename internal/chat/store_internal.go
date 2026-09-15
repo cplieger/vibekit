@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v3"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -37,16 +38,27 @@ func (s *Store) Dir() string { return s.dir }
 // Remove deletes a chat and records its tombstone, so a racing Mutate cannot
 // resurrect the id. Only a chat that actually existed is tombstoned. The caller
 // must hold Lock for chatID across this call.
-func (s *Store) Remove(chatID vibekit.ChatID) error {
+//
+// The returned version is the `chats` version the removal minted, bumped under
+// the caller's lock after the tombstone so the chat_deleted frame that follows
+// can carry it; "" when nothing was removed.
+func (s *Store) Remove(chatID vibekit.ChatID) (string, error) {
 	path, err := s.pathFor(chatID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	err = os.Remove(path)
-	if !errors.Is(err, os.ErrNotExist) {
-		s.markDeleted(chatID)
+	// The index entry goes whatever Remove reported: a file that was already gone has
+	// no business staying findable.
+	s.index.drop(chatID)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
-	return err
+	s.markDeleted(chatID)
+	if err != nil {
+		return "", err
+	}
+	return s.versions.BumpCounter(subject.KindChats, ""), nil
 }
 
 // markDeleted records that chatID was just deleted. Mutate calls for
@@ -77,6 +89,19 @@ func (s *Store) isTombstoned(chatID vibekit.ChatID) bool {
 		return false
 	}
 	return true
+}
+
+// Exists reports whether chatID is a chat this store serves: its file is present
+// and it was not deleted within tombstoneTTL. It takes NO per-chat mutex — a
+// stat and the tombstone set's own lock — so the digest resolver can ask it
+// without parking behind a Mutate's file rewrite.
+func (s *Store) Exists(chatID vibekit.ChatID) bool {
+	path, err := s.pathFor(chatID)
+	if err != nil || s.isTombstoned(chatID) {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
 func (s *Store) pathFor(chatID vibekit.ChatID) (string, error) {
@@ -130,6 +155,10 @@ func (s *Store) writeChat(chatID vibekit.ChatID, chat *vibekit.Chat) error {
 	if err != nil {
 		return err
 	}
+	// The search index describes the bytes on disk, and this replaces them: the
+	// entry goes under the lock this write already holds, and the next query
+	// rebuilds it from whatever landed.
+	s.index.drop(chatID)
 	// WithMaxBytes mirrors readCappedFile's bound: never persist a chat file the
 	// store's own read path would refuse to load. int64(0) is atomicfile's
 	// documented "no cap", which is the same encoding chatFileCap uses.

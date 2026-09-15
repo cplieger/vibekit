@@ -52,7 +52,7 @@ func seedChatParentedRun(t *testing.T, openChat bool, nodes ...string) (*Runtime
 		methodKiroWorkflowLoad:  json.RawMessage(`{}`),
 		methodKiroWorkflowRetry: retryReply(t, "wf_1", "running", nodes...),
 	}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Findings cleanup"
 		c.RecordSession("sess_owned")
 		return true

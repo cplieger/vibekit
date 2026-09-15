@@ -4,14 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- `black-translucent` puts the page under the status bar, where iPadOS draws a
+       Liquid Glass blur over it; `vibekit-ui.md` "The installed status bar". -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Vibekit">
-  <!-- Theme-split accent (01-tokens.css): deep purple in light mode, the
-       web-terminal-kiro pastel violet (#c099ff) in dark mode. Media metas
-       track the OS scheme; an in-app forced theme keeps the OS-derived
-       chrome color, same approximation as the old single meta. -->
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#771edf">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#c099ff">
+  <!-- sRGB copies of `--c-bg-primary` per theme; 01-tokens.css owns the value. -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafd">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a14">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152.png">
@@ -102,7 +101,33 @@
       </div>
       <div class="sidebar-footer">
         <div class="popup-anchor">
-          <button id="status-dot" class="status-dot pill-expandable" type="button" aria-label="Connection status"></button>
+          <!-- The connection mark and the address are ONE button, and it is the
+               popup's trigger: a reader presses the row rather than an 8px disc.
+               Its children are non-interactive spans, because axe's
+               nested-interactive is serious and aria-hidden + tabindex="-1" does
+               not clear it — and html-validate's element-permitted-content fails
+               the build outright if an <a> or a <button> ever lands in here. The
+               account link the address used to carry now lives INSIDE the card
+               below, where a real <a> is legal.
+
+               The `.sr-only` subject is `position: absolute` (40-a11y.css), so it
+               is OUT OF FLOW and this button has exactly TWO flex items: the mark
+               and the address. That is what makes the address's available width
+               `W - 32 - A` rather than `W - 44 - A`, which is the one thing the
+               "nothing moved" test exists to catch. -->
+          <button type="button" id="account-btn" class="account-btn pill-expandable">
+            <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+            <!-- Pending until /api/whoami answers. The identity row is the ONLY thing
+                 that verdict gates; the shimmer is replaced by the address (or by
+                 nothing, for the two arms that name nobody) in renderIdentity. -->
+            <span id="user-email" class="sidebar-email"><span class="skeleton sidebar-email-skeleton" aria-hidden="true"></span></span>
+            <!-- The subject, so the accessible name is name-from-contents and stays
+                 that shape in every state. Whitespace-joined, so the name reads
+                 "<address> Account and connection status". The live connection state
+                 is the DESCRIPTION (data-tooltip, written by status.ts), never the
+                 name. -->
+            <span class="sr-only">Account and connection status</span>
+          </button>
           <!-- The card is a SIBLING of its trigger, inside the anchor: a
                pressed trigger must not scale its own open menu, and a card
                nested in a <button> puts interactive content inside one. -->
@@ -110,18 +135,50 @@
             <span class="pill-detail" id="st-ws">-</span>
             <span class="pill-sep"></span>
             <span class="pill-detail" id="st-kiro">-</span>
-            <span class="pill-sep"></span>
-            <span class="pill-detail" id="st-auth">-</span>
-            <span class="pill-account" id="st-account" hidden>
-              <span class="pill-account-plan" id="acct-plan"></span>
-              <span class="pill-account-meter" id="acct-meter"></span>
-            </span>
+            <!-- The auth row is an ERROR row now: "signed in" said what the address
+                 above already says, and the two arms left are exactly the ones that
+                 leave that address EMPTY, so this row is what explains the blank.
+                 Its separator hides with it, or a hidden row leaves a dangling rule. -->
+            <span class="pill-sep" id="st-auth-sep" hidden></span>
+            <span class="pill-detail" id="st-auth" hidden></span>
+            <a class="pill-account" id="st-account" hidden
+               href="https://app.kiro.dev/account/usage" target="_blank" rel="noopener">
+              <span class="pill-account-lines">
+                <span class="pill-account-plan" id="acct-plan"></span>
+                <span class="pill-account-meter" id="acct-meter"></span>
+                <!-- The overage state, READ-ONLY: there is no programmatic setter
+                     for it anywhere in kiro-cli (the live 2.21.4 sidecar carries one
+                     `_kiro/account/*` string and it is `getUsage`), so the state is
+                     displayed and the row's own link is what routes the reader to
+                     the page that can change it. A THIRD LINE inside this stack
+                     rather than a control: it inherits the enclosing `<a>`, so
+                     "link out" costs no second interactive element and cannot trip
+                     axe's `nested-interactive`.
+
+                     NO CLASS, for the same reason the mark below carries none: it
+                     needs no rule. `.pill-account-lines` is a flex column, so the
+                     stack and its gap are already right, and leaving `color`
+                     undeclared inherits the row's own ink ladder — secondary at
+                     rest exactly like the plan line above, lifted to
+                     `--c-text-primary` by `.pill-account`'s hover and press arms.
+                     That is the ink 15-input.css already measures for this row on
+                     all three status tints, so it introduces none. A class with no
+                     rule would be dead weight, and a rule would be empty. -->
+                <span id="acct-overage"></span>
+              </span>
+              <!-- No class beyond `.ic-ui`, and that is a decision rather than an
+                   omission: the mark must declare NO `color` (measured — every
+                   named ink that fits the row's hierarchy fails 3:1 on one of the
+                   two washes), and 03-base.css's
+                   `:where(.ic-inline, .ic-ui, .ic-lg, .ic-hero)` already declares
+                   the only other thing it needs, `flex-shrink: 0`. A
+                   `.pill-account-out` rule would therefore be empty, which
+                   stylelint's `block-no-empty` rejects outright. -->
+              <svg class="ic-ui" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              <span class="sr-only">Open account usage at app.kiro.dev</span>
+            </a>
           </span>
         </div>
-        <!-- Pending until /api/whoami answers. The identity row is the ONLY thing
-             that verdict gates; the shimmer is replaced by the address (or by
-             nothing, for the two arms that name nobody) in renderIdentity. -->
-        <a id="user-email" href="https://app.kiro.dev/account/usage" target="_blank" rel="noopener" class="sidebar-email" aria-label="Account usage"><span class="skeleton sidebar-email-skeleton" aria-hidden="true"></span></a>
         <div class="sidebar-footer-actions">
           <button type="button" id="logout-btn" class="icon-btn" data-tooltip="Log out" aria-label="Log out">
             <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -165,31 +222,17 @@
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
           <!-- Boxed prompt, DELIBERATELY not the bare `>_` on the shell panel's own
                header and on tool cards: a bare prompt reaches 12 of the grid's 15
-               units, so in this row it reads short against its boxed neighbours and
-               sits optically high. The frame is what aligns it, and the divergence
-               is pinned by menu-icons.test.ts so a one-glyph-per-concept sweep
-               cannot quietly undo it again.
+               units, so in this row it reads short against its boxed neighbours.
+               menu-icons.test.ts pins the divergence and the frame's 3-unit grid.
 
-               EVERY COORDINATE IS A MULTIPLE OF 3, which is this row's crisp grid
-               and NOT the obvious one. `--icon-ui` is 16px against a 24 viewBox, so
-               one unit is 0.667 CSS px and a 1px stroke is crisp only when its
-               centre lands on a half pixel. That depends on the BOX's own pixel
-               phase as well as the coordinate, and measured 2026-09-10 this button's
-               svg sits at a half-pixel y offset (8 of the 9 toolbar buttons do, the
-               36px row height and the flex centring being what puts it there). With
-               that phase a multiple of 3 lands on x.5 and is crisp, while the 0.75
-               grid this icon used to use lands on x.0 and straddles two columns.
-               So the previous coordinates (3.75/20.25) were the blurriest available
-               rather than the crispest, and the comment that chose them reasoned
-               about the coordinate while ignoring the offset. Re-measure the offset
-               before moving any of these; `new-chat` is the one button at phase 0,
-               where the 0.75 grid IS correct. Snapping to 3..21 also took the ink
-               from 17.5 to 19 units, which is the toolbar's own median extent, so
-               this glyph stopped reading small against its neighbours. -->
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 9l3 3-3 3"/><path d="M13.5 15h4.5"/></svg>
+               Only the FRAME and the underscore's y are on that grid: a diagonal's
+               endpoints and a round cap's end have no crisp phase, so the mark is
+               placed for equal clearance instead (3 units each side of the frame's
+               inner ink) and sized to 3.75x7.5 to fill the box. -->
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7.5 7.5l3.75 3.75-3.75 3.75"/><path d="M12.75 15h3.75"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6C9 4 6 3 4.5 3Q3 3 3 4.5V16.5Q3 18 4.5 18C6 18 9 19 12 21C15 19 18 18 19.5 18Q21 18 21 16.5V4.5Q21 3 19.5 3C18 3 15 4 12 6Z"/><path d="M12 6v15"/></svg>
+          <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -419,6 +462,25 @@
 
           <!-- General: notifications + theme hooks (theme toggle lives in sidebar; nothing else needs a dedicated setting) -->
           <div class="settings-panel" data-settings-panel="general">
+            <div class="page-section" id="general-about-section">
+              <h2 class="section-title">About</h2>
+              <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Vibekit release, so both move together when a new image is built.</p>
+              <dl class="about-grid">
+                <dt>Vibekit</dt>
+                <dd id="about-vibekit">—</dd>
+                <dt>kiro-cli</dt>
+                <dd id="about-kirocli">—</dd>
+              </dl>
+              <div class="section-option">
+                <button type="button" id="diagnostics-run" class="btn">Run diagnostics</button>
+                <p class="section-hint">Collect a kiro-cli diagnostic report. The report goes to your clipboard so you can paste it into a bug report.</p>
+                <p id="diagnostics-status" class="section-hint" role="status" aria-live="polite" hidden></p>
+              </div>
+            </div>
+
+            <!-- Organization policy: read-only governance disclosure, rendered by governance.ts when known. -->
+            <div class="page-section" id="general-governance-section" hidden></div>
+
             <div class="page-section">
               <h2 class="section-title">Notifications</h2>
               <p class="section-hint">Get pinged on any of your devices when an agent needs you or finishes a turn. Push requires your browser's permission.</p>
@@ -452,7 +514,7 @@
                 </div>
                 <div class="section-option">
                   <label class="toggle">
-                    <input type="checkbox" id="notify-pr-status-toggle" aria-label="Pull request checks" checked>
+                    <input type="checkbox" id="notify-pr-status-toggle" aria-label="Pull request checks">
                     <span class="toggle-slider"></span>
                   </label>
                   <div>
@@ -484,25 +546,6 @@
                 </div>
               </div>
             </div>
-
-            <div class="page-section" id="general-about-section">
-              <h2 class="section-title">About</h2>
-              <p class="section-hint">The pair of versions this session is running. kiro-cli is pinned per Vibekit release, so both move together when a new image is built.</p>
-              <dl class="about-grid">
-                <dt>Vibekit</dt>
-                <dd id="about-vibekit">—</dd>
-                <dt>kiro-cli</dt>
-                <dd id="about-kirocli">—</dd>
-              </dl>
-              <div class="section-option">
-                <button type="button" id="diagnostics-run" class="btn">Run diagnostics</button>
-                <p class="section-hint">Collect a kiro-cli diagnostic report. The report goes to your clipboard so you can paste it into a bug report.</p>
-                <p id="diagnostics-status" class="section-hint" role="status" aria-live="polite" hidden></p>
-              </div>
-            </div>
-
-            <!-- Organization policy: read-only governance disclosure, rendered by governance.ts when known. -->
-            <div class="page-section" id="general-governance-section" hidden></div>
 
             <div class="page-section" id="general-retention-section">
               <div class="section-title-status-row">
@@ -577,7 +620,7 @@
                     <span class="section-option-label">Show hook status in chat</span>
                     <span class="settings-save-status hidden" data-save-status="hooks.showStatus" aria-live="polite"></span>
                   </div>
-                  <p class="section-hint">When on, kiro-cli hook executions appear as status messages in the chat transcript. Off hides them; hooks still run and enforce their rules, only the chat messages are suppressed.</p>
+                  <p class="section-hint">When on, each kiro-cli hook execution appears in the chat transcript as a <code>Hook fired</code> card. vibekit cannot see a hook's outcome, so the card names the hook and nothing more. Off hides those cards; hooks still run and enforce their rules, and a hook that needs your approval always asks regardless of this setting.</p>
                 </div>
               </div>
               <div class="section-option">
@@ -1049,9 +1092,6 @@
               </button>
               <input id="fb-path" class="fb-path" type="text" autocomplete="off" readonly aria-label="Current path">
               <div class="fb-actions">
-                <button type="button" id="fb-chat-filter" class="icon-btn" data-tooltip="Highlight files this chat changed" aria-label="Highlight files this chat changed" aria-pressed="false">
-                  <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/><path d="M5 3v4M3 5h4"/></svg>
-                </button>
                 <button type="button" id="fb-add-to-chat" class="icon-btn" data-tooltip="Add selection to chat" aria-label="Add selection to chat" disabled>
                   <svg class="ic-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
                 </button>

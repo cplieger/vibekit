@@ -49,7 +49,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/steering"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // Document categories, matching the page's sub-tabs. Wire values; the client
@@ -73,13 +73,13 @@ const (
 	maxSpecWalkDepth = 3
 )
 
-// kiroDoc is one row on the configuration browser.
+// KiroDoc is one row on the configuration browser.
 //
 // Fields are per-category and mostly omitempty: a steering row carries an
 // inclusion and no model, an agent row the reverse, a spec row neither. The
 // client shapes each tab's columns; the server does not pretend they are
 // uniform.
-type kiroDoc struct {
+type KiroDoc struct {
 	Category string `json:"category"`
 	// Name is the row label: front-matter `name`, else the first H1, else the
 	// basename. The universal fallback chain — 11 of 27 skill markdown files
@@ -141,6 +141,40 @@ type kiroDoc struct {
 	DeleteProtected bool `json:"delete_protected,omitempty"`
 }
 
+// KiroDocsResponse is GET /api/workspace/kiro-docs's reply. Truncated says a cap
+// or a cancelled request stopped the scan before it read the whole tree, so a
+// short list is not read as the whole inventory.
+type KiroDocsResponse struct {
+	Docs      []KiroDoc `json:"docs"`
+	Truncated bool      `json:"truncated"`
+}
+
+// docScan accumulates one scan: the rows kept, and whether anything was left
+// unread. Each category scans into its own so the per-category cap is its
+// length; the tree's scan absorbs them.
+type docScan struct {
+	docs      []KiroDoc
+	truncated bool
+}
+
+// add keeps a row while the category has room and reports whether it did. A
+// row past the cap is dropped and the cut recorded, so exactly the cap's worth
+// of rows is not a cut and one more is.
+func (sc *docScan) add(d *KiroDoc) bool {
+	if len(sc.docs) >= maxDocsPerCategory {
+		sc.truncated = true
+		return false
+	}
+	sc.docs = append(sc.docs, *d)
+	return true
+}
+
+// absorb merges a category's or a root's scan into this one.
+func (sc *docScan) absorb(part docScan) {
+	sc.docs = append(sc.docs, part.docs...)
+	sc.truncated = sc.truncated || part.truncated
+}
+
 // docsCache memoizes one scan behind a cheap directory-mtime signature.
 //
 // Front-matter parsing is ~200 file opens per scan, and the page refetches on
@@ -148,26 +182,26 @@ type kiroDoc struct {
 // for an unchanged tree. The mutex also serializes concurrent requests into one
 // scan rather than N.
 type docsCache struct {
-	sig  string
-	docs []kiroDoc
-	mu   sync.Mutex
+	sig string
+	res KiroDocsResponse
+	mu  sync.Mutex
 }
 
 func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	docs := s.collectKiroDocs(r.Context())
-	if docs == nil {
-		docs = []kiroDoc{}
+	res := s.collectKiroDocs(r.Context())
+	if res.Docs == nil {
+		res.Docs = []KiroDoc{}
 	}
-	webhttp.WriteJSON(w, map[string]any{"docs": docs})
+	webhttp.WriteJSON(w, res)
 }
 
 // collectKiroDocs returns the cached inventory, rescanning when the signature
 // changed. Holds the cache mutex across the scan so concurrent requests share
 // one pass instead of racing several.
-func (s *Server) collectKiroDocs(ctx context.Context) []kiroDoc {
+func (s *Server) collectKiroDocs(ctx context.Context) KiroDocsResponse {
 	roots := s.kiroRoots()
 	sig := dirSignature(roots)
 
@@ -178,18 +212,18 @@ func (s *Server) collectKiroDocs(ctx context.Context) []kiroDoc {
 	}
 	s.kiroDocs.mu.Lock()
 	defer s.kiroDocs.mu.Unlock()
-	if s.kiroDocs.sig == sig && s.kiroDocs.docs != nil {
-		return s.kiroDocs.docs
+	if s.kiroDocs.sig == sig && s.kiroDocs.res.Docs != nil {
+		return s.kiroDocs.res
 	}
-	docs := scanKiroRoots(ctx, roots)
+	res := scanKiroRoots(ctx, roots)
 	// A cancelled scan is partial; caching it would serve a truncated list for
 	// as long as the tree is unchanged.
 	if ctx.Err() != nil {
-		return docs
+		return res
 	}
 	s.kiroDocs.sig = sig
-	s.kiroDocs.docs = docs
-	return docs
+	s.kiroDocs.res = res
+	return res
 }
 
 // kiroRoot is one `.kiro` tree: where it lives and the path prefix its rows
@@ -277,41 +311,46 @@ func dirSignature(roots []kiroRoot) string {
 	return b.String()
 }
 
-// scanKiroRoots scans every root in category order, applying the total cap.
-func scanKiroRoots(ctx context.Context, roots []kiroRoot) []kiroDoc {
-	var docs []kiroDoc
+// scanKiroRoots scans every root in category order, applying the total cap. A
+// root left unread because the cap was already reached counts as a cut, whatever
+// it would have held.
+func scanKiroRoots(ctx context.Context, roots []kiroRoot) KiroDocsResponse {
+	var sc docScan
 	for _, root := range roots {
-		if ctx.Err() != nil || len(docs) >= maxDocsTotal {
-			return docs
+		if ctx.Err() != nil || len(sc.docs) >= maxDocsTotal {
+			sc.truncated = true
+			break
 		}
-		docs = append(docs, scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix,
-			newRootGuard(root.fsPath, root.prefix))...)
+		sc.absorb(scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix,
+			newRootGuard(root.fsPath, root.prefix)))
 	}
-	if len(docs) > maxDocsTotal {
-		docs = docs[:maxDocsTotal]
+	if len(sc.docs) > maxDocsTotal {
+		sc.docs = sc.docs[:maxDocsTotal]
+		sc.truncated = true
 	}
-	return docs
+	return KiroDocsResponse{Docs: sc.docs, Truncated: sc.truncated}
 }
 
 // scanKiroDocsFS scans one `.kiro` tree over fs.FS, so it is unit-testable with
 // fstest.MapFS. Category order here is the page's fixed tab order.
-func scanKiroDocsFS(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
-	var docs []kiroDoc
-	for _, scan := range []func(context.Context, fs.FS, string, pathGuard) []kiroDoc{
+func scanKiroDocsFS(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
+	var sc docScan
+	for _, scan := range []func(context.Context, fs.FS, string, pathGuard) docScan{
 		scanDocsSteering, scanDocsSkills, scanDocsAgents, scanDocsSpecs, scanDocsHooks,
 	} {
 		if ctx.Err() != nil {
-			return docs
+			sc.truncated = true
+			return sc
 		}
-		docs = append(docs, scan(ctx, root, prefix, guard)...)
+		sc.absorb(scan(ctx, root, prefix, guard))
 	}
-	return docs
+	return sc
 }
 
 // scanDocsSteering walks `steering/` recursively for markdown.
-func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
-	return walkMarkdown(ctx, root, "steering", catSteering, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc {
-		return kiroDoc{
+func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
+	return walkMarkdown(ctx, root, "steering", catSteering, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc {
+		return KiroDoc{
 			Category:         catSteering,
 			Name:             docLabel(&fm, data, rel),
 			Path:             prefix + "/steering/" + rel,
@@ -328,15 +367,16 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard path
 // scanDocsSkills emits one row per skill MANIFEST (`skills/<name>/SKILL.md`).
 // Non-manifest markdown under a skill directory is reference material — the
 // regulations, the agent guides — and is deliberately not a row.
-func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "skills", guard)
 	if err != nil {
-		return nil
+		return docScan{}
 	}
-	docs := make([]kiroDoc, 0, len(entries))
+	sc := docScan{docs: make([]KiroDoc, 0, len(entries))}
 	for _, e := range entries {
-		if ctx.Err() != nil || len(docs) >= maxDocsPerCategory {
-			return docs
+		if ctx.Err() != nil {
+			sc.truncated = true
+			return sc
 		}
 		if !e.IsDir() || strings.ContainsRune(e.Name(), 0) {
 			continue
@@ -368,7 +408,7 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		if fm.HasInclusion {
 			inclusion = fm.Inclusion
 		}
-		docs = append(docs, kiroDoc{
+		kept := sc.add(&KiroDoc{
 			Category:         catSkill,
 			Name:             name,
 			Path:             prefix + "/skills/" + rel,
@@ -377,22 +417,26 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			SteeringOverride: fm.SteeringOverride,
 			DeleteProtected:  verdict.deleteProtected,
 		})
+		if !kept {
+			return sc
+		}
 	}
-	return docs
+	return sc
 }
 
 // scanDocsAgents emits one row per agent, de-duplicating the `.json`/`.md` pair
 // and preferring the markdown (which is what carries the front-matter).
-func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "agents", guard)
 	if err != nil {
-		return nil
+		return docScan{}
 	}
 	agents := steering.DedupeAgentFiles(entries)
-	docs := make([]kiroDoc, 0, len(agents))
+	sc := docScan{docs: make([]KiroDoc, 0, len(agents))}
 	for _, a := range agents {
-		if ctx.Err() != nil || len(docs) >= maxDocsPerCategory {
-			return docs
+		if ctx.Err() != nil {
+			sc.truncated = true
+			return sc
 		}
 		base, file := a.Base, a.File
 		data, verdict, rErr := readGuardedFS(root, "agents/"+file, guard)
@@ -402,7 +446,7 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		}
 		fm := steering.Parse(data)
 		name := cmp.Or(fm.Name, base)
-		docs = append(docs, kiroDoc{
+		kept := sc.add(&KiroDoc{
 			Category:        catAgent,
 			Name:            name,
 			Path:            prefix + "/agents/" + file,
@@ -411,8 +455,11 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			Tools:           fm.Tools,
 			DeleteProtected: verdict.deleteProtected,
 		})
+		if !kept {
+			return sc
+		}
 	}
-	return docs
+	return sc
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature
@@ -425,13 +472,13 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 // tasks.md. Fixed columns would manufacture an empty Tasks column for every
 // feature and hide the study entirely, so a feature is a group with arbitrary
 // children, ordered requirements → design → tasks → lexical.
-func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
-	docs := walkMarkdown(ctx, root, "specs", catSpec, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc {
+func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
+	sc := walkMarkdown(ctx, root, "specs", catSpec, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc {
 		group := path.Dir(rel)
 		if group == "." {
 			group = "" // a doc loose in specs/ has no feature
 		}
-		return kiroDoc{
+		return KiroDoc{
 			Category:        catSpec,
 			Name:            docLabel(&fm, data, rel),
 			Path:            prefix + "/specs/" + rel,
@@ -440,8 +487,8 @@ func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGua
 			DeleteProtected: v.deleteProtected,
 		}
 	})
-	sortSpecDocs(docs)
-	return docs
+	sortSpecDocs(sc.docs)
+	return sc
 }
 
 // specFileRank orders the conventional spec documents ahead of anything else,
@@ -460,8 +507,8 @@ func specFileRank(p string) int {
 }
 
 // sortSpecDocs groups by feature, then applies specFileRank, then lexical.
-func sortSpecDocs(docs []kiroDoc) {
-	slices.SortStableFunc(docs, func(a, b kiroDoc) int {
+func sortSpecDocs(docs []KiroDoc) {
+	slices.SortStableFunc(docs, func(a, b KiroDoc) int {
 		return cmp.Or(
 			cmp.Compare(a.Group, b.Group),
 			cmp.Compare(specFileRank(a.Path), specFileRank(b.Path)),
@@ -474,15 +521,16 @@ func sortSpecDocs(docs []kiroDoc) {
 // into several rows. Reuses steering.ParseHooks so the fields stay sanitized:
 // hook files are workspace content, and a raw newline or backtick in a name
 // would break out of the span these values render into.
-func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGuard) docScan {
 	entries, err := readGuardedDir(root, "hooks", guard)
 	if err != nil {
-		return nil
+		return docScan{}
 	}
-	var docs []kiroDoc
+	var sc docScan
 	for _, e := range entries {
-		if ctx.Err() != nil || len(docs) >= maxDocsPerCategory {
-			return docs
+		if ctx.Err() != nil {
+			sc.truncated = true
+			return sc
 		}
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.ContainsRune(e.Name(), 0) {
 			continue
@@ -492,22 +540,24 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGua
 			slog.Warn("kiro docs: read hook", "name", e.Name(), "error", rErr)
 			continue
 		}
-		docs = append(docs, hookRows(data, prefix, e.Name(), verdict.deleteProtected)...)
+		rows := hookRows(data, prefix, e.Name(), verdict.deleteProtected)
+		for i := range rows {
+			if !sc.add(&rows[i]) {
+				return sc
+			}
+		}
 	}
-	if len(docs) > maxDocsPerCategory {
-		docs = docs[:maxDocsPerCategory]
-	}
-	return docs
+	return sc
 }
 
 // hookRows expands one v1 hook envelope into its rows. A file may carry several
 // hooks, and each is its own row.
-func hookRows(data []byte, prefix, file string, deleteProtected bool) []kiroDoc {
+func hookRows(data []byte, prefix, file string, deleteProtected bool) []KiroDoc {
 	parsed := steering.ParseHooks(data)
-	out := make([]kiroDoc, 0, len(parsed))
+	out := make([]KiroDoc, 0, len(parsed))
 	for _, h := range parsed {
 		name := cmp.Or(h.Name, strings.TrimSuffix(file, ".json"))
-		out = append(out, kiroDoc{
+		out = append(out, KiroDoc{
 			Category:        catHook,
 			Name:            name,
 			Path:            prefix + "/hooks/" + file,
@@ -528,14 +578,14 @@ func walkMarkdown(
 	root fs.FS,
 	sub, category string,
 	guard pathGuard,
-	mk func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc,
-) []kiroDoc {
+	mk func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc,
+) docScan {
 	w := &mdWalker{ctx: ctx, root: root, sub: sub, category: category, guard: guard, mk: mk}
 	err := fs.WalkDir(root, sub, w.step)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		slog.Warn("kiro docs: walk", "category", category, "error", err)
 	}
-	return w.docs
+	return w.sc
 }
 
 // mdWalker carries the markdown walk's mutable accounting so the visitor is a
@@ -544,11 +594,11 @@ func walkMarkdown(
 type mdWalker struct {
 	ctx      context.Context
 	root     fs.FS
-	mk       func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc
+	mk       func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) KiroDoc
 	guard    pathGuard
 	sub      string
 	category string
-	docs     []kiroDoc
+	sc       docScan
 }
 
 // step is fs.WalkDir's visitor. A single unreadable directory is skipped rather
@@ -557,7 +607,8 @@ func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 	if walkErr != nil {
 		return nil //nolint:nilerr // deliberate: skip this entry and keep walking
 	}
-	if w.ctx.Err() != nil || len(w.docs) >= maxDocsPerCategory {
+	if w.ctx.Err() != nil {
+		w.sc.truncated = true
 		return fs.SkipAll
 	}
 	rel := strings.TrimPrefix(strings.TrimPrefix(p, w.sub), "/")
@@ -581,7 +632,10 @@ func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 		slog.Warn("kiro docs: read", "category", w.category, "path", p, "error", err)
 		return nil
 	}
-	w.docs = append(w.docs, w.mk(rel, steering.Parse(data), data, verdict))
+	doc := w.mk(rel, steering.Parse(data), data, verdict)
+	if !w.sc.add(&doc) {
+		return fs.SkipAll
+	}
 	return nil
 }
 

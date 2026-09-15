@@ -39,7 +39,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // JSONKeyError is the standard JSON error response key.

@@ -26,6 +26,10 @@ type Runs struct {
 	coord     *BridgeCoordinator
 	utility   func() *utilityRuntime
 	lifecycle *lifetime
+	// workDir is the workspace root a projected diff path is made relative to, carried
+	// as a VALUE rather than read off lifecycle: a step-transcript read then needs no
+	// lifetime, which is what lets the step tests build the bare Runs they build.
+	workDir string
 	// asks holds the questions a step asked and nobody answered — its own registry
 	// because a run ask is durable where a permission dies with its bridge. run_ask.go.
 	asks pendingRunAsks

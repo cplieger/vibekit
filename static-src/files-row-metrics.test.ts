@@ -117,7 +117,7 @@
 // budget under a loaded `npm test` (the cold-cache-plus-full-suite class), and
 // widening the timeout would have left the assertion just as load-sensitive.
 //
-// Follows `turn-elapsed-css.test.ts` for the measure-real-layout shape and
+// Follows `turn-fact-css.test.ts` for the measure-real-layout shape and
 // `css-rules.ts` (as `run-page-layout.test.ts` does) for reading the shipped
 // stylesheet through `?raw` rather than the gitignored bundle.
 // ---------------------------------------------------------------------------

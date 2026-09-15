@@ -76,7 +76,7 @@ export const BLOCK_ESTIMATE_PX: Readonly<Record<PointerTier, BlockEstimates>> = 
     text: 48,
     emptyText: 0,
     thinking: 25,
-    runCard: 79,
+    runCard: 71,
     toolCard: 38,
     subagentCard: 71,
     row: 48,
@@ -85,13 +85,9 @@ export const BLOCK_ESTIMATE_PX: Readonly<Record<PointerTier, BlockEstimates>> = 
     text: 48,
     emptyText: 0,
     thinking: 44,
-    // 87 until 2026-09-11, when `.run-open` stopped declaring its own `1.5rem` and
-    // took the app-wide hit floor (item 6): a coarse foot went 33px to 53px, so
-    // `--run-card-content` grew by 20 and this shadow with it. The fine value is
-    // unchanged, because that tier's floor IS 24px.
-    runCard: 107,
+    runCard: 91,
     toolCard: 46,
-    subagentCard: 99,
+    subagentCard: 91,
     row: 48,
   },
 } as const;

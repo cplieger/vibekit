@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -17,10 +16,15 @@ import (
 	"github.com/cplieger/toolbelt/v3/httpapi"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/tabs"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 const port = "9847"
+
+// listenPort is the port the listener binds. The release binary always binds `port`;
+// a binary built with -tags vibekit_test may point it elsewhere (testhooks_vibekittest.go)
+// so the browser-mode suite can start one beside a serving instance.
+var listenPort = port
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
@@ -64,7 +68,6 @@ type Server struct {
 	onListen    func()
 	acctUsage   acctUsageCache
 	cliTimeouts cliTimeouts
-	settingsMu  sync.Mutex
 	// ready is true between listener bind and the shutdown signal.
 	ready atomic.Bool
 }
@@ -284,6 +287,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/utility/resolve-conflict", s.handleUtilityResolveConflict)
 	mux.HandleFunc("/api/account/usage", s.handleAccountUsage)
 	s.push.RegisterRoutes(mux)
+	s.registerTestHooks(mux)
 
 	// Computed from the embedded index.html so the inline importmap's sha256 stays in sync
 	// with what the browser sees, with no literal to hand-update per importmap edit.
@@ -305,11 +309,11 @@ func (s *Server) ListenAndServe() error {
 	// refuses requests with no access-log line, no request id and no client_ip.
 	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
-	srv.Addr = ":" + port
+	srv.Addr = ":" + listenPort
 
 	// Bound up front so port-in-use surfaces synchronously, and so /api/health reports
 	// unready until the listener can genuinely accept.
-	var lc net.ListenConfig
+	lc := listenConfig()
 	ln, err := lc.Listen(context.Background(), "tcp", srv.Addr)
 	if err != nil {
 		return err

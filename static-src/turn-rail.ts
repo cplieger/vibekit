@@ -19,13 +19,13 @@ import {
   scrollableBy,
   scrollToOffset,
 } from "./scroll.js";
-import { markerLabel, railLabel, seamLabel } from "./rail-labels.js";
+import { markerLabel, railLabel } from "./rail-labels.js";
 import { formatElapsed, isoDuration } from "./strings.js";
 import { severityOf } from "./turn-severity.js";
 import { projectTurns, turnLedger, WHOLE_SESSION } from "./turns.js";
+import { join } from "@cplieger/keyenc";
 import { searchHitTurns } from "./chat-search.js";
 import { get, turnBaseOf, turnLive } from "./store.js";
-import { syncEpoch } from "./tab-freshness.js";
 import { mergeTurnSets, validateTurnIndex } from "./rail-merge.js";
 import type { TurnSummary } from "./rail-merge.js";
 import { railAt, railMetrics, railSpan, selectMarkers } from "./rail-select.js";
@@ -36,12 +36,6 @@ import type { CardTop, TurnOffsets } from "./rail-activation.js";
  *  set, which is a pure leaf, and re-exported here because this is where the rail's
  *  consumers already read it from. */
 export type { TurnSummary };
-
-/** A pause longer than this earns a seam. Twenty minutes is the point at which a
- *  break stops being a pause in one sitting and starts being a seam between two:
- *  short enough to catch a lunch break, long enough that ordinary thinking time
- *  never trips it. */
-const GAP_THRESHOLD_MS = 20 * 60 * 1000;
 
 /** How far the transcript must be able to scroll before the rail appears. A
  *  navigator has nothing to offer a conversation the reader can already see whole,
@@ -99,31 +93,38 @@ let selectedID: string | undefined;
 /** Turn IDs whose jump is waiting on a fetch, so the marker can say so. */
 const pending = new Set<string>();
 
-/** One chat's fetched index plus what the world looked like when the request went
- *  out: the sync epoch and the chat's message count, both captured BEFORE the fetch
- *  (the same discipline as loadMessages' epochAtStart — an answer that raced a gap
- *  or an append must not claim currency over it). */
+/** One chat's fetched index plus the chat's message count when the request went out,
+ *  captured BEFORE the fetch (the same discipline as loadMessages' `knownBefore` — an
+ *  answer that raced an append must not claim currency over it). */
 interface RailRecord {
   summaries: TurnSummary[];
-  epoch: number;
   atCount: number;
 }
 
 /** Session-wide indexes by chat, kept across switches so returning to a loaded chat
  *  paints its rail from memory instead of refetching. `refreshTurnRail` is the one
- *  writer; re-pointing prunes rows the store no longer holds. */
+ *  writer; re-pointing prunes rows the store no longer holds, and
+ *  `invalidateTurnRails` drops them all. */
 const records = new Map<string, RailRecord>();
 
-/** Whether `id`'s record can stand in for a fetch: present, from the current sync
- *  epoch, and from the chat's current message count. The count is the cheap proxy
- *  for "a turn started or ended since" — background SSE ingest moves it while the
- *  rail is pointed elsewhere. */
+/** Whether `id`'s record can stand in for a fetch: present and from the chat's current
+ *  message count. The count is the cheap proxy for "a turn started or ended since" —
+ *  background SSE ingest moves it while the rail is pointed elsewhere. The index's GET
+ *  carries no digest stamp, so a whole-projection reconcile drops the records by hand
+ *  through `invalidateTurnRails` instead. */
 function recordCurrent(id: string): boolean {
   const r = records.get(id);
   if (r === undefined) {
     return false;
   }
-  return r.epoch === syncEpoch() && r.atCount === get(id)?.message_count;
+  return r.atCount === get(id)?.message_count;
+}
+
+/** Forget every held index: the reconcile body's call, because nothing certifies a
+ *  record across a lost stream. Each chat re-reads its index at its next activation;
+ *  the one on screen is re-read by the refresh the reconcile ends on. */
+export function invalidateTurnRails(): void {
+  records.clear();
 }
 
 /** Whether there is enough transcript to navigate. Read live at every render rather
@@ -135,6 +136,23 @@ function navigable(): boolean {
 /** The navigability the last render was built from, so a paint that flips it can
  *  re-render and the overwhelming majority that do not cost one comparison. */
 let renderedNavigable = false;
+
+/** Everything the rendered markers were built FROM, so a render that would redraw the
+ *  same rail redraws nothing.
+ *
+ *  `render()` runs on every transcript paint (`setResidentTurns`), which on a streaming
+ *  turn is several times a second, and it ends in `root.replaceChildren(...)` over freshly
+ *  built nodes. Each marker is a `<button>` and a pending one carries `vk-dot-beat`, so an
+ *  unguarded rebuild took focus off a keyboard reader's marker and restarted the beat that
+ *  often — the same reader-state loss `exec-view/place.ts` records for a re-seat, reached
+ *  by rebuilding instead of moving. A signature is the cheaper half of the two available
+ *  fixes: the other is a keyed reconcile of a heterogeneous list whose every node's
+ *  geometry moves whenever the window does, which is a redesign of this function rather
+ *  than a guard on it.
+ *
+ *  It must name EVERY input the nodes read, or the rail goes stale, which is worse than
+ *  the rebuild. `renderSignature` is that list and is the only place it lives. */
+let renderedSig = "";
 
 /** The one writer of the marker set: the resident window merged into the fetched
  *  index, so the newest turn appears the moment its card mounts and the index only
@@ -227,9 +245,8 @@ export async function refreshTurnRail(id: string): Promise<void> {
   if (id === "") {
     return;
   }
-  // Both captured BEFORE the request — see RailRecord. A count the store does not
-  // know records nothing: there is no session left to activate against.
-  const epochAtStart = syncEpoch();
+  // Captured BEFORE the request — see RailRecord. A count the store does not know
+  // records nothing: there is no session left to activate against.
   const countAtStart = get(id)?.message_count;
   const d = await apiGet<{ turns?: unknown }>(`/api/chats/${encodeURIComponent(id)}/turns`);
   if (d === null) {
@@ -239,7 +256,7 @@ export async function refreshTurnRail(id: string): Promise<void> {
   }
   const { turns } = validateTurnIndex(d.turns ?? []);
   if (countAtStart !== undefined) {
-    records.set(id, { summaries: turns, epoch: epochAtStart, atCount: countAtStart });
+    records.set(id, { summaries: turns, atCount: countAtStart });
   }
   if (id !== chatID) {
     return;
@@ -403,44 +420,6 @@ function keyOf(card: Element): string {
 // Render
 // ---------------------------------------------------------------------------
 
-/** One dashed band on the axis where a sitting ended. */
-export interface RailSeam {
-  fromN: number;
-  toN: number;
-  ms: number;
-}
-
-/** The seams the rail may draw: a pause between two turns that are adjacent in the
- *  SESSION and adjacent in `shown`. Session adjacency is what makes the elapsed time
- *  a pause at all — two markers a downsample left fifteen turns apart are separated
- *  by work — so a real pause between turns the rail no longer resolves is drawn
- *  nowhere rather than claimed between the survivors. A band between two positions
- *  rather than a row, so it charges nothing against the marker count. */
-export function railSeams(all: readonly TurnSummary[], shown: readonly TurnSummary[]): RailSeam[] {
-  const at = new Map<string, number>();
-  for (const [i, s] of shown.entries()) {
-    at.set(s.id, i);
-  }
-  const out: RailSeam[] = [];
-  for (let i = 1; i < all.length; i++) {
-    const prev = all[i - 1];
-    const cur = all[i];
-    if (prev === undefined || cur === undefined) {
-      continue;
-    }
-    const ms = cur.ts - prev.ts;
-    if (ms <= GAP_THRESHOLD_MS) {
-      continue;
-    }
-    const from = at.get(prev.id);
-    if (from === undefined || at.get(cur.id) !== from + 1) {
-      continue;
-    }
-    out.push({ fromN: prev.n, toN: cur.n, ms });
-  }
-  return out;
-}
-
 function render(): void {
   if (root === undefined) {
     return;
@@ -451,44 +430,74 @@ function render(): void {
   if (summaries.length === 0 || !renderedNavigable) {
     root.setAttribute("aria-label", railLabel(0, total));
     root.replaceChildren();
+    // No signature can equal this, so flipping back to navigable re-renders.
+    renderedSig = "";
     return;
   }
   const { markerPx, pitchPx } = railMetrics(root);
   const shown = selectMarkers(summaries, root.clientHeight, pitchPx, searchHitTurns());
-  // ONE span for the whole render, so a marker, a seam and the caret cannot disagree
-  // about how far down the track the session reaches.
+  // ONE span for the whole render, so two markers cannot disagree about how far down
+  // the track the session reaches.
   const span = railSpan(total, root.clientHeight, markerPx);
   // Once per render, not once per marker: the walk is over the whole resident window.
   const elapsed = residentElapsed();
-  const nodes: HTMLElement[] = [];
-  // Keyed by the turn BELOW the seam, so the marker that opens the new sitting can
-  // say what the band cannot: the band paints no text.
-  const gaps = new Map<number, string>();
-  for (const seam of railSeams(summaries, shown)) {
-    gaps.set(seam.toN, formatGap(seam.ms));
-    nodes.push(seamNode(seam, span));
-  }
-  for (const s of shown) {
-    nodes.push(markerNode(s, elapsed, gaps, span));
-  }
-  const here = hereNode(shown.length, span);
-  if (here !== undefined) {
-    nodes.push(here);
-  }
+  // Written unconditionally: it is one attribute on the container rather than a node the
+  // reader can hold, so it costs nothing and cannot go stale behind the guard below.
   root.setAttribute("aria-label", railLabel(shown.length, total));
+  const sig = renderSignature(shown, elapsed, span);
+  if (sig === renderedSig) {
+    return;
+  }
+  renderedSig = sig;
+
+  const nodes: HTMLElement[] = [];
+  for (const s of shown) {
+    nodes.push(markerNode(s, elapsed, span));
+  }
   root.replaceChildren(...nodes);
+}
+
+/** Every value the rendered nodes read, in one string. See `renderedSig`.
+ *
+ *  `markerNode` is the whole of it: `s.id`, `s.n`, `s.outcome`, `s.agent_initiated`, the
+ *  search-hit and pending flags, its elapsed value, and the three module-level marks
+ *  (`selectedID`, `activeID`, `markedID()`) that decide which single marker is filled;
+ *  `railAt` folds `total` and `span`. Joined through `keyenc`, not a separator: a turn id
+ *  is server-minted text and a collision here is a rail that stops updating. */
+function renderSignature(
+  shown: readonly TurnSummary[],
+  elapsed: ReadonlyMap<string, number>,
+  span: number,
+): string {
+  const hits = searchHitTurns();
+  const parts: string[] = [
+    String(span),
+    String(total),
+    String(shown.length),
+    selectedID ?? "",
+    activeID,
+    markedID(),
+  ];
+  for (const s of shown) {
+    parts.push(
+      "m",
+      s.id,
+      String(s.n),
+      s.outcome,
+      s.agent_initiated === true ? "1" : "0",
+      hits.has(s.n) ? "1" : "0",
+      pending.has(s.id) ? "1" : "0",
+      String(elapsed.get(s.id) ?? -1),
+    );
+  }
+  return join(...parts);
 }
 
 /** One turn's marker, positioned by the `--rail-at` fraction one CSS rule consumes.
  *  The SINGLE writer of `data-current` / `data-selected`, and exactly one of the two
  *  is written per render: both take the same filled treatment, so writing both would
  *  claim two positions. */
-function markerNode(
-  s: TurnSummary,
-  elapsed: Map<string, number>,
-  gaps: Map<number, string>,
-  span: number,
-): HTMLElement {
+function markerNode(s: TurnSummary, elapsed: Map<string, number>, span: number): HTMLElement {
   const hit = searchHitTurns().has(s.n);
   const isPending = pending.has(s.id);
   const elapsedMs = elapsed.get(s.id);
@@ -498,7 +507,6 @@ function markerNode(
     pending: isPending,
     hit,
     elapsedMs,
-    gapBefore: gaps.get(s.n),
   });
   const btn = el(
     "button",
@@ -535,8 +543,8 @@ function markerNode(
   if (hit) {
     btn.dataset["hit"] = "";
   }
-  // A `<time>` carrying both spellings of one value, matching the turn footer's slot.
-  // No element at all when the store cannot answer.
+  // The app's ONE machine-readable duration: the `datetime` and the text are two
+  // spellings of one value. No element at all when the store cannot answer.
   if (elapsedMs !== undefined) {
     btn.appendChild(
       el(
@@ -557,37 +565,6 @@ function markerNode(
     void navigateToTurn(s);
   });
   return btn;
-}
-
-/** The reader-position caret, drawn only on a DOWNSAMPLED rail: on a session where
- *  every turn has a marker the marker's own fill is the position mark. Its subject is
- *  `markedID()`'s turn, the same value `markerNode` compares against, so the caret
- *  and the filled marker cannot claim two positions. It is `aria-hidden`, is not a
- *  button and is not a hit target, so it competes for no slot. */
-function hereNode(shown: number, span: number): HTMLElement | undefined {
-  if (shown >= total) {
-    return undefined;
-  }
-  const n = summaryByID.get(markedID())?.n;
-  if (n === undefined) {
-    return undefined;
-  }
-  const node = el("div", { className: "rail-here", "aria-hidden": "true" });
-  node.style.setProperty("--rail-at", String(railAt(n, total, span)));
-  return node;
-}
-
-/** A seam's band, sized from the same `railAt` values the markers use. It paints no
- *  text at rest, so the elapsed time reaches the reader through the label alone. */
-function seamNode(seam: RailSeam, span: number): HTMLElement {
-  const node = el("div", {
-    className: "rail-seam",
-    role: "separator",
-    "aria-label": seamLabel(formatGap(seam.ms), seam.fromN, seam.toN),
-  });
-  node.style.setProperty("--rail-from", String(railAt(seam.fromN, total, span)));
-  node.style.setProperty("--rail-to", String(railAt(seam.toN, total, span)));
-  return node;
 }
 
 /** The turn the rail claims the reader is at: their own pick while they hold one,
@@ -625,20 +602,6 @@ function residentElapsed(): Map<string, number> {
     }
   }
   return out;
-}
-
-/** `2h`. Coarse on purpose — the point is that a seam exists, not how many minutes
- *  it was. */
-function formatGap(ms: number): string {
-  const days = Math.floor(ms / 86_400_000);
-  if (days >= 1) {
-    return `${String(days)}d`;
-  }
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours >= 1) {
-    return `${String(hours)}h`;
-  }
-  return `${String(Math.floor(ms / 60_000))}m`;
 }
 
 // ---------------------------------------------------------------------------

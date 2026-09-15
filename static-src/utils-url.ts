@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { isViewableImage } from "./file-extensions.js";
+import { UPLOADS_DIR } from "./upload-policy.js";
 
 /** URL safety predicate for a rendered href/src: http, https and mailto are the
  *  only allowed absolute schemes, and a scheme-less value stays allowed because
@@ -36,7 +37,26 @@ export function fileDownloadURL(path: string): string {
   return `/api/file/download?path=${encodeURIComponent(path)}`;
 }
 
-/** Rewrite a workspace-absolute image `src` to the byte-serving file route.
+/** The roots whose files the byte route above can serve, as path prefixes.
+ *
+ *  Both are granted browse mounts (`browseRoots` in
+ *  internal/composition/config.go), so `/api/file/download` resolves either one
+ *  against its confined os.Root. A path outside them is refused there and falls
+ *  through to the SPA, which answers index.html — a broken image, which is the
+ *  whole reason these prefixes are tested before a src is rewritten.
+ *
+ *  `/config` is the third granted mount and is deliberately absent: it holds the
+ *  chat store, the MCP secrets and the tool state, and the server keeps its own
+ *  sensitive-path list over them. Nothing the agent writes there belongs in a
+ *  transcript, so widening this list to match the mounts would be wrong. */
+const SERVED_ROOTS = ["/workspace/", `${UPLOADS_DIR}/`] as const;
+
+/** Is this an absolute path the byte route can serve? */
+export function isServedPath(path: string): boolean {
+  return SERVED_ROOTS.some((root) => path.startsWith(root));
+}
+
+/** Rewrite an image `src` under a served root to the byte-serving file route.
  *
  *  The agent can already produce a PNG — it drives the Chromium sidecar — and
  *  writes `![shot](/workspace/out/shot.png)`. The markdown renderer emits that
@@ -45,13 +65,13 @@ export function fileDownloadURL(path: string): string {
  *  agent had better sight of its own artefacts than the operator did.
  *
  *  `/api/file/download` is the route that serves BYTES; `/api/file` returns JSON
- *  and would render nothing. Anything not workspace-rooted with an image
- *  extension is returned untouched, so ordinary remote images and links are
+ *  and would render nothing. Anything outside SERVED_ROOTS, or without an image
+ *  extension, is returned untouched, so ordinary remote images and links are
  *  unaffected.
  */
-export function rewriteWorkspaceImageSrc(src: string): string {
+export function rewriteServedImageSrc(src: string): string {
   const trimmed = src.trim();
-  if (!trimmed.startsWith("/workspace/") || !isViewableImage(trimmed)) {
+  if (!isServedPath(trimmed) || !isViewableImage(trimmed)) {
     return src;
   }
   return fileDownloadURL(trimmed);

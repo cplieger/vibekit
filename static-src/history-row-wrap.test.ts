@@ -24,25 +24,34 @@ let style: HTMLStyleElement;
 let frame: HTMLIFrameElement;
 let phone: Document;
 
-/** A history row as `history.ts` `buildRow` assembles one: kind chip, the title
- *  block, the timestamp, then the delete control. */
+/** A history row as `history.ts` `buildRow` assembles one: the open control
+ *  holding the kind chip, the title block and the timestamp, then the delete
+ *  control beside it. */
 function mountRow(
   doc: Document,
   stamp: string,
-): { row: HTMLElement; title: HTMLElement; name: HTMLElement; meta: HTMLElement } {
+): {
+  row: HTMLElement;
+  main: HTMLElement;
+  title: HTMLElement;
+  name: HTMLElement;
+  meta: HTMLElement;
+} {
   const container = doc.createElement("div");
   container.id = "history-table";
   container.className = "list-container";
 
   const row = doc.createElement("div");
   row.className = "list-row history-table-row";
+  const main = doc.createElement("button");
+  main.type = "button";
+  main.className = "history-row-main";
   const kind = doc.createElement("span");
   kind.className = "history-kind history-kind-chat";
   kind.textContent = "Chat";
-  const title = doc.createElement("div");
+  const title = doc.createElement("span");
   title.className = "list-row-title";
-  const name = doc.createElement("button");
-  name.type = "button";
+  const name = doc.createElement("span");
   name.className = "list-row-name";
   name.textContent = LONG_TITLE;
   title.appendChild(name);
@@ -53,10 +62,11 @@ function mountRow(
   del.type = "button";
   del.className = "history-delete";
 
-  row.append(kind, title, meta, del);
+  main.append(kind, title, meta);
+  row.append(main, del);
   container.appendChild(row);
   doc.body.replaceChildren(container);
-  return { row, title, name, meta };
+  return { row, main, title, name, meta };
 }
 
 beforeAll(() => {
@@ -124,13 +134,20 @@ describe("on a phone", () => {
     expect(without, `${without}px empty against ${withStamp}px with a date`).toBeLessThan(
       withStamp,
     );
-    // One line: the title block's own height plus the row's block padding.
-    const { row, title } = mountRow(phone, "");
-    const pad = parseFloat(getComputedStyle(row).paddingBlockStart) * 2;
-    expect(row.getBoundingClientRect().height).toBeCloseTo(
-      title.getBoundingClientRect().height + pad,
-      0,
-    );
+    // The killing observable is the empty span's POSITION, not any height: the
+    // control stretches to the row and the row's height is the taller of that
+    // control and the delete button's 44px touch target, so a zero-height second
+    // flex line moves neither box and both read as clean while the rule is gone.
+    // Where it does show is where the span SITS — pushed onto a line of its own,
+    // below the title, exactly as a real date is in the case above.
+    const { title, meta } = mountRow(phone, "");
+    const t = title.getBoundingClientRect();
+    const m = meta.getBoundingClientRect();
+    expect(m.height, "the empty span paints nothing").toBe(0);
+    expect(
+      m.top,
+      `an empty date at ${m.top} against the title's band ${t.top}..${t.bottom}`,
+    ).toBeLessThan(t.bottom);
   });
 });
 

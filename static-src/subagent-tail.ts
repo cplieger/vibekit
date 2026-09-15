@@ -16,7 +16,7 @@ export const TAIL_LINES = 3;
 
 /** One block's per-(message, block-index) streaming signal, for a caller that
  *  wants the delegate's prose to arrive in the tick its delta does. */
-export interface TailSource {
+interface TailSource {
   readonly messageID: string;
   readonly blockIndex: number;
   /** Whether the growth lands in `blockThinkingSigs` rather than `blockTextSigs`. */

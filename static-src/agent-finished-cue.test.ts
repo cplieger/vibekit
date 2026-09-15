@@ -48,7 +48,7 @@ const notify = vi.hoisted(() => ({
 vi.mock("./notify.js", () => ({
   NOTIFY_TITLE: "Vibekit",
   isAgentFinishedEnabled: () => notify.enabled,
-  notifyIfHidden: (_title: string, body: string) => {
+  notifyIfHidden: (_title: string, body: string, _target: unknown) => {
     notify.raised.push(body);
     return true;
   },

@@ -36,7 +36,9 @@ import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
-import { reconcile } from "./reconcile.js";
+import { reconcile, KEY_ATTR } from "./reconcile.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
+import { classify, emptyNote, type Nouns } from "./textsearch/copy.js";
 import type {
   AptPackage,
   CatalogInfo,
@@ -46,6 +48,21 @@ import type {
   SearchResponse,
   ToolInfo,
 } from "./types.js";
+
+/** A hit is a tool; what the engine reads is the catalog and the host's package
+ *  index, so the scanned unit is a source. */
+const NOUNS: Nouns = {
+  match: { one: "tool", many: "tools" },
+  scanned: { one: "source", many: "sources" },
+};
+
+/** The readout over a non-empty list. The reply carries no count of what
+ *  matched, only that a block was cut to its cap, so the cut is stated without
+ *  a denominator until the engine reports one. */
+function resultCount(shown: number, cut: boolean): string {
+  const count = `${String(shown)} shown`;
+  return cut ? `${count}; more matched than shown, narrow the query to see the rest` : count;
+}
 
 /** Trailing-edge debounce for the catalog search input. `cancel` exists because
  *  the same search has two immediate doors (Enter, the button): without it each
@@ -260,7 +277,8 @@ class ToolsManager {
    *  filter re-paint without a round trip. Null means the request failed,
    *  which is a different thing from an empty result set. */
   private lastSearch: SearchResponse | null = null;
-  /** The trimmed query that produced `lastSearch`, for the empty-state note.
+  /** The trimmed query that produced `lastSearch`: an empty one makes a
+   *  no-rows reply a browse of the featured set rather than a search answer.
    *  Read rather than the live input value, which the reader may already have
    *  edited past the results on screen. */
   private lastQuery = "";
@@ -558,7 +576,7 @@ class ToolsManager {
 
     // Drop any non-keyed empty-state placeholder before reconciling.
     for (const child of [...container.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
+      if ((child as HTMLElement).getAttribute(KEY_ATTR) === null) {
         child.remove();
       }
     }
@@ -973,33 +991,57 @@ class ToolsManager {
    *  back. */
   private paintSearch(): void {
     const box = f.results;
-    box.replaceChildren();
     const d = this.lastSearch;
     if (d === null) {
+      box.replaceChildren();
       f.resultCount.textContent = "";
-      box.appendChild(el("div", { className: "list-empty" }, "Catalog unavailable"));
+      box.appendChild(el("div", { className: "list-empty" }, emptyNote({ kind: "failed" }, NOUNS)));
       return;
     }
     const hits = this.orderHits(d.results);
-    f.resultCount.textContent = hits.length === 0 ? "" : `${String(hits.length)} shown`;
+    f.resultCount.textContent = hits.length === 0 ? "" : resultCount(hits.length, d.truncated);
 
     this.paintShellNote(d.apt_available);
 
     if (hits.length === 0) {
-      box.appendChild(
-        el(
-          "div",
-          { className: "list-empty" },
-          this.lastQuery === ""
-            ? "Everything featured is already installed. Search by name."
-            : `Nothing matches "${this.lastQuery}".`,
-        ),
-      );
+      box.replaceChildren();
+      box.appendChild(el("div", { className: "list-empty" }, this.emptyAnswer(d)));
       return;
     }
-    for (const hit of hits) {
-      box.appendChild(this.renderSearchHit(hit));
+    // Drop a non-keyed empty-state or failure placeholder before reconciling —
+    // the same prelude the installed list runs, for the same reason.
+    for (const child of [...box.children]) {
+      if ((child as HTMLElement).getAttribute(KEY_ATTR) === null) {
+        child.remove();
+      }
     }
+    // Keyed, so a reorder moves rows rather than rebuilding them and losing an
+    // in-flight Add button's feedback cycle. Source and name because a Debian package
+    // and a catalog entry legitimately share a name (ripgrep is in both here).
+    reconcile(box, hits, {
+      key: (hit: SearchHit) => join(hit.source, hit.name),
+      mount: (hit: SearchHit) => this.renderSearchHit(hit),
+      // A kept row still repaints when the hit itself moved: a re-search can return
+      // the same tool at a new version, or newly unavailable.
+      update: (row: HTMLElement, hit: SearchHit) => {
+        if (!sigChanged(row, [wireSignature(hit)])) {
+          return;
+        }
+        row.replaceChildren(...Array.from(this.renderSearchHit(hit).childNodes));
+      },
+    });
+  }
+
+  /** The sentence for a reply with no rows. An empty query is a browse of the
+   *  featured set, so it is not a search answer and keeps its own sentence; a
+   *  search answer is classified once. `apt_available` false means the engine
+   *  could not consult the host's package index, which is a corpus it was asked
+   *  to read and did not. */
+  private emptyAnswer(d: SearchResponse): string {
+    if (this.lastQuery === "") {
+      return "Everything featured is already installed. Search by name.";
+    }
+    return emptyNote(classify({ matched: 0, shown: 0, truncated: !d.apt_available }), NOUNS);
   }
 
   /** Apply the chosen order. `relevance` returns the server's own order, which

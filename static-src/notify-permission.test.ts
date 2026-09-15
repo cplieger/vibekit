@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { chatTarget } from "./push-subject.js";
 import { LS_NOTIFY_ASK_KEY } from "./ls-keys.js";
 
 const mocks = vi.hoisted(() => ({
@@ -120,7 +121,7 @@ describe("a cue that could not fire arms the ask", () => {
     const fake = shadowNotification("default", "granted");
     // The master switch is off, which is exactly why nothing was ever asked before:
     // this call refuses the cue and used to refuse silently.
-    expect(notify.notifyIfHidden("Vibekit", "Agent finished")).toBe(false);
+    expect(notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"))).toBe(false);
     expect(fake.requests).toBe(0); // the prompt needs a gesture, so not yet
     click();
     await settle();
@@ -134,7 +135,7 @@ describe("a cue that could not fire arms the ask", () => {
     // not it could. The reader is present, which is the best moment to be asked.
     expect(document.visibilityState).toBe("visible");
     const fake = shadowNotification("default", "granted");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -153,7 +154,7 @@ describe("a cue that could not fire arms the ask", () => {
     expect.assertions(1);
     localStorage.setItem(LS_NOTIFY_ASK_KEY, "1");
     const fake = shadowNotification("default", "granted");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -166,7 +167,7 @@ describe("a cue that could not fire arms the ask", () => {
     // `notifications_enabled: false`, so this marker is the only thing separating a
     // refusal from "never opted in".
     notify.spendNotifyAsk();
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -177,7 +178,7 @@ describe("a grant turns the settings switch on", () => {
   it("writes the master key and subscribes push", async () => {
     expect.assertions(4);
     shadowNotification("default", "granted");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(mocks.patches).toEqual([{ notifications_enabled: true }]);
@@ -191,7 +192,7 @@ describe("a grant turns the settings switch on", () => {
     expect.assertions(3);
     mocks.patchResult = null;
     shadowNotification("default", "granted");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(mocks.patches).toHaveLength(1);
@@ -204,7 +205,7 @@ describe("a grant turns the settings switch on", () => {
   it("writes nothing on a denial", async () => {
     expect.assertions(3);
     const fake = shadowNotification("default", "denied");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -215,7 +216,7 @@ describe("a grant turns the settings switch on", () => {
   it("records the device's answer so a reload does not ask again", async () => {
     expect.assertions(1);
     shadowNotification("default", "denied");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(localStorage.getItem(LS_NOTIFY_ASK_KEY)).toBe("1");
@@ -235,7 +236,7 @@ describe("the Settings door and the automatic one share the ask", () => {
     const fake = shadowNotification("default", "granted");
     notify.requestPermission();
     fake.permission = "default"; // the reader dismissed it rather than answering
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(1);
@@ -246,7 +247,7 @@ describe("a browser that cannot be asked", () => {
   it("declines when the Notification API is absent", async () => {
     expect.assertions(2);
     vi.stubGlobal("Notification", undefined);
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(mocks.patches).toEqual([]);
@@ -256,7 +257,7 @@ describe("a browser that cannot be asked", () => {
   it("declines when permission was already denied, which no prompt reopens", async () => {
     expect.assertions(1);
     const fake = shadowNotification("denied", "granted");
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(0);
@@ -265,7 +266,7 @@ describe("a browser that cannot be asked", () => {
   it("survives a browser that throws rather than be asked", async () => {
     expect.assertions(2);
     const fake = shadowNotification("default", null);
-    notify.notifyIfHidden("Vibekit", "Agent finished");
+    notify.notifyIfHidden("Vibekit", "Agent finished", chatTarget("c1"));
     click();
     await settle();
     expect(fake.requests).toBe(1);

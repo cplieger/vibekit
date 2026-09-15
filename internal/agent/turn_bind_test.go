@@ -20,7 +20,7 @@ func TestWireTurnStart_BindsThePendingPreOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
@@ -79,7 +79,7 @@ func TestReviseTurnBinding_HandsTheBufferToTheAgentsTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
@@ -134,7 +134,7 @@ func TestPreOpen_IsRetiredWhenItFinalizes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	failed := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	h.AbandonInFlightTurn(ctx, chatID, failed, vibekit.StopReasonInterrupted, "the pipe died")
@@ -172,7 +172,7 @@ func TestWireTurnEnd_WithNoOpenTurnPersistsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newTurnEndMsg("end_turn"))
 
@@ -221,7 +221,7 @@ func TestFold_WithNoOpenTurnOpensAWireTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newChunkMsg("nobody prompted this"))
 
@@ -251,7 +251,7 @@ func TestStartTurn_LocalShellRefusesWhileATurnIsOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// A turn the ENGINE started, so no prompt slot is held.
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -282,7 +282,7 @@ func TestReviseTurnBinding_ThePreOpenStillReceivesItsOwnBracket(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, preOpen)
@@ -338,7 +338,7 @@ func TestStartTurn_PromptClosesALiveAgentTurnRatherThanDisplacingIt(t *testing.T
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// A turn the ENGINE started, streaming: no prompt slot, nothing pending.
 	h.translateACPEvent(chatID, newTurnStartMsg())
@@ -378,7 +378,7 @@ func TestFold_AStepsFrameOpensTheRunsTurnRatherThanTheChats(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newStepChunkMsg("the step wrote this", "wf-1", "root/step"))
 
@@ -407,7 +407,7 @@ func TestFold_AStepsFrameDoesNotReclassifyTheChatsOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, epoch)
@@ -433,7 +433,7 @@ func TestStartTurn_PromptDisplacesAStepDrivenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent(chatID, newStepChunkMsg("the step got this far", "wf-1", "root/step"))
 	stepTurn, _ := h.coord.turns.openEpoch(chatID)

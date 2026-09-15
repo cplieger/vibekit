@@ -21,7 +21,7 @@ func TestSplitSegment_SealsTheSegmentAndClearsThePerMessageFields(t *testing.T) 
 	buf.AppendToolUseBlock("t-1", "")
 	buf.AppendCodeReferences([]vibekit.CodeReference{{LicenseName: "MIT"}})
 
-	snap := buf.SplitSegment()
+	snap, _ := buf.SplitSegment()
 
 	if snap.MessageID != "m-1" {
 		t.Errorf("sealed segment MessageID = %q, want %q", snap.MessageID, "m-1")
@@ -69,7 +69,7 @@ func TestSplitSegment_KeepsThePerTurnFields(t *testing.T) {
 	buf.StartTurn("m-1")
 	buf.SetModel("opus-5")
 	buf.TrackFileChanges([]vibekit.ToolDiff{{Path: "a.go", OldText: "x\n", NewText: "x\ny\n"}}, false)
-	_, seqBefore := buf.AppendTextDelta("before", "")
+	_, seqBefore, _ := buf.AppendTextDelta("before", "")
 
 	buf.SplitSegment()
 
@@ -80,7 +80,7 @@ func TestSplitSegment_KeepsThePerTurnFields(t *testing.T) {
 	if len(after.ChangedFiles) != 1 || after.ChangedFiles["a.go"] == nil {
 		t.Errorf("after the split ChangedFiles = %v, want the turn's cumulative map", after.ChangedFiles)
 	}
-	if _, seqAfter := buf.AppendTextDelta("after", ""); seqAfter != seqBefore+1 {
+	if _, seqAfter, _ := buf.AppendTextDelta("after", ""); seqAfter != seqBefore+1 {
 		t.Errorf("after the split the next seq = %d, want %d (the watermark needs it monotonic)",
 			seqAfter, seqBefore+1)
 	}
@@ -109,7 +109,7 @@ func TestSplitSegment_ATurnThatEmittedNothingIsUntouched(t *testing.T) {
 	buf := New()
 	buf.SetModel("opus-5")
 
-	snap := buf.SplitSegment()
+	snap, _ := buf.SplitSegment()
 
 	if snap.Started || snap.Segmented {
 		t.Errorf("splitting an unstarted turn reported Started = %t, Segmented = %t; want both false",
@@ -128,7 +128,7 @@ func TestSplitSegment_AMintedIDWithNoDeltaIsUntouched(t *testing.T) {
 	buf := New()
 	buf.StartTurn("m-1")
 
-	snap := buf.SplitSegment()
+	snap, _ := buf.SplitSegment()
 
 	if !snap.Started {
 		t.Fatal("the fixture did not start the turn, so it exercises the unstarted case instead")
@@ -143,6 +143,40 @@ func TestSplitSegment_AMintedIDWithNoDeltaIsUntouched(t *testing.T) {
 	if !after.Started || after.MessageID != "m-1" {
 		t.Errorf("after the refused split Started = %t, MessageID = %q; want true and %q",
 			after.Started, after.MessageID, "m-1")
+	}
+}
+
+// The agent-side id is cleared even by a split that seals nothing, and that position
+// is the whole guard: the latch runs ahead of the steer filter's empty-text return, so
+// a marker-only delta can latch one record's id in a segment that emits nothing, and
+// carrying it forward would pair the NEXT segment's row with the previous record.
+func TestSplitSegment_ResetsTheAgentSideIDEvenWhenNothingWasEmitted(t *testing.T) {
+	buf := New()
+	buf.StartTurn("m-1")
+	buf.SetKASMessageID("say-1")
+
+	snap, _ := buf.SplitSegment()
+
+	if !snap.EmittedNothing {
+		t.Fatal("the fixture emitted content, so it exercises the sealing path instead of the early return")
+	}
+	if snap.KASMessageID != "say-1" {
+		t.Errorf("sealed snapshot KASMessageID = %q, want %q", snap.KASMessageID, "say-1")
+	}
+	after := buf.TakeTurn()
+	if after.KASMessageID != "" {
+		t.Errorf("after the empty split KASMessageID = %q, want it cleared; the next segment's row would pair with that record instead of its own",
+			after.KASMessageID)
+	}
+	if !after.Started || after.MessageID != "m-1" {
+		t.Errorf("after the empty split Started = %t, MessageID = %q; want true and %q",
+			after.Started, after.MessageID, "m-1")
+	}
+
+	buf.SetKASMessageID("say-2")
+
+	if got := buf.TakeTurn().KASMessageID; got != "say-2" {
+		t.Errorf("the next segment latched KASMessageID = %q, want %q", got, "say-2")
 	}
 }
 
@@ -163,6 +197,7 @@ func TestToolsSettled(t *testing.T) {
 			status: []vibekit.ToolStatus{vibekit.ToolCompleted, vibekit.ToolFailed},
 			want:   true,
 		},
+		{name: "an aborted call is terminal too", status: []vibekit.ToolStatus{vibekit.ToolAborted}, want: true},
 		{name: "a pending call", status: []vibekit.ToolStatus{vibekit.ToolPending}, want: false},
 		{name: "an in-progress call", status: []vibekit.ToolStatus{vibekit.ToolInProgress}, want: false},
 		{

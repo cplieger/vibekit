@@ -19,9 +19,10 @@ import (
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // handleRun: GET /api/runs/{workflowId} → one run's full state. Two things happen besides
@@ -150,7 +151,9 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	webhttp.WriteJSON(w, vibekit.LiveRunsResponse{Runs: rr.runs.liveRunRows()})
+	rows, stamp := rr.runs.liveRunRowsStamped()
+	stamp.Epoch = rr.epoch()
+	webhttp.WriteJSON(w, vibekit.LiveRunsResponse{Runs: rows, Subject: stamp})
 }
 
 // liveRunRows projects every held lease. ONE projection with TWO doors — this route and
@@ -158,7 +161,14 @@ func (rr *runRoutes) handleLiveRuns(w http.ResponseWriter, r *http.Request) {
 // the two answers cannot disagree about what a live run IS. Cannot fail: Store.List
 // returns a clone under its own lock.
 func (rs *Runs) liveRunRows() []vibekit.LiveRun {
-	held := rs.leaseStore().List()
+	rows, _ := rs.liveRunRowsStamped()
+	return rows
+}
+
+// liveRunRowsStamped is liveRunRows with the `runs` stamp, the lease store's own
+// collection version paired with the set under the store's lock.
+func (rs *Runs) liveRunRowsStamped() ([]vibekit.LiveRun, *vibekit.SubjectStamp) {
+	held, version := rs.leaseStore().ListStamped()
 	out := make([]vibekit.LiveRun, 0, len(held))
 	for i := range held {
 		out = append(out, vibekit.LiveRun{
@@ -167,7 +177,7 @@ func (rs *Runs) liveRunRows() []vibekit.LiveRun {
 			Executing:  held[i].Bounded(),
 		})
 	}
-	return out
+	return out, vibekit.NewSubjectStamp(string(subject.KindRuns), "", version)
 }
 
 // status reads one run's current status, or "" when the run is unknown, which the caller

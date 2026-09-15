@@ -38,6 +38,7 @@ import {
 } from "../icons.js";
 import { formatElapsed } from "../strings.js";
 import { elapsed, type ExecNode } from "./model.js";
+import { place } from "./place.js";
 import { STATE_WORD, paintStateMark, type ExecState } from "./status.js";
 
 /** The kind glyph: a step gets the agent hexagon; a container gets a glyph
@@ -188,13 +189,19 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     }
   }
 
-  function paint(node: ExecNode, depth: number, selected: string, into: HTMLElement): void {
+  function paint(
+    node: ExecNode,
+    depth: number,
+    selected: string,
+    into: HTMLElement,
+    index: number,
+  ): void {
     let row = rows.get(node.path);
     if (row === undefined) {
       row = buildRow(node, depth);
       rows.set(node.path, row);
     }
-    into.appendChild(row.root);
+    place(into, row.root, index);
 
     row.label.textContent = node.label;
     row.sub.textContent = node.subtitle ?? "";
@@ -243,14 +250,15 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
     }
     row.chevron.hidden = !row.collapsible;
     row.kids ??= el("div", { className: "ev-kids", role: "group" });
-    row.root.appendChild(row.kids);
-    // Rebuilt as an ordering pass: appending in plan order moves the existing
-    // reconciled rows rather than replacing them, so a selected or collapsed
-    // descendant survives.
+    // Index 1: `.ev-row-main` is this row's first child and never moves.
+    place(row.root, row.kids, 1);
+    // An ordering pass over the existing reconciled rows rather than a rebuild, so a
+    // selected or collapsed descendant survives. `place` is what keeps a row that is
+    // ALREADY in position untouched — see its own note for what a re-append costs.
     const kids = row.kids;
-    for (const child of node.children) {
-      paint(child, depth + 1, selected, kids);
-    }
+    node.children.forEach((child, i) => {
+      paint(child, depth + 1, selected, kids, i);
+    });
     applyCollapse(row);
   }
 
@@ -271,9 +279,9 @@ export function buildExecTree(onSelect: (path: string) => void): ExecTreeView {
           rows.delete(path);
         }
       }
-      for (const n of nodes) {
-        paint(n, 0, selected, root);
-      }
+      nodes.forEach((n, i) => {
+        paint(n, 0, selected, root, i);
+      });
     },
     tick() {
       for (const row of rows.values()) {

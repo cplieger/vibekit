@@ -49,6 +49,6 @@ func TestNew_SeedsTheRunOutcomePreference(t *testing.T) {
 		t.Fatal("run_outcome has no preference entry, so every send of it is dropped before the wire")
 	}
 	if !on {
-		t.Error("run_outcome defaults off; the registry row is DefaultOn like both other keyed kinds")
+		t.Error("run_outcome defaults off; the registry row is DefaultOn like agent_finished")
 	}
 }

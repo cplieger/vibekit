@@ -21,6 +21,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -37,7 +38,7 @@ const ShellTimeout = 30 * time.Second
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
 func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
-	err = chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 		}
@@ -49,11 +50,18 @@ func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaste
 			}
 			c.Name = name
 		}
-		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
-	return persisted, err
+	if err != nil || !persisted {
+		return persisted, err
+	}
+	// After the save, stamped from its return: the frame completes the transcript
+	// projection for this mutation.
+	frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	bus.Broadcast(ctx, frame)
+	return persisted, nil
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
@@ -135,12 +143,13 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
+	// AppendMessage broadcasts the message_appended itself, stamped from the save;
+	// a second broadcast here would be a frame with no version source.
 	appendErr := roles.chats.AppendMessage(ctx, cmd.ChatID, &assistantMsg)
 	if appendErr != nil {
 		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
 	}
 	if _, stillExists := roles.chats.Get(ctx, cmd.ChatID); stillExists {
-		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
 		roles.turnOutcome.FinalizeLocalShellTurn(ctx, cmd.ChatID, epoch)
 	}
 	return responseOK, nil

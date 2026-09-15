@@ -19,12 +19,7 @@ import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, clearToolCallSig, toolCallSigKey } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 
-import {
-  maybeCollapseGroup,
-  formatDuration,
-  trackInProgress,
-  untrackInProgress,
-} from "./tool-group.js";
+import { maybeCollapseGroup } from "./tool-group.js";
 import { isToolDone, type ToolKind } from "./tool-schema.js";
 import {
   buildToolCard,
@@ -272,10 +267,7 @@ export function disposeToolEffectsForChat(chatID: string, withinEl?: HTMLElement
  *  effect is disposed, the slot, the card and the SIGNAL stay, so background
  *  `tool_call_update`s keep landing in the store with no DOM write behind
  *  them, and resume can re-read the latest snapshot. Only slots inside the
- *  parking view: a card on another surface keeps its live effect. Also stops
- *  the shared duration ticker for the suspended in-progress cards — that
- *  ticker writes text into the card every second, which a parked view must
- *  never receive. */
+ *  parking view: a card on another surface keeps its live effect. */
 export function suspendToolEffectsFor(
   chatID: string,
   toolIDs: readonly string[],
@@ -288,16 +280,14 @@ export function suspendToolEffectsFor(
       }
       slot.cleanup();
       slot.cleanup = null;
-      untrackInProgress(slot.card);
     }
   }
 }
 
 /** Re-arm suspended tool-card effects (view unparked): apply the CURRENT
  *  signal snapshot to the card — everything that arrived while parked lands in
- *  one write — then subscribe again, and rejoin the duration ticker when the
- *  card is still running. Slots that are already live (a card mounted by the
- *  catch-up paint) are left alone, so a resume pass is idempotent. */
+ *  one write — then subscribe again. Slots that are already live (a card mounted
+ *  by the catch-up paint) are left alone, so a resume pass is idempotent. */
 export function resumeToolEffectsFor(
   chatID: string,
   toolCalls: readonly ToolCall[],
@@ -320,9 +310,6 @@ export function resumeToolEffectsFor(
         applyToolCallUpdate(card, next, chatID);
         lastApplied = next;
       });
-      if (card.dataset["outcome"] === "running" && card.dataset["startMs"] !== undefined) {
-        trackInProgress(card);
-      }
     }
   }
 }
@@ -528,10 +515,20 @@ export function initToolCallbacks(cbs: {
  *  the slot registry keys on the composite. The caller owns the slot's
  *  disposal (`disposeToolSlot` against its render lifetime); the view-level
  *  sweep is the belt behind it. */
-export function mountToolCallCard(chatID: string, tc: ToolCall): HTMLDivElement {
+export function mountToolCallCard(
+  chatID: string,
+  tc: ToolCall,
+  detailsOpen = false,
+): HTMLDivElement {
   // The chat travels into the card because a previewed call's bulk is addressed
   // by (chat, call): `GET /api/chats/{id}/tools/{toolCallID}`.
   const opts = toolCardOptsFor(tc, true, chatID);
+  if (detailsOpen) {
+    // NOT part of `toolCardOptsFor`: whether the reader had this card open is a fact
+    // about the RENDER, not about the tool call, and the mapper is a pure field copy
+    // from the wire record.
+    opts.detailsOpen = true;
+  }
   const card = buildToolCard(opts);
   const key = toolCallSigKey(chatID, tc.id);
   const slots = toolSlots.get(key) ?? [];
@@ -596,16 +593,11 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall, chatID: string): 
     applyDiffUpdate(el, tc.diffs);
   }
   if (tc.status !== undefined) {
-    applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
+    applyStatusUpdate(el, tc.status, tc.id);
   }
 }
 
-function applyStatusUpdate(
-  card: HTMLDivElement,
-  status: ToolStatus,
-  serverDurationMs: number | undefined,
-  toolId: string,
-): void {
+function applyStatusUpdate(card: HTMLDivElement, status: ToolStatus, toolId: string): void {
   // The outcome is the glyph's, through the one writer that owns that
   // vocabulary. This used to set `.tool-status` text to the wire enum, so a
   // finished card printed the word `completed`.
@@ -626,21 +618,10 @@ function applyStatusUpdate(
   const done = isToolDone(status);
   if (done) {
     card.querySelector(".tool-spinner")?.remove();
-    untrackInProgress(card);
-    // `data-start-ms` MEANS this card is in flight — the elapsed ticker reads it and
-    // `autoCollapseGroup` refuses to fold a group holding one — so it is dropped on
-    // every settle, not only when it is the duration's source. The server sends
-    // `duration_ms` for any tool that took a millisecond, so the fallback below never
-    // ran on the live path and every group kept a member marked running for the rest
-    // of the session, which is what stopped superseded groups folding.
-    const startedAt = card.dataset["startMs"];
+    // `data-start-ms` MEANS this card is in flight — `autoCollapseGroup` refuses to
+    // fold a group holding one — so it is dropped on every settle. A group that kept
+    // a member marked running is a group that never folded once superseded.
     delete card.dataset["startMs"];
-    const ms =
-      serverDurationMs ?? (startedAt === undefined ? 0 : Date.now() - parseInt(startedAt, 10));
-    const dur = card.querySelector(".tool-duration");
-    if (dur !== null && ms >= 1000) {
-      dur.textContent = formatDuration(ms);
-    }
     maybeCollapseGroup(card);
     const group = card.closest(".tool-group");
     if (group !== null) {

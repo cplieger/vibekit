@@ -25,7 +25,7 @@ import (
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // mcpServerState is an alias for the vibekit-level MCPServerState enum.

@@ -65,6 +65,10 @@ type cache struct {
 	gen       uint64
 	size      int64
 	mu        sync.Mutex
+	// writeMu serializes Update's read-modify-write for this configDir. Separate
+	// from mu, which guards the cached bytes for the length of one field access
+	// and is taken inside the window this one holds.
+	writeMu sync.Mutex
 }
 
 var (

@@ -15,6 +15,7 @@ Usage:
   python3 scripts/css-contrast.py ramp          # the surface ramp, both themes
   python3 scripts/css-contrast.py pairs         # the interaction/selection pairs
   python3 scripts/css-contrast.py text          # text-on-surface AA checks
+  python3 scripts/css-contrast.py ink           # every text ink x every surface text sits on
   python3 scripts/css-contrast.py selected      # the inks that sit ON a selected fill
   python3 scripts/css-contrast.py shadow        # elevation layers vs the surface below
   python3 scripts/css-contrast.py ansi          # the 16-colour ANSI palette vs its surface
@@ -281,6 +282,9 @@ class Theme:
                 return mix_srgb(colours[0], w0, colours[1])
             raise ValueError(f"unsupported mix space {space}: {e}")
 
+        if low.startswith("oklch(from "):
+            return self._relative_oklch(e, _depth)
+
         if low.startswith("oklch("):
             inner = func_body(e, "oklch")
             assert inner is not None
@@ -332,6 +336,67 @@ class Theme:
             return Colour(vals[0], vals[1], vals[2], a)
 
         raise ValueError(f"cannot resolve {e!r}")
+
+    def _relative_oklch(self, e: str, depth: int) -> Colour:
+        """`oklch(from <colour> <l> <c> <h> [/ <a>])`, CSS Color 5 relative colour
+        syntax. Each channel is the keyword naming the origin's own channel (`l`,
+        `c`, `h`, `alpha`), a literal (`35.5%`, `0.04`, `86.5deg`), or a
+        `calc(<keyword> +|- <number>)` over one. This is what lets a tint hold a
+        surface's LIGHTNESS and spend chroma, which `color-mix()` cannot: mixing
+        a pastel into a dark rung lifts it toward the ink (01-tokens.css names the
+        trap at the diff backgrounds), so a hue wash over the band ended up as deep
+        as the elevated fill and took hint ink under AA."""
+        inner = func_body(e, "oklch")
+        assert inner is not None
+        body = inner.strip()[len("from") :].strip()
+        # The origin colour is the first top-level argument; split on whitespace
+        # outside parentheses.
+        depth_n, cut = 0, None
+        for i, ch in enumerate(body):
+            if ch == "(":
+                depth_n += 1
+            elif ch == ")":
+                depth_n -= 1
+            elif ch.isspace() and depth_n == 0:
+                cut = i
+                break
+        if cut is None:
+            raise ValueError(f"relative colour with no channels: {e}")
+        origin = self.resolve(body[:cut], depth + 1)
+        rest = body[cut:].strip()
+        alpha_expr = None
+        if "/" in rest:
+            rest, alpha_expr = rest.rsplit("/", 1)
+        L0, C0, H0 = colour_to_oklch(origin)
+        base = {"l": L0 * 100, "c": C0, "h": H0, "alpha": origin.a}
+        chans = [p for p in re.split(r"\s+(?![^()]*\))", rest.strip()) if p]
+        if len(chans) != 3:
+            raise ValueError(f"relative oklch wants l c h, got {chans!r}: {e}")
+
+        def chan(expr: str, name: str) -> float:
+            x = expr.strip().lower()
+            if x in base:
+                return base[x]
+            m = re.fullmatch(
+                r"calc\(\s*(l|c|h|alpha)\s*([+-])\s*([\d.]+)(%|deg)?\s*\)", x
+            )
+            if m:
+                v = base[m.group(1)]
+                d = float(m.group(3))
+                return v + d if m.group(2) == "+" else v - d
+            if x.endswith("%"):
+                return float(x[:-1])
+            if x.endswith("deg"):
+                return float(x[:-3])
+            if x == "none":
+                return 0.0
+            return float(x)
+
+        L = chan(chans[0], "l") / 100
+        C = chan(chans[1], "c")
+        H = chan(chans[2], "h")
+        a = chan(alpha_expr, "alpha") if alpha_expr is not None else origin.a
+        return oklch_to_colour(L, C, H, a)
 
     def colour(self, token: str) -> Colour:
         if token not in self._cache:
@@ -417,6 +482,124 @@ def show_ramp(themes: list[Theme], rungs: list[str]) -> None:
         if len(present) >= 2:
             e2e = contrast(th.flat(present[0]), th.flat(present[-1]))
             print(f"    end to end ({present[0]} -> {present[-1]}): {fmt(e2e)}:1")
+        print()
+
+
+# Where a well sits: the turn body (prose `pre`, `.turn-raw`) and a box (a tool
+# card's details, a run step). The page and the band never host one.
+WELL_HOSTS = ("--c-turn-body", "--c-bg-secondary")
+
+# The ramp's page->card half-step in dark is 4.0 oklch-L points; a well must drop at
+# least that from its host. WCAG cannot floor it: below the L19 body no shadow
+# reaches 1.15:1, so the ratio is reported, not gated.
+WELL_MIN_DROP = 4.0
+
+
+def show_well(themes: list[Theme]) -> None:
+    print("THE WELL (--c-well) vs the two rungs that host it: an oklch-L DROP,")
+    print(f"  floored at {WELL_MIN_DROP} points, the ramp's own smallest step")
+    for th in themes:
+        print(f"  {th.name}:")
+        for host in WELL_HOSTS:
+            hb = th.flat(host)
+            well = th.flat("--c-well").over(hb)
+            drop = (colour_to_oklch(hb)[0] - colour_to_oklch(well)[0]) * 100
+            verdict = (
+                "PASS" if drop >= WELL_MIN_DROP else f"FAIL (want {WELL_MIN_DROP})"
+            )
+            print(
+                f"    well on {host.replace('--c-', ''):<14} drop {drop:5.1f} L"
+                f"  ratio {fmt(contrast(well, hb))}:1  [{well.hex()} vs {hb.hex()}]  {verdict}"
+            )
+        print()
+
+
+# THE INK RAMP: every text ink is authored against the hovered box, the strongest
+# surface text sits on, so one table over every (ink, surface) pair is the whole
+# contract (01-tokens.css "SEEDS: ink"). Three surfaces are OUTSIDE the set and
+# host only primary and secondary: the elevated press fill, the HOVERED band and
+# the selected fill. They are printed too, floored for the two inks they host and
+# reported bare for the rest, so a hint or a status ink landing on one reads as a
+# number rather than as a gap in the table.
+INK_TEXT: list[str] = [
+    "--c-text-secondary",
+    "--c-text-tertiary",
+    "--c-green",
+    "--c-red",
+    "--c-yellow",
+    "--c-blue",
+    "--c-danger",
+    "--c-warning",
+    "--c-link",
+    "--c-teal",
+]
+INK_TWO_LEVEL: list[str] = ["--c-text-primary", "--c-text-secondary"]
+INK_SURFACES: list[tuple[str, str]] = [
+    ("page", "var(--c-bg-primary)"),
+    ("card", "var(--c-turn-body)"),
+    ("box", "var(--c-bg-secondary)"),
+    ("band", "var(--c-bg-tertiary)"),
+    ("band(stopped)", "var(--c-band-stopped)"),
+    ("band(broken)", "var(--c-band-broken)"),
+    ("band(added)", "var(--c-band-added)"),
+    ("hover(page)", "over(var(--c-hover), var(--c-bg-primary))"),
+    ("hover(card)", "over(var(--c-hover), var(--c-turn-body))"),
+    ("hover(box)", "over(var(--c-hover), var(--c-bg-secondary))"),
+    ("hover-select(box)", "over(var(--c-hover-select), var(--c-bg-secondary))"),
+]
+INK_TWO_LEVEL_SURFACES: list[tuple[str, str]] = [
+    ("elevated", "var(--c-bg-elevated)"),
+    ("hover(band)", "over(var(--c-hover), var(--c-bg-tertiary))"),
+    ("selected", "var(--c-selected-bg)"),
+]
+INK_FLOOR = 4.5
+
+
+def show_ink_ramp(themes: list[Theme]) -> None:
+    print("INK RAMP (WCAG 1.4.3: every text ink clears 4.5:1 on every surface text")
+    print("sits on, hovered included; the three two-level surfaces host primary and")
+    print("secondary only and are floored for those two alone)")
+    for th in themes:
+        print(f"  {th.name}:")
+        inks = {t: th.flat(t) for t in INK_TEXT}
+        pri = th.flat("--c-text-primary")
+        head = "".join(
+            f"{t.replace('--c-text-', '').replace('--c-', ''):>10}" for t in INK_TEXT
+        )
+        print(f"    {'surface':<18}{head}")
+        for name, expr in INK_SURFACES:
+            s = th.resolve(expr)
+            row = ""
+            for c in inks.values():
+                r = contrast(c, s)
+                row += f"{fmt(r):>9}{' ' if r >= INK_FLOOR else '!'}"
+            print(f"    {name:<18}{row}")
+        fails = [
+            f"{t} on {name}"
+            for name, expr in INK_SURFACES
+            for t in INK_TEXT
+            if contrast(th.flat(t), th.resolve(expr)) < INK_FLOOR
+        ]
+        print(f"    => {'PASS' if not fails else 'FAIL: ' + ', '.join(fails)}")
+        print(
+            "    two-level surfaces (primary / secondary floored; the rest reported):"
+        )
+        for name, expr in INK_TWO_LEVEL_SURFACES:
+            s = th.resolve(expr)
+            two = []
+            for t in INK_TWO_LEVEL:
+                r = contrast(th.flat(t), s)
+                two.append(
+                    f"{t.replace('--c-text-', '')} {fmt(r)}:1 {'PASS' if r >= INK_FLOOR else 'FAIL'}"
+                )
+            hint = contrast(inks["--c-text-tertiary"], s)
+            print(f"    {name:<18}{'  '.join(two)}   (hint {fmt(hint)}:1)")
+        sec, ter = th.flat("--c-text-secondary"), th.flat("--c-text-tertiary")
+        print(
+            f"    steps: hint->secondary {fmt(contrast(sec, ter))}:1"
+            f"  secondary->primary {fmt(contrast(pri, sec))}:1"
+            f"   hint sRGB {ter.hex()} (the --img-chevron stroke literal)"
+        )
         print()
 
 
@@ -631,7 +814,11 @@ AMBIENT_CANDIDATES = [
 # section header above.
 DOT_FILLS: list[tuple[str, str]] = [
     ("resting", "--c-bg-secondary"),
-    ("hover", "over(var(--c-hover), var(--c-bg-secondary))"),
+    # The TAB STRIP's own hover, which is `--c-hover-select` rather than the
+    # ladder's `--c-hover`: a tab-shaped control takes the tinted rung
+    # (01-tokens.css), so modelling the achromatic wash here would gate the dot
+    # against a fill no tab row ever paints.
+    ("hover", "over(var(--c-hover-select), var(--c-bg-secondary))"),
 ]
 DOT_SELECTED_FILLS: list[tuple[str, str]] = [
     ("selected", "--c-selected-bg"),
@@ -767,12 +954,13 @@ DOT_STATES: list[tuple[str, str, dict[str, str]]] = [
 # each is exactly as confusable as a pair drawn from one element's own states.
 # Both populations therefore go through one pairwise pass.
 #
-# A run's OWN tab row carries this silhouette on its activity dot instead, and it
-# adds NOTHING to that pass. Two reasons: such a row has no `.tab-run-dot` at all
-# (tabs.ts appends one for the chat kind only), so the mark and that dot are never
-# co-present in one cluster; and a population reusing the dot's rows above would
-# make the same-name pairs collide trivially, since they would literally be the
-# same rules. Its own separations are the `dot:` rows already in the table.
+# A run's OWN tab row carries this mark on its activity dot instead, and it is its
+# own cluster rather than a member of this one (RUN_ROW_MEMBERS below). Such a row
+# has no `.tab-run-dot` at all (tabs.ts appends one for the chat kind only), so the
+# mark and that dot are never co-present in a row and a pair drawn from both would
+# be a pair no reader can see. Merging the two into ONE population was the shape
+# that could not work: the row reuses several `dot:` rows verbatim, so the same-name
+# pairs would collide trivially against themselves.
 #
 # A ring in every state, so `fill` is spent before it starts and `band` is the
 # axis it separates its own states on. Its SILHOUETTE is a rounded square, which
@@ -814,6 +1002,28 @@ RUN_MARK_STATES: list[tuple[str, str, dict[str, str]]] = [
         },
     ),
 ]
+
+# A RUN's OWN ROW, the second cluster, and it is a MIX of the two tables above rather
+# than a table of its own: the three states the mark HAS are the mark's, because that
+# mark and this dot report ONE run and the strip may not answer with two looks, and
+# the two OUTCOMES are the dot's, because the mark withdraws when a run ends and has
+# no vocabulary for one. Naming the MEMBERS rather than copying their channels is
+# what keeps this from becoming a third transcription to keep in step.
+#
+# So the channels are re-spent rather than reduced, and the pairwise pass is where
+# that is checked: FILL says finished-or-not here (three rings against two discs)
+# where on a chat row it separates the wants-you pair, and BAND does the wants-you
+# work instead, at the mark's own 1px/2px. Both readings are internally consistent,
+# which is the whole reason the two rows are two populations.
+#
+# `idle` is absent because no producer can supply it here (run-dots.ts answers
+# "" | working | waiting | input | done | failed), and `dirty` because an editor tab
+# is not a run. Every non-`failed` member is drawn as the mark's SQUARE by the
+# kind-scoped silhouette rule, so the shapes are substituted below rather than read
+# from the dot's rows — uniformly, which is why it changes no pair's verdict and is
+# still worth doing: a matrix that prints `circle` for a row full of squares is the
+# drift the transcription checks exist to catch.
+RUN_ROW_MEMBERS = ["run:working", "run:waiting", "run:input", "dot:done", "dot:failed"]
 
 # NO ALIASES, and the empty list is the finding. `waiting` and `input` share ONE
 # ink on purpose — both mean "action required", which is the single thing
@@ -969,10 +1179,12 @@ def show_dot(themes: list[Theme]) -> None:
     show_dot_sizing(themes)
 
     print("NON-COLOUR CHANNELS (WCAG 1.4.1: colour may not be the only means of")
-    print("conveying a state). Every pair of marks a chat ROW can present — the")
-    print("activity dot's states AND the workflow mark's, which sit 8px apart and are")
-    print("permanently co-present — must differ on at least one of fill / surround /")
-    print("motion / shape / band, with motion available AND removed. A pair separated")
+    print("conveying a state). Every pair of marks ONE ROW can present must differ on")
+    print("at least one of fill / surround / motion / shape / band, with motion")
+    print("available AND removed. Two rows present more than one mark: a CHAT row's")
+    print("activity dot and workflow mark sit 8px apart and are permanently")
+    print("co-present, and a RUN sub-tab's dot answers with a mix of both marks'")
+    print("states (RUN_ROW_MEMBERS), so each row is its own pass. A pair separated")
     print(
         f"by band ALONE must clear {BAND_RATIO_FLOOR}:1, the exec column's own ratio."
     )
@@ -992,19 +1204,17 @@ def show_dot(themes: list[Theme]) -> None:
             )
     print()
 
+    print(f"  a RUN's own row presents: {', '.join(RUN_ROW_MEMBERS)}")
+    print()
+
     aliases = {frozenset(p) for p in DOT_ALIASES}
-    # ONE population, labelled by the element each state is painted on, because the
-    # two marks share a ROW rather than a position: a reader comparing them is
-    # looking at both at once, so a cross-element pair is exactly as confusable as
-    # two states of one element.
-    chat = [(f"dot:{s}", ch, False) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
-    chat += [(f"run:{s}", ch, True) for s, _ink, ch in RUN_MARK_STATES]
-    for pass_name, reduce_motion in (
-        ("motion available", False),
-        ("prefers-reduced-motion", True),
-    ):
+
+    def cluster_verdict(
+        population: list[tuple[str, dict[str, str], bool]], reduce_motion: bool
+    ) -> str:
+        """One pairwise pass over the marks ONE row can present."""
         resolved = []
-        for state, ch, is_run in chat:
+        for state, ch, is_run in population:
             eff = dict(ch)
             if reduce_motion and ch["motion"] == "animated":
                 eff.update(
@@ -1029,17 +1239,43 @@ def show_dot(themes: list[Theme]) -> None:
                 lo, hi = sorted((float(ca["band"]), float(cb["band"])))
                 if lo <= 0 or hi / lo < BAND_RATIO_FLOOR:
                     thin.append((a, b, lo, hi))
-        verdict = "PASS  every pair differs on a non-colour channel"
         if collisions:
             pairs = ", ".join(f"{a}/{b}" for a, b in collisions)
-            verdict = f"FAIL  hue is the only separator for: {pairs}"
-        elif thin:
+            return f"FAIL  hue is the only separator for: {pairs}"
+        if thin:
             pairs = ", ".join(f"{a}/{b} ({lo}px vs {hi}px)" for a, b, lo, hi in thin)
-            verdict = (
+            return (
                 f"FAIL  band is the only separator and it is under "
                 f"{BAND_RATIO_FLOOR}:1 for: {pairs}"
             )
-        print(f"  {pass_name:<24} {verdict}")
+        return "PASS  every pair differs on a non-colour channel"
+
+    # A CHAT row is ONE population labelled by the element each state is painted on,
+    # because the two marks share a ROW rather than a position: a reader comparing
+    # them is looking at both at once, so a cross-element pair is exactly as
+    # confusable as two states of one element.
+    chat = [(f"dot:{s}", ch, False) for s, _ink, ch in DOT_STATES if s != DOT_CHAT_ONLY]
+    chat += [(f"run:{s}", ch, True) for s, _ink, ch in RUN_MARK_STATES]
+
+    # A RUN row is its own, assembled by NAME from the two tables. The silhouette is
+    # substituted rather than transcribed: the kind-scoped rule squares every state
+    # but `failed`, which keeps its own rotated one.
+    channels = {f"dot:{s}": ch for s, _ink, ch in DOT_STATES}
+    channels.update({f"run:{s}": ch for s, _ink, ch in RUN_MARK_STATES})
+    run_row = []
+    for label in RUN_ROW_MEMBERS:
+        ch = dict(channels[label])
+        if ch["shape"] == "circle":
+            ch["shape"] = "square"
+        run_row.append((label, ch, label.startswith("run:")))
+
+    for pass_name, reduce_motion in (
+        ("motion available", False),
+        ("prefers-reduced-motion", True),
+    ):
+        for row_name, population in (("chat row", chat), ("run row", run_row)):
+            label = f"{row_name}, {pass_name}"
+            print(f"  {label:<40} {cluster_verdict(population, reduce_motion)}")
     for a, b in DOT_ALIASES:
         print(
             f"  {'aliased on purpose':<24} {a}/{b} share one visual; they differ in the announced name"
@@ -1154,7 +1390,8 @@ def show_dot_sizing(themes: list[Theme]) -> None:
     print("SIZING, which is the only thing that varies per theme. The hue is the")
     print("source's in both; L and C are this app's, because web-terminal-kiro has")
     print("one theme and a near-black tab chip while these rows sit on")
-    print("--c-bg-secondary under a 15%-ink hover wash. For each state this measures")
+    print("--c-bg-secondary under the tab family's tinted hover wash. For each")
+    print("state this measures")
     print("the SOURCE value on this theme's fills, and when it misses, prints the")
     print("admissible band at the source's own hue — the lightnesses that clear the")
     print("floor and the in-gamut chroma range at each — with the declared token")
@@ -1317,9 +1554,9 @@ def show_shadow(themes: list[Theme]) -> None:
 # reads none of these tokens. Measuring --c-term-bg anyway was a stricter check
 # than the app needs, which is a different thing from a correct one: it asserts a
 # floor against a surface no ANSI class can land on, so a future palette could be
-# blocked by a constraint nothing enforces. --c-bg-primary and --c-code-bg were
+# blocked by a constraint nothing enforces. --c-bg-primary and --c-well were
 # measured here even earlier and were wrong in the other direction — the page base
-# is two ramp rungs below where ANSI renders, and --c-code-bg is scoped inside the
+# is two ramp rungs below where ANSI renders, and --c-well is scoped inside the
 # assistant prose bubble, which a tool card is a SIBLING of.
 ANSI_SURFACES = ("--c-bg-secondary",)
 
@@ -1587,11 +1824,15 @@ def main() -> int:
                 "--c-bg-secondary",
                 1.25,
             ),
+            # No `selected-border vs selected-bg` row: the selected treatment has
+            # no edge channel (70-selection.css). What replaced it for the six
+            # surfaces that carry a border of their own is the resting edge, which
+            # the `border wash on the selected fill` row below reports.
             (
-                "selected-border vs selected-bg",
-                "--c-selected-border",
+                "border wash on the selected fill",
+                "color-mix(in oklch, var(--c-text-primary) 16%, var(--c-selected-bg))",
                 "--c-selected-bg",
-                1.25,
+                None,
             ),
             ("selected-fg on selected-bg", "--c-selected-fg", "--c-selected-bg", 4.5),
             (
@@ -1626,17 +1867,12 @@ def main() -> int:
             "so it must clear each rung — this is what the old opaque border could not do)"
         )
         wash_pairs: list[tuple[str, str, str, float | None]] = []
-        for tok, floor in (("--c-border", 1.3), ("--c-code-bg", 1.15)):
-            for s in surfaces:
-                wash_pairs.append(
-                    (
-                        f"{tok.replace('--c-', '')} on {s.replace('--c-bg-', '')}",
-                        tok,
-                        s,
-                        floor,
-                    )
-                )
+        for s in surfaces:
+            wash_pairs.append(
+                (f"border on {s.replace('--c-bg-', '')}", "--c-border", s, 1.3)
+            )
         show_pairs(themes, wash_pairs)
+        show_well(themes)
 
         print(
             "TINTED HAIRLINES: the color-mix(status, --c-border) sites, over their surface"
@@ -1661,14 +1897,22 @@ def main() -> int:
                 if base not in th.decls:
                     continue
                 bg = th.flat(base)
-                row = [f"    over {base:<18}"]
-                for tok in ("--c-hover", "--c-press"):
-                    if tok not in th.decls:
-                        continue
-                    w = th.colour(tok).over(bg)
-                    row.append(f"{tok}={fmt(contrast(w, bg))}:1 ({w.hex()})")
-                if len(row) > 1:
-                    print("  ".join(row))
+                # Two rungs per line: the achromatic ladder, then the TINTED one a
+                # tab-shaped control takes. Both are reported over every rung
+                # because the step is what 01-tokens.css sizes the tinted alphas
+                # against, so a retune shows up here as a moved pair.
+                for pair in (
+                    ("--c-hover", "--c-press"),
+                    ("--c-hover-select", "--c-press-select"),
+                ):
+                    row = [f"    over {base:<18}"]
+                    for tok in pair:
+                        if tok not in th.decls:
+                            continue
+                        w = th.colour(tok).over(bg)
+                        row.append(f"{tok}={fmt(contrast(w, bg))}:1 ({w.hex()})")
+                    if len(row) > 1:
+                        print("  ".join(row))
             print()
 
     if cmd in ("text", "all"):
@@ -1682,25 +1926,22 @@ def main() -> int:
             "--c-text-aside",
         ):
             for s in surfaces:
-                # The hint ink is sized against the PAGE and the CARD and is not a
-                # general-purpose ink: it clears 4.5:1 on --c-bg-primary and
-                # --c-bg-secondary and on neither rung above them. So pairing it
-                # with one of those two is a rule violation rather than a contrast
-                # result, and reporting it here as FAIL puts permanent failures in
-                # the output for combinations the app does not contain — which
-                # teaches a reader to skip the whole section. The rule is asserted
-                # where it can actually be checked, over the stylesheets:
-                # css-tokens.node.test.ts, "keeps the hint ink off a raised fill".
+                # --c-bg-elevated is a press/hover fill that hosts primary and
+                # secondary only (the INK RAMP section names the three two-level
+                # surfaces), so the hint ink on it is a rule violation rather than
+                # a contrast result, and a FAIL here would be a permanent failure
+                # for a combination the app does not contain. The rule is asserted
+                # where it can be checked, over the stylesheets:
+                # css-tokens.node.test.ts, "keeps the hint ink off the elevated
+                # fill". Every other rung, the band included, is a real floor now
+                # that the ramp is authored against the hovered box.
                 #
                 # NEITHER gate sees an `opacity`, which multiplies whatever is
                 # measured here. That hole is covered by a third check in the same
                 # file, "never dims a text ink with opacity"; a rendered sweep is
                 # the only thing that catches an ancestor-supplied surface.
                 floor = (
-                    None
-                    if t == "--c-text-tertiary"
-                    and s in ("--c-bg-tertiary", "--c-bg-elevated")
-                    else 4.5
+                    None if t == "--c-text-tertiary" and s == "--c-bg-elevated" else 4.5
                 )
                 text_pairs.append(
                     (
@@ -1723,6 +1964,18 @@ def main() -> int:
                         4.5,
                     )
                 )
+        # And on the TINTED rung, because a tab row's own label sits there: `.tab`
+        # declares --c-text-primary and the two segmented bars raise their label to
+        # it on hover, so this is the label of every tab-shaped control in the app.
+        for t in ("--c-text-control", "--c-text-primary"):
+            text_pairs.append(
+                (
+                    f"{t.replace('--c-text-', '')} on hover-select(secondary)",
+                    t,
+                    "over(var(--c-hover-select), var(--c-bg-secondary))",
+                    4.5,
+                )
+            )
         text_pairs += [
             ("accent on bg-primary", "--c-accent", "--c-bg-primary", 4.5),
             ("on-accent on accent", "--c-on-accent", "--c-accent", 4.5),
@@ -1755,11 +2008,10 @@ def main() -> int:
             "--c-warning",
         ):
             for s in ("--c-bg-secondary", "--c-bg-tertiary", "--c-bg-elevated"):
-                # Same reasoning as the hint ink above for the TOP rung: red,
-                # danger and warning land between 2.58 and 2.98 there, and the
-                # only element in the app with an --c-bg-elevated fill is
-                # .pill:active, which carries the primary ink. The structural
-                # guard covers it; a floor here would be three standing failures.
+                # Same reasoning as the hint ink above for the elevated fill: it
+                # is a two-level surface (INK RAMP), and the only element in the
+                # app with an --c-bg-elevated fill is .pill:active, which carries
+                # the primary ink. A floor here would be standing failures.
                 floor = None if s == "--c-bg-elevated" else 3.0
                 text_pairs.append(
                     (
@@ -1778,6 +2030,9 @@ def main() -> int:
                 (f"focus ring on {s.replace('--c-bg-', '')}", "--c-accent", s, 3.0)
             )
         show_pairs(themes, text_pairs)
+
+    if cmd in ("ink", "all"):
+        show_ink_ramp(themes)
 
     if cmd in ("selected", "all"):
         show_selected(themes)

@@ -19,7 +19,7 @@
 //     so a run opens the read-only run view rather than a chat.
 // ---------------------------------------------------------------------------
 
-import { toggleHistoryView, hasTab } from "./tabs.js";
+import { hasTab } from "./tabs.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -29,7 +29,10 @@ import { loadSessions } from "./actions/chat.js";
 import { registerCleanup } from "./actions/index.js";
 import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
-import type { ChatSearchMatch } from "./chat-search-types.js";
+import { openChatFindAt } from "./find-in-chat.js";
+import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
+import type { Nouns } from "./textsearch/copy.js";
+import type { Match } from "./wire/types.gen.js";
 import { openRunView } from "./run-view.js";
 import { deleteRun } from "./actions/runs.js";
 import { deleteChat as deleteChatAction } from "./actions/chat.js";
@@ -332,12 +335,12 @@ class HistoryController {
     // disk and finds conversations the loaded list does not contain.
     placeholder: "Search conversations\u2026",
     note: true,
-    // The scan is over up to 500 chat files, so the pause is longer than the
-    // shell's default: a search is per-pause here, not per-keystroke.
+    // The scan can read every chat file on disk, so the pause is longer than
+    // the shell's default: a search is per-pause here, not per-keystroke.
     debounceMs: SEARCH_DEBOUNCE_MS,
     host: () => document.getElementById("history-view"),
     query: (q) => {
-      this.query = q.trim();
+      this.query = q;
       return null;
     },
     render: () => {
@@ -345,15 +348,6 @@ class HistoryController {
     },
   });
   private query = "";
-
-  showView(): void {
-    // No callbacks: `mount` and `teardown` are what the tab factory reaches
-    // through this module's own lazy-imported `loadHistoryView` /
-    // `teardownHistoryView`, so every door into this page — this one, a boot
-    // restore, another device's open — gets the same behaviour. Passing them here
-    // as well would be two definitions of one tab.
-    void toggleHistoryView();
-  }
 
   teardown(): void {
     loadSessions.cancel();
@@ -397,28 +391,30 @@ class HistoryController {
       return;
     }
     if (res === null) {
-      this.setNote("Search failed. Check your connection.");
+      this.setNote(emptyNote({ kind: "failed" }, NOUNS));
       return;
     }
     container.replaceChildren();
     if (res.matches.length === 0) {
-      // Truncation must be stated: otherwise an empty result implies the text
-      // is nowhere, when older chats simply were not read.
+      // An unread chat must be stated: otherwise an empty result implies the
+      // text is nowhere, when one of the chats could not be read.
       this.setNote(
-        res.truncated
-          ? `No matches in the ${res.scanned} most recent conversations (older ones were not searched).`
-          : `No matches in ${res.scanned} conversations.`,
+        emptyNote(
+          classify({
+            matched: res.matched,
+            shown: 0,
+            scanned: res.scanned,
+            truncated: res.truncated,
+          }),
+          NOUNS,
+        ),
       );
       container.replaceChildren(
         el("div", { className: "list-empty" }, "No matching conversations."),
       );
       return;
     }
-    this.setNote(
-      res.truncated
-        ? `${res.matches.length} of the ${res.scanned} most recent conversations (older ones were not searched).`
-        : `${res.matches.length} matching conversations.`,
-    );
+    this.setNote(scanNote(res, res.matches.length, NOUNS));
     for (const m of res.matches) {
       container.appendChild(buildMatchRow(m));
     }
@@ -432,8 +428,8 @@ class HistoryController {
         if (id === null || id === undefined) {
           return;
         }
-        const hit = res.matches.find((x) => x.id === id);
-        void openChatTab(id, hit?.name ?? "Chat");
+        const match = res.matches.find((x) => x.id === id);
+        void openMatch(id, match, q);
       },
       { signal },
     );
@@ -570,7 +566,7 @@ function openRow(row: HistoryRow, onGone: () => void): void {
     // its own conversation rather than at the end of the strip. Whether the RUN is
     // parentless is not passed: it is the run's own fact and the composition root
     // resolves it from the run store.
-    openRunView(row.run.workflow_id, row.title, row.run.parent_chat_id ?? "");
+    void openRunView(row.run.workflow_id, row.title, row.run.parent_chat_id ?? "");
     return;
   }
   if (row.session !== undefined) {
@@ -642,24 +638,12 @@ function buildRow(row: HistoryRow): HTMLElement {
     { className: `history-kind ${isRun ? "history-kind-run" : "history-kind-chat"}` },
     isRun ? "Run" : "Chat",
   );
-  // The row's OPEN control, and a real <button> rather than a role on the row.
-  // `role="button"` is Children-Presentational, so it flattened the delete button
-  // beside it out of the accessibility tree (axe nested-interactive, serious, on
-  // every row) — the same finding the git Changes tab's file row and the
-  // disclosure headers already answered. It also never activated on Enter or
-  // Space: a role="button" needs a key handler and this page never had one, so the
-  // rows were focusable and not operable. A real button gets both from the
-  // platform, and the container's delegated click listener keeps the wide mouse
-  // target, so nothing about a click on the row changes.
-  const openBtn = el(
-    "button",
-    { type: "button", className: "list-row-name", "aria-label": `Open ${row.title}` },
-    row.title,
-  );
+  // A SPAN, not a div: the whole block sits inside the row's open <button>, and a
+  // button takes phrasing content only. Nothing selects it by tag.
   const title = el(
-    "div",
+    "span",
     { className: "list-row-title" },
-    openBtn,
+    el("span", { className: "list-row-name" }, row.title),
     row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
     // The facts line. Present only when there is something factual to say, so a
     // row vibekit knows nothing about keeps its old two-line height instead of
@@ -674,12 +658,23 @@ function buildRow(row: HistoryRow): HTMLElement {
   // row with a verdict is the third case: the glyph IS its outcome channel, so
   // the word beside it would be a second rendering of one fact.
   const showStatus = row.status !== "" && row.status !== "idle" && row.outcome === null;
-  const node = el(
-    "div",
-    {
-      className: "list-row history-table-row",
-      "data-key": row.key,
-    },
+  // The row's OPEN control IS the row's box: a real <button> holding every
+  // non-interactive part of the row, with the delete button as its SIBLING. Two
+  // shapes lost. `role="button"` on the row is Children-Presentational, so it
+  // flattened the delete button out of the accessibility tree (axe
+  // nested-interactive on every row) and never activated on Enter or Space. A
+  // button around the TITLE TEXT alone left the target the shape of that text —
+  // measured 27.8% of the row on a mouse and 39% under a finger, a band with the
+  // kind chip outside it at the leading edge, the date outside it at the trailing
+  // one, and the row's own second and third lines below it — while a click
+  // anywhere still opened the row through the container's delegated listener, so
+  // the press feedback and the focus ring described a region the pointer did not.
+  // An `::after` expander (`.tool-file-link`'s idiom) cannot reach the box from
+  // here: it is clipped by the ellipsis `overflow: hidden` on the name AND by the
+  // title column's own, and both of those clips are wanted.
+  const openBtn = el(
+    "button",
+    { type: "button", className: "history-row-main", "aria-label": `Open ${row.title}` },
     kindChip,
     title,
     showStatus ? el("span", { className: "history-status" }, row.status.replace(/_/g, " ")) : null,
@@ -692,6 +687,14 @@ function buildRow(row: HistoryRow): HTMLElement {
       { className: "list-row-meta" },
       row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "",
     ),
+  );
+  const node = el(
+    "div",
+    {
+      className: "list-row history-table-row",
+      "data-key": row.key,
+    },
+    openBtn,
     buildDeleteButton(row),
   );
   if (row.outcome !== null) {
@@ -749,12 +752,30 @@ function buildDeleteButton(row: HistoryRow): HTMLElement | null {
 /** Debounce so a search is per-pause, not per-keystroke. */
 const SEARCH_DEBOUNCE_MS = 250;
 
-function buildMatchRow(m: ChatSearchMatch): HTMLElement {
-  const detail =
-    m.best.excerpt !== ""
-      ? m.best.excerpt
-      : // A title-only match has no line to quote; say why it matched instead.
-        "matches the conversation name";
+/** This search's unit is the conversation on both axes: a match IS a chat, and
+ *  the scan reads chats. */
+const NOUNS: Nouns = {
+  match: { one: "conversation", many: "conversations" },
+  scanned: { one: "conversation", many: "conversations" },
+};
+
+/** Open a matched conversation and hand the reader to its own find, carrying the
+ *  query and stepped to the best hit — so the count the row showed is reachable
+ *  rather than a number to retype. The tab first, awaited: the switch closes and
+ *  clears the transcript's box, so the handoff has to run after it. A chat that
+ *  did not open (deleted since the search) gets no find, and a title-only match
+ *  has no hit to step to. */
+async function openMatch(id: string, match: Match | undefined, query: string): Promise<void> {
+  const outcome = await openChatTab(id, match?.name ?? "Chat");
+  if (outcome === "opened" && match?.best !== undefined) {
+    openChatFindAt(query, match.best);
+  }
+}
+
+function buildMatchRow(m: Match): HTMLElement {
+  // A title-only match carries no best hit: say why it matched instead of
+  // rendering an empty line.
+  const detail = m.best?.excerpt ?? "matches the conversation name";
   const more = m.hits > 1 ? `${m.hits} matches` : m.hits === 1 ? "1 match" : "";
   return el(
     "div",
@@ -762,24 +783,25 @@ function buildMatchRow(m: ChatSearchMatch): HTMLElement {
       className: "list-row history-table-row",
       "data-search-chat": m.id,
     },
-    el("span", { className: "history-kind history-kind-chat" }, "Chat"),
+    // The same open control the loaded list uses — the row's whole box, minus a
+    // delete button this mode does not have — so a match row answers a pointer and
+    // a keyboard exactly as a session row does.
     el(
-      "div",
-      { className: "list-row-title" },
-      // The same open control the loaded list uses, so a keyboard reaches a match
-      // row exactly as it reaches a session row.
+      "button",
+      { type: "button", className: "history-row-main", "aria-label": `Open ${m.name}` },
+      el("span", { className: "history-kind history-kind-chat" }, "Chat"),
       el(
-        "button",
-        { type: "button", className: "list-row-name", "aria-label": `Open ${m.name}` },
-        m.name,
+        "span",
+        { className: "list-row-title" },
+        el("span", { className: "list-row-name" }, m.name),
+        el("span", { className: "list-row-summary" }, detail),
       ),
-      el("span", { className: "list-row-summary" }, detail),
-    ),
-    more !== "" ? el("span", { className: "history-status" }, more) : null,
-    el(
-      "span",
-      { className: "list-row-meta" },
-      m.updated_at > 0 ? new Date(m.updated_at).toLocaleString() : "",
+      more !== "" ? el("span", { className: "history-status" }, more) : null,
+      el(
+        "span",
+        { className: "list-row-meta" },
+        m.updated_at > 0 ? new Date(m.updated_at).toLocaleString() : "",
+      ),
     ),
   );
 }
@@ -796,11 +818,16 @@ function showSkeleton(container: HTMLElement): () => void {
       const wrap = el("div", { className: "history-skeleton", "aria-hidden": "true" });
       for (let i = 0; i < 4; i++) {
         const rowEl = el("div", { className: "list-row history-table-row history-skel-row" });
-        const title = el("div", { className: "list-row-title" });
+        // `.history-row-main` on a plain div: the class owns the row's inner layout
+        // and its inset, so the skeleton lands on the real row's geometry, which is
+        // the whole point of a skeleton. Only the BUTTON form is a control.
+        const main = el("div", { className: "history-row-main" });
+        const title = el("span", { className: "list-row-title" });
         title.appendChild(skelBar("history-skel-name", "55%"));
         title.appendChild(skelBar("history-skel-summary", "38%"));
-        rowEl.appendChild(title);
-        rowEl.appendChild(skelBar("history-skel-date", "8rem"));
+        main.appendChild(title);
+        main.appendChild(skelBar("history-skel-date", "8rem"));
+        rowEl.appendChild(main);
         wrap.appendChild(rowEl);
       }
       return wrap;
@@ -830,15 +857,11 @@ registerCleanup(() => {
  *  destination here. */
 const historyFind = historyCtrl.search;
 
-export function showHistoryView(): void {
-  registerFind("history", historyFind);
-  historyCtrl.showView();
-}
-
 /** The history tab's ACTIVATION: register the page's find, and nothing else.
  *
- *  It cannot use showHistoryView(): that one toggles, so firing it from the `onShow`
- *  of an already-open, already-active tab would CLOSE the tab it was meant to fill.
+ *  It cannot use `tabs.ts`'s toggleHistoryView: that one toggles, so firing it from
+ *  the `onShow` of an already-open, already-active tab would CLOSE the tab it was
+ *  meant to fill.
  *  No fetch here — `tabs.ts` `refreshRow` calls `refreshHistoryView` right after. */
 export function loadHistoryView(): void {
   registerFind("history", historyFind);

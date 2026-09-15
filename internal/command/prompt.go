@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -170,7 +171,7 @@ func turnStopBeforeEpoch(ctx context.Context, interrupted string) (stop vibekit.
 // its bridge, detach the chat from it, and record why on the transcript.
 func refreshRetrySession(ctx context.Context, bridges BridgeAccess, chats ChatStore, chatID vibekit.ChatID) {
 	bridges.CloseBridge(chatID)
-	if err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -291,9 +292,24 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
+//
+// The broadcasts run AFTER Mutate returns, never inside the callback: a frame
+// announcing a message must not precede the save that persists it, and the
+// transcript frame carries the `chat` version Mutate minted. One Mutate here can
+// change the transcript AND the composer, and only the LAST frame it emits
+// carries the stamp: a client that received message_appended stamped and lost the
+// stream before draft_changed would hold an already-sent draft at a version the
+// digest calls unchanged. So message_appended carries the stamp only when no
+// draft_changed follows.
 func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws Workspace, chatID vibekit.ChatID, p *vibekit.PromptCommand) error {
 	supervisedDefault := supervisedDefaultSetting(ctx, ws.ConfigDir)
-	err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	var (
+		userMsg     vibekit.Message
+		appended    bool
+		hadComposer bool
+		cleared     vibekit.ComposerState
+	)
+	version, err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id: a retried prompt whose first attempt
 		// already persisted the user message skips the append and the
 		// broadcast so no duplicate user bubble renders.
@@ -305,7 +321,7 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 			c.Model = p.Model
 			c.SupervisedMode = supervisedDefault
 		}
-		userMsg := vibekit.Message{
+		userMsg = vibekit.Message{
 			ID:      p.MessageID,
 			Role:    vibekit.RoleUser,
 			Ts:      time.Now().UnixMilli(),
@@ -319,9 +335,10 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 		// The text just left the composer, so the draft holding it is
 		// spent. Cleared here too: if the client's own set_draft POST is
 		// lost, a reload would put the sent message back in the box.
-		hadComposer := c.Draft != "" || len(c.Attachments) > 0
+		hadComposer = c.Draft != "" || len(c.Attachments) > 0
 		c.Draft = ""
 		c.Attachments = nil
+		cleared = c.Composer()
 		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
@@ -329,17 +346,25 @@ func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws
 			}
 			c.Name = name
 		}
-		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
-		// Say the composer was cleared, since CmdSetDraft is not the only
-		// writer of this field: without this, every other client — and
-		// this one after a reload — keeps serving the already-sent text.
-		if hadComposer {
-			cleared := c.Composer()
-			broadcastComposer(ctx, bus, chatID, &cleared)
-		}
+		appended = true
 		return true
 	})
-	return err
+	if err != nil || !appended {
+		return err
+	}
+	appendedFrame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg)
+	if !hadComposer {
+		appendedFrame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+	}
+	bus.Broadcast(ctx, appendedFrame)
+	// Say the composer was cleared, since CmdSetDraft is not the only
+	// writer of this field: without this, every other client — and
+	// this one after a reload — keeps serving the already-sent text.
+	if hadComposer {
+		cleared.Version = version
+		broadcastComposer(ctx, bus, chatID, &cleared)
+	}
+	return nil
 }
 
 // hasMessageID reports whether the chat already contains a message with

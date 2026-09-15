@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -241,7 +242,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	}
 
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, effort) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, effort, chat.SupervisedMode) {
 			return sb, nil
 		}
 	}
@@ -254,8 +255,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.Cha
 	// session-creation path, so attaching Forward after Start deadlocks every
 	// fresh session.
 	bc.goForward(chatID, sb.bridge)
-	// Supervised is passed at creation only: KAS persists `autopilot` in its own
-	// session metadata, so session/load need not repeat it.
 	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		return nil, setupErr(err)
 	}
@@ -293,9 +292,12 @@ func (bc *BridgeCoordinator) reportSupervisedNotApplied(ctx context.Context, cha
 	}))
 }
 
-// tryLoadSession attempts session/load against the stored ACP session id.
+// tryLoadSession attempts session/load against the stored ACP session id, carrying
+// the chat's supervised gate so the load can re-assert it (why a resume needs that
+// at all: bridge.loadSession).
 func (bc *BridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, acpSessionID, model, effort string,
+	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge,
+	acpSessionID, model, effort string, supervised bool,
 ) bool {
 	// Forward attaches BEFORE Start, as on the session/new path: session/load also
 	// asks for the shell type before it returns. On load failure the old bridge is
@@ -309,7 +311,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// position below is only comparable within one attachment. See replay_drain.go.
 	gen := bc.turns.attachForward(chatID)
 	bc.lifecycle.inflight.Go(func() { bc.forwardAt(chatID, sb.bridge, gen) })
-	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, Effort: effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: supervised, SecretStorage: bc.hasSecretStorage(), Presets: securityPresets(ctx, bc.lifecycle.configDir), ToolSearch: toolSearchEnabled(ctx, bc.lifecycle.configDir), Knowledge: knowledgeEnabled(ctx, bc.lifecycle.configDir), Memory: memoryEnabled(ctx, bc.lifecycle.configDir)}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so a partial replay must not
@@ -320,7 +322,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
-		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
@@ -343,7 +345,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	title := sb.bridge.SessionTitle()
 	bc.catalog.SetModes(sb.bridge.Modes())
 	bc.catalog.SetModels(sb.bridge.Models())
-	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -418,7 +420,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	bc.catalog.SetModels(bridge.Models())
 	// requestedMode is read before the line below overwrites it with what landed.
 	var requestedMode string
-	if err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -484,10 +486,9 @@ func (rt *Runtime) TurnOpenState(chatID vibekit.ChatID) vibekit.TurnOpenState {
 // (chat.WithLiveTurn), which is what gives `GET /api/chats/{id}` the CONTENT to go with
 // the `turn_open` it already states.
 //
-// The second channel for that content, and the reason there has to be one: the connect
-// replay's turn_state is gated on `?snapshot=`, which the client resolves before it knows
-// which chat it will show, so a boot on a URL naming no chat declares nothing and is
-// refused the transcript it is about to render.
+// The ONLY channel for that content: the connect carries `busy_chats` and no turn
+// transcript, so a client that finds a chat busy at connect fetches the page and reads
+// the reply from here.
 //
 // The snapshot is taken with the buffer's own mutex and no lifecycle lock held, which is
 // what lets two clients read one turn independently; neither mutates the buffer.
@@ -496,14 +497,19 @@ func (rt *Runtime) LiveTurn(chatID vibekit.ChatID) (vibekit.LiveTurn, bool) {
 	if !open {
 		return vibekit.LiveTurn{}, false
 	}
-	msg, seq, truncated, ok := facts.Buf.SnapshotCapped(liveTurnGETCaps)
+	snap, ok := facts.Buf.SnapshotCapped(liveTurnGETCaps)
 	if !ok {
 		// A turn that has produced nothing yet. `turn_open` still says it is running;
 		// there is simply no carrier to describe, and an empty message would name an id
 		// the client would then treat as its unpersisted live turn.
 		return vibekit.LiveTurn{}, false
 	}
-	return vibekit.LiveTurn{Message: msg, ChunkSeq: seq, Truncated: truncated}, true
+	return vibekit.LiveTurn{
+		Message:   snap.Message,
+		ChunkSeq:  snap.ChunkSeq,
+		BlockBase: snap.BlockBase,
+		Truncated: snap.Truncated,
+	}, true
 }
 
 // CloseBridge stops a bridge and removes it from the map.
@@ -658,6 +664,18 @@ func (bc *BridgeCoordinator) NotifyPushSubject(
 	})
 }
 
+// RetractPush drops any push about subject the service still holds for a later
+// delivery. Called where a chat's ask is settled on every other surface, so a held
+// nudge about it never lands after the answer. A run ask has no retraction here:
+// nothing pushes about one, and a run's subject is what its OUTCOME push carries,
+// which the run's own teardown would otherwise retract.
+func (bc *BridgeCoordinator) RetractPush(subject vibekit.PushSubject) {
+	if bc.push == nil {
+		return
+	}
+	bc.push.Retract(subject)
+}
+
 // reportNoSubscribers states that a notification went nowhere for want of a
 // subscriber, ONCE per episode of that condition: a permission ask reaches NotifyPush
 // per tool call, so a line per drop would bury the rest of the log. A subscriber
@@ -728,7 +746,7 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 		msg.Ts = time.Now().UnixMilli()
 	}
 	var inserted bool
-	err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	version, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -746,7 +764,9 @@ func (bc *BridgeCoordinator) persistDisplacedTurn(ctx context.Context, chatID vi
 		return
 	}
 	if inserted {
-		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
+		frame := vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg)
+		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+		bc.broadcast(ctx, frame)
 	}
 }
 
@@ -887,45 +907,52 @@ func (bc *BridgeCoordinator) healEffort(next sessionUpdateHandler) sessionUpdate
 }
 
 // effortFor resolves the level a chat's next session starts at: the chat's own
-// choice, else the last level the user picked (settings.KeyLastEffort). Empty means
-// send nothing and let the service apply the model's own default.
+// choice, else the level remembered for its MODEL
+// (settings.KeyLastEffortByModel), else that model's own default from the
+// workspace catalog. Empty means send nothing and let the service apply its own
+// default.
 //
 // A FALLBACK never written onto the chat record — stamping it would pin an unchosen
-// chat to today's value. MODEL-SCOPED, because an explicit tier is a judgement about
-// one model. Validated here because config.json is user-editable.
+// chat to today's value. MODEL-SCOPED at every rung, because an explicit tier is a
+// judgement about one model. Validated here because config.json is user-editable.
+//
+// The catalog rung is what keeps DRIFT repairable: repairEffort and healEffort both
+// return on an empty level, so a chat that has chosen nothing and whose model has no
+// remembered level would otherwise have no level to be corrected against.
 func (bc *BridgeCoordinator) effortFor(ctx context.Context, chat *vibekit.Chat) string {
 	if chat.Effort != "" {
 		return chat.Effort
 	}
-	return bc.effortSeedFor(ctx, chat.Model)
+	if level := bc.effortSeedFor(ctx, chat.Model); level != "" {
+		return level
+	}
+	return bc.catalog.DefaultEffortFor(chat.Model)
 }
 
-// effortSeedFor answers the remembered level for exactly one model: the
-// KeyLastEffort/KeyLastEffortModel pair when the recorded model IS `model`, else
-// "". The one seed read, so session start and model switch cannot disagree.
+// effortSeedFor answers the level remembered for exactly one model: the
+// KeyLastEffortByModel entry keyed by `model`, else "". PER MODEL because one
+// remembered level for the whole app retracts every other model's the moment a tier
+// is picked anywhere. A model with no entry, or an entry the EffortLevel vocabulary
+// does not recognise, has no seed. The one seed read, so session start and model
+// switch cannot disagree.
 func (bc *BridgeCoordinator) effortSeedFor(ctx context.Context, model string) string {
 	if model == "" {
 		return ""
 	}
-	var level, seedModel string
-	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffort, &level) {
+	var byModel map[string]string
+	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffortByModel, &byModel) {
 		return ""
 	}
-	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyLastEffortModel, &seedModel) {
-		return ""
-	}
-	if seedModel != model {
-		return ""
-	}
+	level := byModel[model]
 	if !vibekit.EffortLevel(level).Valid() {
 		return ""
 	}
 	return level
 }
 
-// EffortForSwitch resolves the level a chat runs at AFTER a model switch: the seed
-// when it was picked under the TARGET model, else the target's own default from
-// the workspace catalog, else "" (KAS reconciles on its own).
+// EffortForSwitch resolves the level a chat runs at AFTER a model switch: the level
+// remembered for the TARGET model, else the target's own default from the workspace
+// catalog, else "" (KAS reconciles on its own).
 //
 // Deliberately NOT effortFor: the chat's stored choice was made under the model
 // being left, so honouring it here is what carried `max` from one model onto the
@@ -953,7 +980,7 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibe
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("switch_model: append event", "chat_id", chatID, "error", err)
 	}
-	if err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -983,12 +1010,13 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 // read rather than eight off the dispatch goroutine.
 func assistantTurnMessage(snap *buffer.TurnContent, stats turnStats, model string, c vibekit.TurnConclusion) vibekit.Message {
 	return vibekit.Message{
-		ID:        snap.MessageID,
-		Role:      vibekit.RoleAssistant,
-		Ts:        time.Now().UnixMilli(),
-		Content:   snap.Content,
-		Reasoning: snap.Reasoning,
-		ToolCalls: snap.ToolCalls,
+		ID:           snap.MessageID,
+		KASMessageID: snap.KASMessageID,
+		Role:         vibekit.RoleAssistant,
+		Ts:           time.Now().UnixMilli(),
+		Content:      snap.Content,
+		Reasoning:    snap.Reasoning,
+		ToolCalls:    snap.ToolCalls,
 		// Blocks captures the chronological text/tool/thinking emission order; renderers
 		// prefer it over Content+ToolCalls so a turn renders the way it was produced.
 		Blocks: snap.Blocks,
@@ -1152,7 +1180,7 @@ func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID vibekit
 	// for settleBuffer's reason: the carry can hold the segment's only final text, so
 	// a content check taken before the flush reads that segment as empty.
 	translate.FlushSteerCarry(buf)
-	snap := buf.SplitSegment()
+	snap, _ := buf.SplitSegment()
 	// Content, not Started: a turn whose id was minted before any delta has nothing
 	// to seal, and sealing it puts a blank assistant row above the boundary.
 	if snap.EmittedNothing {
@@ -1177,6 +1205,7 @@ func (bc *BridgeCoordinator) SealTurnSegment(ctx context.Context, chatID vibekit
 func segmentMessage(snap *buffer.TurnContent) vibekit.Message {
 	return vibekit.Message{
 		ID:             snap.MessageID,
+		KASMessageID:   snap.KASMessageID,
 		Role:           vibekit.RoleAssistant,
 		Ts:             time.Now().UnixMilli(),
 		Content:        snap.Content,

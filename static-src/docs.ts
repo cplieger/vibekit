@@ -22,7 +22,9 @@
 // carries the path, so there is no resolution step here.
 // ---------------------------------------------------------------------------
 
-import { apiGet, apiGetTyped, type Decoder } from "./api-client.js";
+import { apiGetTyped, type Decoder } from "./api-client.js";
+import { decodeKiroDocsResponse } from "./wire/decoders.gen.js";
+import type { KiroDoc as WireKiroDoc, KiroDocsResponse } from "./wire/types.gen.js";
 import { defineAction, ActionError, retryNetwork, registerCleanup } from "./actions/index.js";
 import { setHookEnabled } from "./actions/hooks.js";
 import { asObject, decodeArray, optStr, reqBool, reqStr } from "./validators.js";
@@ -39,69 +41,32 @@ import { describeStatus } from "./git-types.js";
 import { openFile } from "./editor-openers.js";
 import { reconcile } from "./reconcile.js";
 import { join as joinKey } from "@cplieger/keyenc";
+import { paintIfChanged } from "./paint-sig.js";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { paintPlaceholder } from "./skeleton.js";
 import { pushRoute } from "./router.js";
-import type { DocsTab } from "./router.js";
+import type { DocsTab } from "./route-path.js";
 import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
-import { setDocsTab as setTabRoute, toggleDocsView } from "./tabs.js";
+import { setDocsTab as setTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import { setPageSubtitle } from "./page-title.js";
+import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
+import type { Nouns } from "./textsearch/copy.js";
 
-/** One document row, as the server reports it. Fields are per-category and
- *  mostly optional — see the endpoint's own note on why they are not uniform. */
-interface KiroDoc {
-  category: string;
-  name: string;
-  path: string;
-  group?: string;
-  description?: string;
-  inclusion?: string;
-  file_match?: string;
-  model?: string;
-  trigger?: string;
-  action?: string;
-  tools?: string[];
-  steering_override?: boolean;
-  /** The row is not writable, so it renders without the edit or delete
-   *  affordance. Absent means writable — a restriction is ASSERTED by the server,
-   *  never inferred from a missing field (same direction as `mcp-state.ts`'s
-   *  `adaptOrigin`).
-   *
-   *  NOTHING SETS IT TODAY. It briefly meant "reached through a symlink, so the
-   *  save would fail with ELOOP", and that premise was false: the server resolves
-   *  the link and applies `O_NOFOLLOW` to the canonical target, so the save
-   *  succeeds. The field stays as the provenance channel because it is the right
-   *  shape for a real writability source; what went is the wrong derivation. */
-  read_only?: boolean;
-  /** The row's DELETE must not be offered, but its edit still may be.
-   *
-   *  A separate field because it is a separate question. The server sets it when
-   *  the entry's own final component is a symlink: the delete route canonicalizes
-   *  the path, so removing the alias removes the file it points at — which is
-   *  listed as its own row on this same page. Editing through a link writes the
-   *  target, which is what following a link means; deleting through it destroys a
-   *  row the reader never touched. */
-  delete_protected?: boolean;
-  /** Which scope's hook this row is. NOT a wire field — the client sets it,
-   *  because it can: `kiroRoots()` walks the workspace's `.kiro` trees and
-   *  nothing else, so a SCANNED row is workspace by construction, and a
-   *  synthesized row is global by construction. Absent means workspace.
-   *
-   *  It is the third component of the join key, and it has to be. The two path
-   *  shapes normalize to the same `.kiro/...` tail, so a workspace hook and a
-   *  global hook with the same relative path and name shared one key — and since
-   *  GET /api/hooks lists workspace first then global, the global state
-   *  overwrote the workspace one. The scanned workspace row then joined to the
-   *  global state, lost open and delete through the global gate, and toggled the
-   *  GLOBAL hook's id, while the real global row was suppressed as claimed. */
-  hook_scope?: HookScope;
-}
+/** One document row: the wire's `KiroDoc` plus the one field this page adds to it.
+ *
+ *  `hook_scope` is the client's, because it can be: `kiroRoots()` walks the workspace's
+ *  `.kiro` trees and nothing else, so a scanned row is workspace by construction and a
+ *  synthesized one is global. Absent means workspace. It is the THIRD component of the
+ *  join key and has to be — the two path shapes normalize to the same `.kiro/...` tail,
+ *  so without it a workspace hook and a global hook sharing a relative path and a name
+ *  share one key. */
+type KiroDoc = WireKiroDoc & { hook_scope?: HookScope };
 
 /** The two scopes a hook row belongs to. A workspace hook and a global hook are
  *  different files with different affordances even when their relative path and
@@ -294,25 +259,32 @@ let inited = false;
 /** Whether the inventory has ANSWERED. `docs` initialises to `[]`, so a category with
  *  no documents is indistinguishable from one this client has never read. */
 let inventoryAnswered = false;
-/** The folded query the metadata filter is applying.
- *
- *  A FILTER, not a search: everything it matches on is already in memory, so
- *  there is no request and no truncation to report. It carries no match-case
- *  toggle because every filter in this app folds the query AND the row it matches
- *  it against, so a toggle would be wired to nothing.
- *
- *  Metadata only, and stated because it bounds the answer: the inventory carries
- *  a name, a description, a path, front-matter and a hook's trigger, never a
- *  document's BODY. Searching bodies is what the file browser's recursive grep
- *  is for, one view away. */
+/** Whether the server cut the inventory at its per-category or total cap. The one
+ *  fact about coverage a filter over an in-memory list has to carry, because a
+ *  reader filtering a cut list is filtering less than the page implies. */
+let docsTruncated = false;
+/** The folded query the metadata filter is applying. A FILTER, not a search:
+ *  everything it matches on is in memory, so there is no request, and the only
+ *  coverage it reports is `docsTruncated`. No match-case toggle, because every
+ *  filter in this app folds both sides. Metadata only: the inventory carries a
+ *  name, a description, a path, front-matter and a hook's trigger, never a
+ *  document's BODY, which is the file browser's recursive grep one view away. */
 let filterText = "";
 
-const loadDocsAction = defineAction<undefined, { docs: KiroDoc[] }>({
+/** The page's unit on both axes: a row is a document, and the filter reads
+ *  documents. One noun for all six tabs because the box is labelled "Filter
+ *  documents" and a recipe row sits under that label like every other. */
+const NOUNS: Nouns = {
+  match: { one: "document", many: "documents" },
+  scanned: { one: "document", many: "documents" },
+};
+
+const loadDocsAction = defineAction<undefined, KiroDocsResponse>({
   name: "docs.load",
   retryable: retryNetwork,
   retry: { count: 2, delay: 300 },
   run: async (_args, sig) => {
-    const data = await apiGet<{ docs: KiroDoc[] }>("/api/workspace/kiro-docs", sig);
+    const data = await apiGetTyped("/api/workspace/kiro-docs", decodeKiroDocsResponse, sig);
     if (sig.aborted) {
       throw new DOMException("aborted", "AbortError");
     }
@@ -325,16 +297,6 @@ const loadDocsAction = defineAction<undefined, { docs: KiroDoc[] }>({
 });
 
 // --- Public API ---
-
-/** Open (or toggle) the docs page, landing on `tab`. The toolbar's book button
- *  and the router both come through here.
- *
- *  No onShow callback: the tab factory reaches this module's own `showDocsTab`
- *  through a lazy import, so every door into the page gets the same behaviour and
- *  the sub-tab is applied by `toggleDocsView`'s own `setDocsTab` afterwards. */
-export function showDocsView(tab: DocsTab = "steering"): void {
-  void toggleDocsView(tab);
-}
 
 /** The docs tab's ACTIVATION: the one-shot init alone. Forces no sub-tab and fetches nothing. */
 export function showDocsTab(): void {
@@ -366,6 +328,7 @@ export function loadDocs(): void {
     onSuccess: (d) => {
       skeleton?.cancel();
       docs = d.docs;
+      docsTruncated = d.truncated;
       inventoryAnswered = true;
       renderActive();
     },
@@ -444,7 +407,11 @@ function initDocsView(): void {
   // showing rather than the page inferring it. Wired once, here, because the
   // panel repaints on its own schedule (its run poll, its schedules fetch).
   setRecipeCountsListener(({ total, shown }) => {
-    docsFilter.shell?.setNote(filterNote(total, shown));
+    // The panel's refetch can land after the reader left the tab, and its count
+    // would then stamp another tab's note.
+    if (activeTab.peek() === "workflows") {
+      docsFilter.shell?.setNote(noteFor("workflows", total, shown));
+    }
   });
 
   subscribe(activeTab, (tab) => {
@@ -541,13 +508,79 @@ function panelFor(tab: DocsTab): HTMLDivElement | null {
   return document.querySelector<HTMLDivElement>(`[data-docs-panel="${tab}"]`);
 }
 
-/** How much of the tab the filter is showing. Silent with no filter: the list is
- *  the whole answer then, and a count restating it is noise. */
-function filterNote(total: number, shown: number): string {
-  if (filterText === "") {
+/** The note under the box for the tab being shown: `total` rows on that tab,
+ *  `shown` surviving the filter. Silent with no filter (a count restating the
+ *  list is noise) unless the server cut the inventory, which the list cannot say
+ *  about itself. A tab the filter emptied says where the matches went: the box
+ *  sits in a page-level toolbar over six tabs, so "no matches" scoped to one of
+ *  them reads as scoped to all six. */
+function noteFor(tab: DocsTab, total: number, shown: number): string {
+  // The Workflows rows are not from the docs reply, so its cap says nothing
+  // about them.
+  const truncated = tab === "workflows" ? false : docsTruncated;
+  if (filterText === "" && !truncated) {
     return "";
   }
-  return `${String(shown)} of ${String(total)} shown.`;
+  if (shown > 0 || filterText === "") {
+    return scanNote({ scanned: total, matched: shown, truncated }, shown, NOUNS);
+  }
+  const other = matchesElsewhere(tab);
+  return emptyNote(
+    classify({
+      matched: other.matched,
+      shown: 0,
+      ...(other.where === undefined ? {} : { where: other.where }),
+      scanned: total + other.scanned,
+      truncated: docsTruncated,
+    }),
+    NOUNS,
+  );
+}
+
+/** The five tabs whose rows this module holds; the sixth's live in recipes.ts. */
+const INVENTORY_TABS = DOCS_TABS.filter(
+  (t): t is Exclude<DocsTab, "workflows"> => t !== "workflows",
+);
+
+const TAB_LIST = new Intl.ListFormat("en-US", { type: "conjunction" });
+
+function rowsFor(tab: Exclude<DocsTab, "workflows">): KiroDoc[] {
+  return tab === "hooks" ? hookRows() : docs.filter((d) => d.category === TAB_CATEGORY[tab]);
+}
+
+function matches(doc: KiroDoc): boolean {
+  return filterHaystack(doc).includes(filterText);
+}
+
+/** What the filter matched on the OTHER inventory-backed tabs, and the label of
+ *  each tab holding a match. Workflows is never a `where`: its rows are fetched
+ *  when its panel renders and live in recipes.ts, so from here they are neither
+ *  in memory nor honestly countable. */
+function matchesElsewhere(tab: DocsTab): {
+  matched: number;
+  scanned: number;
+  where: string | undefined;
+} {
+  let matched = 0;
+  let scanned = 0;
+  const labels: string[] = [];
+  for (const t of INVENTORY_TABS) {
+    if (t === tab) {
+      continue;
+    }
+    const rows = rowsFor(t);
+    scanned += rows.length;
+    const hits = rows.filter(matches).length;
+    if (hits > 0) {
+      matched += hits;
+      labels.push(TAB_LABELS[t]);
+    }
+  }
+  return {
+    matched,
+    scanned,
+    where: labels.length === 0 ? undefined : TAB_LIST.format(labels),
+  };
 }
 
 /** Build and mount the metadata filter.
@@ -573,7 +606,7 @@ const docsFilter: SearchPopup = createSearchPopup<null>({
   // a tab shows, so this hands the work there rather than keeping a second
   // copy of the decision.
   query: (query) => {
-    filterText = query.trim().toLowerCase();
+    filterText = query.toLowerCase();
     return null;
   },
   render: () => {
@@ -587,12 +620,18 @@ const docsFilter: SearchPopup = createSearchPopup<null>({
  *  hooks nest under a group; the flat categories emit rows only. */
 type Entry = { kind: "group"; label: string } | { kind: "doc"; doc: KiroDoc };
 
-/** Every field of a row a reader could plausibly type at, folded once.
- *
- *  Built per call rather than cached on the record: the inventory is refetched
- *  whole on `settings_updated`, so a cache would need the same invalidation
- *  `rowSig` already has and would buy nothing over ~200 rows. */
-function filterHaystack(doc: KiroDoc): string {
+/** Every string a row shows a reader, in ONE list: name, badge labels with the
+ *  literals included (`override` is what a reader hunting overrides types), the
+ *  matcher, the git letter, the subtitle, and the data a badge carries in its
+ *  tooltip (the fileMatch pattern, the tool names, a disabled reason); the path
+ *  and group ride along as the strings the page renders beside the row. The
+ *  filter's haystack and the repaint signature both read it, so a rendered string
+ *  is never unreachable and never stale; the census in docs-filter.test.ts types
+ *  every rendered string back into the box. */
+function rowText(doc: KiroDoc, hook: HookState | undefined): string[] {
+  const gates = rowGates(doc, hook);
+  const tools = doc.tools ?? [];
+  const reason = hook?.disabled_reason ?? "";
   return [
     doc.name,
     doc.description ?? "",
@@ -600,13 +639,27 @@ function filterHaystack(doc: KiroDoc): string {
     doc.group ?? "",
     doc.inclusion ?? "",
     doc.file_match ?? "",
+    doc.steering_override === true ? OVERRIDE_LABEL : "",
     doc.model ?? "",
+    tools.length === 0 ? "" : toolCountLabel(tools.length),
+    tools.join(", "),
     doc.trigger ?? "",
     doc.action ?? "",
-    ...(doc.tools ?? []),
-  ]
-    .join("\n")
-    .toLowerCase();
+    hook?.matcher ?? "",
+    hook !== undefined && isGlobalHook(hook) ? GLOBAL_LABEL : "",
+    reason === "" ? "" : DISABLED_LABEL,
+    reason,
+    MATCHER_WARNINGS[hook?.matcher_warning ?? ""]?.label ?? "",
+    gates.explainDelete ? LINK_LABEL : "",
+    gitLetter(doc, gates),
+  ];
+}
+
+/** Built per call rather than cached on the record: the inventory is refetched
+ *  whole on `settings_updated`, so a cache would need the same invalidation
+ *  `rowSig` already has and would buy nothing over ~200 rows. */
+function filterHaystack(doc: KiroDoc): string {
+  return rowText(doc, hookFor(doc)).join("\n").toLowerCase();
 }
 
 function renderActive(): void {
@@ -625,9 +678,9 @@ function renderActive(): void {
     renderRecipesPanel(container, filterText);
     return;
   }
-  const all = tab === "hooks" ? hookRows() : docs.filter((d) => d.category === TAB_CATEGORY[tab]);
-  const rows = filterText === "" ? all : all.filter((d) => filterHaystack(d).includes(filterText));
-  docsFilter.shell?.setNote(filterNote(all.length, rows.length));
+  const all = rowsFor(tab);
+  const rows = filterText === "" ? all : all.filter(matches);
+  docsFilter.shell?.setNote(noteFor(tab, all.length, rows.length));
   if (rows.length === 0) {
     // The category's empty text is a LIE under an active filter — "No steering
     // docs in .kiro/steering/." when 47 of them are one keystroke away. The
@@ -671,53 +724,22 @@ function updateRow(row: HTMLElement, e: Entry): void {
   if (e.kind === "group") {
     return;
   }
-  const sig = rowSig(e.doc);
-  if (row.getAttribute("data-sig") === sig) {
-    return;
-  }
-  row.setAttribute("data-sig", sig);
-  row.replaceChildren(...rowParts(e.doc));
+  paintIfChanged(row, rowSig(e.doc), () => rowParts(e.doc));
 }
 
-/** Everything a row renders, folded into one comparable string.
- *
- *  keyenc `join` rather than a template literal, and the nested arrays get their
- *  own `join` so their contents cannot reach the outer field boundaries: every
- *  component here is arbitrary text from a file on disk (a name, a description, a
- *  hook command), so a separator inside one could otherwise make two different
- *  rows compare equal. The consequence of a collision is a STALE row rather than a
- *  wrong one, since identity is the reconcile key — but a stale toggle is exactly
- *  the bug this function exists to prevent. */
-function rowSig(doc: KiroDoc): string {
+/** Everything a row renders, as signature PARTS: `rowText` plus the state the
+ *  controls render without text (the toggle's hook and position, the two provenance
+ *  bits that decide the pencil and the delete). A stale toggle is the bug this
+ *  exists to prevent. `paint-sig.ts` owns the join and the attribute. */
+function rowSig(doc: KiroDoc): string[] {
   const hook = hookFor(doc);
-  const { repo, rel } = splitRepoPath(doc.path);
-  return joinKey(
-    doc.name,
-    doc.description ?? "",
-    doc.inclusion ?? "",
-    doc.file_match ?? "",
-    doc.model ?? "",
-    doc.trigger ?? "",
-    doc.action ?? "",
-    joinKey(...(doc.tools ?? [])),
-    doc.steering_override === true ? "1" : "0",
+  return [
+    ...rowText(doc, hook),
     doc.read_only === true ? "1" : "0",
     doc.delete_protected === true ? "1" : "0",
-    repo === "" ? "" : statusFor(repo, rel),
-    hook === undefined
-      ? ""
-      : joinKey(
-          hook.id,
-          hook.enabled ? "1" : "0",
-          hook.scope ?? "",
-          hook.disabled_reason ?? "",
-          // Both, because both are RENDERED. Without them a hook whose matcher
-          // was edited on disk keeps the badge it mounted with, which is the
-          // exact class of staleness this signature exists to prevent.
-          hook.matcher ?? "",
-          hook.matcher_warning ?? "",
-        ),
-  );
+    hook?.id ?? "",
+    hook === undefined ? "" : hook.enabled ? "1" : "0",
+  ];
 }
 
 /** The Hooks tab's rows: the scanned workspace hooks, then the global ones the
@@ -839,7 +861,7 @@ function metaFor(doc: KiroDoc): HTMLElement[] {
         out.push(badge);
       }
       if (doc.steering_override === true) {
-        const marker = el("span", { className: "docs-badge docs-badge-override" }, "override");
+        const marker = el("span", { className: "docs-badge docs-badge-override" }, OVERRIDE_LABEL);
         marker.setAttribute("data-tooltip", "Replaces the steering set while this skill runs");
         out.push(marker);
       }
@@ -851,11 +873,7 @@ function metaFor(doc: KiroDoc): HTMLElement[] {
       }
       const tools = doc.tools ?? [];
       if (tools.length > 0) {
-        const chip = el(
-          "span",
-          { className: "docs-badge" },
-          `${String(tools.length)} tool${tools.length === 1 ? "" : "s"}`,
-        );
+        const chip = el("span", { className: "docs-badge" }, toolCountLabel(tools.length));
         chip.setAttribute("data-tooltip", tools.join(", "));
         out.push(chip);
       }
@@ -1015,7 +1033,7 @@ function rowControls(doc: KiroDoc, hook: HookState | undefined, gates: RowGates)
     // because an absent control with no reason reads as a bug: this row is an
     // alias, and deleting it would remove the file it points at — which is listed
     // under its own name on this same page.
-    const badge = el("span", { className: "docs-badge docs-badge-link" }, "link");
+    const badge = el("span", { className: "docs-badge docs-badge-link" }, LINK_LABEL);
     badge.setAttribute(
       "data-tooltip",
       "A symlink. Editing it writes the file it points to; deleting it would remove that file, so delete is disabled here",
@@ -1067,8 +1085,8 @@ function hookToggle(h: HookState): HTMLElement {
 
 function docRow(doc: KiroDoc): HTMLElement {
   const row = el("div", { className: "list-row docs-row", "data-path": doc.path });
-  row.setAttribute("data-sig", rowSig(doc));
-  row.append(...rowParts(doc));
+  // The same call `updateRow` makes: a fresh row carries no signature, so it paints.
+  paintIfChanged(row, rowSig(doc), () => rowParts(doc));
   return row;
 }
 
@@ -1080,11 +1098,7 @@ function rowParts(doc: KiroDoc): HTMLElement[] {
   const name = el("span", { className: "list-row-name" }, doc.name);
   const children: HTMLElement[] = [name];
 
-  // Skipped for an unreachable row: a global hook's `~/...` display path is not in
-  // any repo this poll walks, and splitRepoPath would resolve it to a plausible
-  // repo name and look up a file that does not exist there.
-  const { repo, rel } = gates.openable ? splitRepoPath(doc.path) : { repo: "", rel: "" };
-  const letter = repo === "" ? "" : statusFor(repo, rel);
+  const letter = gitLetter(doc, gates);
   if (letter !== "") {
     const badge = el("span", { className: "docs-git-letter" }, letter);
     badge.setAttribute("data-tooltip", describeStatus(letter));
@@ -1152,7 +1166,7 @@ function rowParts(doc: KiroDoc): HTMLElement[] {
 function hookBadges(h: HookState): HTMLElement[] {
   const out: HTMLElement[] = [];
   if (isGlobalHook(h)) {
-    const badge = el("span", { className: "docs-badge docs-badge-global" }, "global");
+    const badge = el("span", { className: "docs-badge docs-badge-global" }, GLOBAL_LABEL);
     badge.setAttribute(
       "data-tooltip",
       `${h.file_path ?? "~/.kiro/hooks"} — applies in every workspace. Outside the workspace, so it cannot be opened or deleted here`,
@@ -1161,7 +1175,7 @@ function hookBadges(h: HookState): HTMLElement[] {
   }
   const reason = h.disabled_reason ?? "";
   if (reason !== "") {
-    const badge = el("span", { className: "docs-badge docs-badge-disabled" }, "disabled");
+    const badge = el("span", { className: "docs-badge docs-badge-disabled" }, DISABLED_LABEL);
     badge.setAttribute("data-tooltip", reason);
     out.push(badge);
   }
@@ -1199,6 +1213,30 @@ const MATCHER_WARNINGS: Record<string, { label: string; detail: string }> = {
       "This trigger has nothing to match against, so its matcher is ignored and the hook fires every time. Remove the matcher, or pick a trigger whose matcher is tested against a tool name or a file path.",
   },
 };
+
+/** The four badge literals a row can render, named so the badge and `rowText`
+ *  spell each one once. */
+const OVERRIDE_LABEL = "override";
+const GLOBAL_LABEL = "global";
+const DISABLED_LABEL = "disabled";
+const LINK_LABEL = "link";
+
+function toolCountLabel(n: number): string {
+  return `${String(n)} tool${n === 1 ? "" : "s"}`;
+}
+
+/** The row's git letter, or "" when it has none.
+ *
+ *  Skipped for an unreachable row: a global hook's `~/...` display path is not in
+ *  any repo the status poll walks, and splitRepoPath would resolve it to a
+ *  plausible repo name and look up a file that does not exist there. */
+function gitLetter(doc: KiroDoc, gates: RowGates): string {
+  if (!gates.openable) {
+    return "";
+  }
+  const { repo, rel } = splitRepoPath(doc.path);
+  return repo === "" ? "" : statusFor(repo, rel);
+}
 
 /** A skeleton matching the real row shape. */
 function showSkeleton(): () => void {

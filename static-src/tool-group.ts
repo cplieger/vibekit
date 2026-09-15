@@ -34,7 +34,17 @@
 //
 // The collapse trigger is POSITIONAL, not a count: a group stays open while it is
 // the newest thing in its container and folds when the next element is posted
-// after it (autoCollapseGroup, driven by the dispatcher's supersede registry).
+// after it. THE VERDICT IS APPLIED AT CONSTRUCTION — `ensureGroupDisclosure` reads
+// the value the dispatcher pushes in through `setGroupSuperseded` and creates the
+// controller already closed — and `autoCollapseGroup` is the LIVE path only, for a
+// group superseded while the reader is watching it. That split is what stops a
+// repaint animating: the disclosure primitive commits the OPEN height before it
+// writes the change (`runTransition` forces a style flush on purpose), so "create
+// it open and close it in the same task" animates exactly as loudly as closing it a
+// frame later, and disposing-and-recreating a region whose open height has reached
+// one frame animates too. Constructing the controller in its FINAL state is the only
+// silent route. A pass that rebuilds a superseded run therefore PAINTS the fold
+// rather than replaying it.
 // The header shows a per-kind summary (e.g. "Read 5 files: a.ts, b.go, + 3 more")
 // or a mixed breakdown for heterogeneous groups ("7 operations: 4 reads, 2 edits,
 // 1 search").
@@ -60,7 +70,6 @@ import { outcomeIcon } from "./icons.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { kindNoun } from "./tool-kind-noun.js";
 import type { ToolKind } from "./tool-schema.js";
-import { registerCleanup } from "./actions/index.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 
 /** CSS class names for tool-group collapse state machine. */
@@ -77,7 +86,27 @@ const CLS_BARE = "tool-group-bare";
 // vibekit's; the region-only disclosure (trigger: null) supplies the animated
 // height 0↔auto plus aria-hidden + inert on the collapsed card region — which
 // the old display:none class flip provided only partially.
+//
+// ABSENT on a BARE shell, which is what makes `ensureGroupDisclosure` create-only:
+// the controller is minted by the refresh that takes the group non-bare, in the
+// state the verdict below asks for, and nothing re-creates it afterwards.
 const groupCtls = new WeakMap<HTMLElement, DisclosureController>();
+
+// The newest-element verdict for a group, pushed in by the dispatcher at every card
+// append (`setGroupSuperseded`). Read ONCE, by the refresh that creates the
+// controller — after that the state machine owns the fold. A group with no entry
+// reads as NOT superseded, the same direction `syncContainerCollapse`'s own
+// absent-seat rule takes, so the two cannot disagree and be born expanded and folded
+// by one pass.
+const groupSuperseded = new WeakMap<HTMLElement, boolean>();
+
+/** Record whether the run this group holds is FOLLOWED by a later element. Written
+ *  per card append rather than once at creation, on purpose: a run can straddle a
+ *  cold-build slice boundary, so the pass that appends the second card is not always
+ *  the pass that created the group, and only the current block index has the answer. */
+export function setGroupSuperseded(group: HTMLElement, superseded: boolean): void {
+  groupSuperseded.set(group, superseded);
+}
 
 /** The card container inside a group shell. Cards are appended HERE, not to
  *  the group root, so the collapse region excludes the always-visible header. */
@@ -90,72 +119,6 @@ export function groupBody(group: HTMLElement): HTMLElement {
  *  selector no longer means "a group of two or more". */
 export function groupIsBare(group: HTMLElement): boolean {
   return group.classList.contains(CLS_BARE);
-}
-
-class ToolGroupTracker {
-  private inProgressElements = new Set<HTMLElement>();
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
-
-  trackInProgress(node: HTMLElement): void {
-    this.inProgressElements.add(node);
-    this.startTicker();
-  }
-
-  untrackInProgress(node: HTMLElement): void {
-    this.inProgressElements.delete(node);
-    if (this.inProgressElements.size === 0) {
-      this.stopTicker();
-    }
-  }
-
-  private startTicker(): void {
-    if (this.tickTimer !== null) {
-      return;
-    }
-    this.tickTimer = setInterval(() => {
-      const now = Date.now();
-      for (const node of this.inProgressElements) {
-        const start = node.dataset["startMs"];
-        if (start === undefined) {
-          this.inProgressElements.delete(node);
-          continue;
-        }
-        const ms = now - parseInt(start, 10);
-        if (ms < 2000) {
-          continue;
-        }
-        const dur = node.querySelector(".tool-duration");
-        if (dur !== null) {
-          dur.textContent = formatDuration(ms);
-        }
-      }
-      if (this.inProgressElements.size === 0) {
-        this.stopTicker();
-      }
-    }, 1000);
-  }
-
-  /** @internal Used by registerCleanup. */
-  stopTicker(): void {
-    if (this.tickTimer !== null) {
-      clearInterval(this.tickTimer);
-      this.tickTimer = null;
-    }
-  }
-}
-
-const tracker = new ToolGroupTracker();
-registerCleanup(() => {
-  tracker.stopTicker();
-});
-
-// --- Delegate exports ---
-
-export function trackInProgress(node: HTMLElement): void {
-  tracker.trackInProgress(node);
-}
-export function untrackInProgress(node: HTMLElement): void {
-  tracker.untrackInProgress(node);
 }
 
 // --- Header update ---
@@ -206,14 +169,22 @@ export function buildToolGroupShell(): HTMLDivElement {
     }
   });
   group.appendChild(header);
-  const body = el("div", { className: "tool-group-body" });
-  group.appendChild(body);
-  groupCtls.set(group, createDisclosure(null, body, { open: true }));
+  group.appendChild(el("div", { className: "tool-group-body" }));
+  // NO disclosure here, and the header's `aria-expanded="true"` above is markup
+  // rather than a claim: a shell is born CLS_BARE and a bare shell has nothing to
+  // disclose (its header is `display: none`, so it is out of the accessibility tree
+  // and out of tab order). `ensureGroupDisclosure` mints the controller when the
+  // second card makes the group real, in its final open/closed state — the same
+  // "withdraw the control when there is nothing to reveal" rule
+  // `fundamentals/subagent-block.ts` `syncDisclosure` and `tool-card.ts`
+  // `refreshToolDisclosure` already follow.
   return group;
 }
 
-/** Recompute the group header summary text. Called after each card append,
- *  on every tool status flip, and on collapse toggle. */
+/** Bring a group's header into line with its members: the bare class, the body
+ *  region's existence (this is the ONE creation site — `ensureGroupDisclosure`), the
+ *  summary text and the outcome verdict. Called after each card append, on every tool
+ *  status flip, and on collapse toggle. */
 export function refreshGroupHeader(group: HTMLElement): void {
   const calls = [
     ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
@@ -225,6 +196,10 @@ export function refreshGroupHeader(group: HTMLElement): void {
   // behind that guard the invariant would hold for a shell carrying a count span
   // and not for one without.
   group.classList.toggle(CLS_BARE, calls.length < 2);
+  // Deliberately ABOVE the summary-span guard too, and for the same reason: it needs
+  // only `calls`, and a shell carrying no count span would otherwise never get its
+  // region. This is the ONE creation site.
+  ensureGroupDisclosure(group, calls);
   const header = group.querySelector(".tool-group-header .tool-group-count");
   if (header === null) {
     return;
@@ -238,6 +213,54 @@ export function refreshGroupHeader(group: HTMLElement): void {
   // aria-expanded already carry the state, so the word restated the chrome.
   header.textContent = summary;
   paintGroupOutcome(group, calls, counts);
+}
+
+/** Give a non-bare group its body region, ONCE, in its FINAL open/closed state.
+ *
+ *  CREATE-ONLY, which is what keeps the state machine the only thing that moves a
+ *  fold afterwards: a later refresh finds the controller and returns. The reverse
+ *  transition (non-bare → bare, which `pruneEmptyContainers` can produce by dropping
+ *  a member) therefore leaves the controller in place; noted rather than handled,
+ *  because a disposal there would also have to clear `region.style.height` by hand —
+ *  `DisclosureController.dispose()` pins `0px` for a closed region. */
+function ensureGroupDisclosure(group: HTMLElement, calls: HTMLElement[]): void {
+  if (groupIsBare(group) || groupCtls.has(group)) {
+    return;
+  }
+  const collapsed = bornCollapsed(group, calls);
+  groupCtls.set(group, createDisclosure(null, groupBody(group), { open: !collapsed }));
+  if (collapsed) {
+    markAutoCollapsed(group);
+  }
+}
+
+/** Whether this group's region is created CLOSED. Exactly `autoCollapseGroup`'s
+ *  carve-outs, read at construction: the dispatcher's verdict, and then the three
+ *  refusals — a reader who has decided, a failure inside (failure is not noise), and
+ *  a member still running. */
+function bornCollapsed(group: HTMLElement, calls: HTMLElement[]): boolean {
+  if (groupSuperseded.get(group) !== true || group.classList.contains(CLS_USER_TOGGLED)) {
+    return false;
+  }
+  if (countOutcomes(calls).failures > 0) {
+    return false;
+  }
+  for (const c of calls) {
+    if (c.dataset["startMs"] !== undefined) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The AUTO-collapsed marking: the class the state machine reads and the header
+ *  state a screen reader reads, with one writer for both. The summary refresh stays
+ *  the caller's rather than joining it, because `ensureGroupDisclosure` runs INSIDE
+ *  `refreshGroupHeader` — refreshing here would re-enter it, and the enclosing call
+ *  finishes the job anyway. */
+function markAutoCollapsed(group: HTMLElement): void {
+  group.classList.add(CLS_AUTO_COLLAPSED);
+  group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
 }
 
 /** How many settled members of a group failed, how many refused, and how many
@@ -534,12 +557,25 @@ export function maybeCollapseGroup(node: HTMLElement): void {
  *  is what closes it. A BARE group is exempt (there is no box to fold), a user
  *  toggle outranks it, a failure inside blocks it (failure is not noise), and a
  *  still-running member keeps it open — that member's status flip re-runs
- *  maybeCollapseGroup, which re-opens on failure. */
+ *  maybeCollapseGroup, which re-opens on failure.
+ *
+ *  THE LIVE PATH ONLY. A group the verdict already condemned when its region was
+ *  created is closed by `ensureGroupDisclosure` instead, silently; this one animates,
+ *  which is what a supersede the reader is watching should do. */
 export function autoCollapseGroup(group: HTMLElement): void {
   // A BARE group's body region IS the lone card, and its header is hidden — so
   // closing the disclosure would make the card vanish with no affordance to bring
   // it back. Correctness, not tidiness.
   if (groupIsBare(group)) {
+    return;
+  }
+  const ctl = groupCtls.get(group);
+  if (ctl === undefined) {
+    // No region to close, so no class either: the marking and the fold are one fact,
+    // and a group carrying CLS_AUTO_COLLAPSED with its body wide open is the shape a
+    // reader cannot act on. Unreachable through `refreshGroupHeader` (a non-bare group
+    // has a controller by then), so this is agreement with `ensureGroupDisclosure`
+    // rather than a guard against a known caller.
     return;
   }
   if (
@@ -566,17 +602,8 @@ export function autoCollapseGroup(group: HTMLElement): void {
   // This is the one ANIMATED height change of the three §3.4 names, via
   // createDisclosure.
   preserveReadingPosition(() => {
-    group.classList.add(CLS_AUTO_COLLAPSED);
-    groupCtls.get(group)?.close();
-    group.querySelector<HTMLElement>(".tool-group-header")?.setAttribute("aria-expanded", "false");
+    markAutoCollapsed(group);
+    ctl.close();
     refreshGroupHeader(group);
   }, "content-growth");
-}
-
-export function formatDuration(ms: number): string {
-  if (ms < 60_000) {
-    return `${(ms / 1000).toFixed(1)}s`;
-  }
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}m${s % 60}s`;
 }

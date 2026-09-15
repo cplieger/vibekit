@@ -218,23 +218,28 @@ func TestSteeringQueued_OriginIsAgentForAnIDTheLedgerDoesNotHold(t *testing.T) {
 // symmetric: both agent injection paths append straight to KAS's buffer and only
 // `_session/steer` broadcasts a queued frame, so for the case Origin exists to
 // name, the injected frame is the ONLY one the client ever sees.
+//
+// The agent case carries a `notify-` id because that is the id space an agent's
+// own steering row lands in. A `steer-` id is one THIS server sent, so it names
+// the user whatever the ledger holds — the case below pins that separately.
 func TestSteeringInjected_CarriesTheOrigin(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
+		id    string
 		known bool
 		want  vibekit.SteerOrigin
 	}{
-		{"the user's own", true, vibekit.SteerOriginUser},
-		{"a workflow's report", false, vibekit.SteerOriginAgent},
+		{"the user's own", "steer-1", true, vibekit.SteerOriginUser},
+		{"a workflow's report", "notify-wf-9", false, vibekit.SteerOriginAgent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")
 			if tc.known {
-				deps.userSteers = map[string]bool{"steer-1": true}
+				deps.userSteers = map[string]bool{tc.id: true}
 			}
 			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 				steerFrame(t, "steering_injected", map[string]any{
-					"messageId": "steer-1",
+					"messageId": tc.id,
 					"content":   "use tabs",
 				}), FrameAttribution{})
 

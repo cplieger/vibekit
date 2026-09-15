@@ -11,22 +11,18 @@
 //  - `--rail-at` lands a marker where `markerPosition` says, both ends inside.
 //  - a session shorter than the track is spread from the TOP at the relaxed pitch,
 //    and only one that cannot fit at it reaches the foot of the travel.
-//  - the track's reserved foot clears the resume control by `--sp-2`, at both
-//    pointer tiers, and the control is `--hit-floor` tall rather than `--btn-h`.
+//  - the track's reserved foot clears the docked control's TARGET by `--sp-2`, at both
+//    pointer tiers, and that foot is derived from `--hit-floor` rather than `--btn-h`.
 //  - two markers stay `pitchPx` apart at both tiers, the pitch read off the tier.
-//  - a seam is a band BETWEEN two markers, and the caret is centred in the box the
-//    marked turn's marker occupies.
+//  - a marker paints `--rail-mark` and answers a `--hit-floor` pointer, which is a hit
+//    test rather than a style read, because an expander has no box to measure.
 //
-// WHICH TURN the caret's subject is — the reader's pick while they hold one, the
-// scroll-derived turn otherwise — is a property of the renderer rather than of the
-// stylesheet, so it is driven against the real module in `turn-rail.test.ts`'s "the
-// reader's position on a downsampled rail" block. This file sets the fractions
-// itself, which is what keeps it measuring the rule.
+// This file sets the fractions itself, which is what keeps it measuring the rule rather
+// than the renderer; which turn each fraction belongs to is `turn-rail.test.ts`'s.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 
 import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import {
-  HERE_PX,
   MARKER_FALLBACK_PX,
   railAt,
   railMetrics,
@@ -77,6 +73,9 @@ interface Rail {
   track: () => number;
   markerPx: number;
   pitchPx: number;
+  /** The PAINTED row box, `--rail-mark`, which both the marker and the docked control
+   *  take; `markerPx` above is the target they grow to. */
+  mark: number;
   /** The three tokens the reserved foot is made of, in px. */
   sp2: number;
   sp3: number;
@@ -141,6 +140,7 @@ function buildRail(tier: "fine" | "coarse"): Rail {
     track: () => rail.clientHeight,
     markerPx,
     pitchPx,
+    mark: lengthOf(outer, "--rail-mark"),
     sp2: lengthOf(outer, "--sp-2"),
     sp3: lengthOf(outer, "--sp-3"),
     btnH: lengthOf(outer, "--btn-h"),
@@ -289,8 +289,12 @@ describe("the track's reserved foot clears the resume control", () => {
       marker(r, 1, 1);
 
       const railBottom = r.rail.getBoundingClientRect().bottom;
-      const controlTop = r.resume.getBoundingClientRect().top;
-      near(controlTop - railBottom, r.sp2, "clearance");
+      // TARGET to target, not paint to paint. The track's own bottom IS the last
+      // marker's target bottom, because the travel is the target's box; the control
+      // paints `--rail-mark` with its target centred on that, so its target's top edge
+      // is the overhang above the painted box.
+      const overhang = (r.markerPx - r.mark) / 2;
+      near(r.resume.getBoundingClientRect().top - overhang - railBottom, r.sp2, "clearance");
     });
 
     it(`sizes that foot from --hit-floor rather than --btn-h on a ${tier} pointer`, () => {
@@ -300,10 +304,12 @@ describe("the track's reserved foot clears the resume control", () => {
       const r = buildRail(tier);
       marker(r, 1, 1);
 
-      near(r.resume.getBoundingClientRect().height, r.markerPx, "control height");
+      // The control paints the column's row box and grows its target to the floor, so
+      // the reservation clears the target: `--sp-3` plus the paint plus one overhang.
+      near(r.resume.getBoundingClientRect().height, r.mark, "control height");
       near(
         r.outer.getBoundingClientRect().bottom - r.rail.getBoundingClientRect().bottom,
-        r.sp3 + r.markerPx + r.sp2,
+        r.sp3 + (r.markerPx + r.mark) / 2 + r.sp2,
         "reserved foot",
       );
       // Stated as a relation rather than a number, so the case survives a retune of
@@ -314,86 +320,108 @@ describe("the track's reserved foot clears the resume control", () => {
 });
 
 describe("two markers never overlap at the tier's own floor", () => {
-  // THE COARSE CASE IS THE CONTROL, and the separation is measured against the
-  // MARKER'S RENDERED BOX rather than against `railMetrics`' answer: comparing a
-  // selection made at one pitch against that same pitch is a tautology, and it
-  // stays green against a hard-coded 28 (measured). The box is CSS-driven, so on a
-  // coarse pointer it is 44px and a 28px pitch puts targets 16px inside each other.
+  // THE COARSE CASE IS THE CONTROL, and the separation is measured against the TARGET
+  // resolved from the token rather than against `railMetrics`' answer: comparing a
+  // selection made at one pitch against that same pitch is a tautology, and it stays
+  // green against a hard-coded 28 (measured). The target is what may not overlap, and
+  // on a coarse pointer it is 44px while the box the marker PAINTS is 24 — so reading
+  // the rendered box here, which is what this case used to do, would compare the
+  // separation against a floor 20px too small and pass for a pitch that packs targets
+  // 16px inside each other.
   for (const tier of ["fine", "coarse"] as const) {
     it(`on a ${tier} pointer, at the density the track allows`, () => {
       const r = buildRail(tier);
       const all = Array.from({ length: 60 }, (_, i) => turn(i + 1));
-      // The track is measured through one marker, for `:empty`'s reason above.
-      const probe = marker(r, 1, 60);
-      const shown = selectMarkers(all, r.track(), r.pitchPx, new Set<number>());
-      const box = probe.getBoundingClientRect().height;
-      probe.remove();
+      const shown = selectMarkers(all, trackOf(r), r.pitchPx, new Set<number>());
+      const target = lengthOf(r.outer, "--hit-floor");
 
       expect(shown.length).toBeGreaterThan(2);
       expect(shown.length).toBeLessThan(all.length);
-      // Resolved from the token independently of the module, so a marker sized off
-      // anything but the tier fails here rather than downstream.
-      near(box, lengthOf(r.outer, "--hit-floor"), "marker box");
 
       const tops = shown.map((s) => topIn(r, marker(r, s.n, 60)));
       for (let i = 1; i < tops.length; i++) {
         // STRICTLY greater: two conforming targets need a clear between them, not
         // merely edges that touch.
-        expect((tops[i] ?? 0) - (tops[i - 1] ?? 0)).toBeGreaterThan(box);
+        expect((tops[i] ?? 0) - (tops[i - 1] ?? 0)).toBeGreaterThan(target);
       }
     });
   }
 });
 
-describe("a seam is a band between two markers", () => {
-  it("starts at the earlier marker's bottom and ends at the later's top", () => {
-    const r = buildRail("fine");
-    const from = marker(r, 1, 8);
-    const to = marker(r, 8, 8);
-    const seam = document.createElement("div");
-    seam.className = "rail-seam";
-    seam.setAttribute("role", "separator");
-    seam.style.setProperty("--rail-from", String(railAt(1, 8, spanFor(r, 8))));
-    seam.style.setProperty("--rail-to", String(railAt(8, 8, spanFor(r, 8))));
-    r.rail.appendChild(seam);
-
-    const band = seam.getBoundingClientRect();
-    expect(band.height).toBeGreaterThan(0);
-    near(band.top, from.getBoundingClientRect().bottom, "band top");
-    near(band.bottom, to.getBoundingClientRect().top, "band bottom");
-  });
-});
-
-describe("the reader's caret sits on the marked turn's own line", () => {
-  /** The caret, positioned the way `hereNode` positions it. */
-  function caret(r: Rail, n: number, total: number): HTMLElement {
-    const node = document.createElement("div");
-    node.className = "rail-here";
-    node.setAttribute("aria-hidden", "true");
-    node.style.setProperty("--rail-at", String(railAt(n, total, spanFor(r, total))));
-    r.rail.appendChild(node);
-    return node;
+describe("a marker paints a control rung and grows its target to the tier's floor", () => {
+  // The target is measured by HIT TEST, never a style read: an expander is invisible and
+  // contributes nothing to `getBoundingClientRect`, so a style-read assertion here passes
+  // whether it exists or not.
+  /** One marker mid-track, where its expander cannot run off either end. */
+  function midMarker(r: Rail): HTMLElement {
+    return marker(r, 5, 9);
   }
 
-  it("centres it inside the box that turn's marker occupies", () => {
-    const r = buildRail("fine");
-    const m = marker(r, 17, 40);
-    const here = caret(r, 17, 40);
-
-    const mid = (b: DOMRect): number => b.top + b.height / 2;
-    near(mid(here.getBoundingClientRect()), mid(m.getBoundingClientRect()), "caret centre");
-  });
-
-  for (const tier of ["fine", "coarse"] as const) {
-    it(`takes no hit-target box on a ${tier} pointer, so it competes for no slot`, () => {
-      // It carries no accessible name and is not a button, so WCAG 2.5.8 does not
-      // reach it — and the number is the one `rail-select.ts` centres against, so a
-      // retune of `--dot-size` that left HERE_PX behind fails here.
+  for (const [tier, paint, floor] of [
+    ["fine", 24, 24],
+    ["coarse", 24, 44],
+  ] as const) {
+    it(`paints ${String(paint)}px on a ${tier} pointer`, () => {
       const r = buildRail(tier);
-      const box = caret(r, 3, 9).getBoundingClientRect();
+      const box = midMarker(r).getBoundingClientRect();
 
-      near(box.height, HERE_PX, "caret box");
-      expect(box.height).toBeLessThan(r.markerPx);
+      // Resolved from the token rather than from the literal, so a retune moves the
+      // assertion with the stylesheet; the literal above is the reader's anchor.
+      near(box.height, lengthOf(r.rail, "--rail-mark"), "painted box");
+      near(box.height, paint, "painted box against the recorded value");
+      // The digit's own box, so a marker is a square at one digit and widens at five.
+      near(box.width, paint, "painted width");
+    });
+
+    it(`answers a pointer ${String(floor)}px tall on a ${tier} pointer`, () => {
+      const r = buildRail(tier);
+      const m = midMarker(r);
+      const box = m.getBoundingClientRect();
+      const cx = box.left + box.width / 2;
+      const cy = box.top + box.height / 2;
+      const reach = floor / 2 - 1;
+
+      // Inside the target on both axes, at the extremes the floor promises.
+      for (const [x, y, where] of [
+        [cx, cy, "centre"],
+        [cx, cy - reach, "top edge"],
+        [cx, cy + reach, "bottom edge"],
+        [cx - reach, cy, "leading edge"],
+        [cx + reach, cy, "trailing edge"],
+      ] as const) {
+        expect(document.elementFromPoint(x, y), `${tier} ${where}`).toBe(m);
+      }
+      // And NOT past it, or the target is wider than the tier asks for and two of
+      // them could touch at the pitch `selectMarkers` separates by.
+      expect(document.elementFromPoint(cx, cy - floor / 2 - 1)).not.toBe(m);
     });
   }
+
+  it("reaches past the painted box on a coarse pointer, which is the whole point", () => {
+    // THE CONTROL for the pair above, which on a fine pointer passes with the expander
+    // deleted because paint and target are the same 24px there. The band 12px to 22px
+    // from the centre is outside the paint and inside the target.
+    const r = buildRail("coarse");
+    const m = midMarker(r);
+    const box = m.getBoundingClientRect();
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+
+    expect(box.height).toBeLessThan(lengthOf(r.outer, "--hit-floor"));
+    for (const dy of [box.height / 2 + 2, 21]) {
+      expect(document.elementFromPoint(cx, cy + dy), `+${String(dy)}px`).toBe(m);
+      expect(document.elementFromPoint(cx, cy - dy), `-${String(dy)}px`).toBe(m);
+    }
+  });
+
+  it("paints nothing for that reach, so the asymmetry is unobservable", () => {
+    // An expander a reader can see is the 44px box again under another name.
+    const r = buildRail("coarse");
+    const before = getComputedStyle(midMarker(r), "::before");
+
+    expect(before.content).toBe('""');
+    expect(before.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(before.borderTopWidth).toBe("0px");
+    expect(before.outlineStyle).toBe("none");
+  });
 });

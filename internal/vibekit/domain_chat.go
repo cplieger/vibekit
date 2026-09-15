@@ -4,6 +4,7 @@ package vibekit
 // messages, tool calls, plans, usage and session modes/models.
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 )
@@ -70,8 +71,9 @@ type ToolKind string
 // ToolKindExecute and the following constants define the valid ToolKind values.
 // KAS v3 emits only read/edit/delete/move/search/execute/think/fetch/switch_mode/
 // other; the rest are retained because they back WorkingLabelForKind's label table
-// and keep older persisted chat files renderable. Hook activity arrives as kind
-// "other" tagged _meta.kiro.hookAsk, NOT ToolKindHook.
+// and keep older persisted chat files renderable. KAS's own hook ASK arrives as kind
+// "other" tagged _meta.kiro.hookAsk; ToolKindHook is minted by vibekit for the
+// synthetic `Hook fired` card (internal/translate/hook_status.go).
 const (
 	ToolKindExecute    ToolKind = "execute"
 	ToolKindShell      ToolKind = "shell"
@@ -106,6 +108,17 @@ const (
 	// it at turn close; it never arrives on the wire.
 	ToolAborted ToolStatus = "aborted"
 )
+
+// Terminal reports whether nothing can still change s.
+func (s ToolStatus) Terminal() bool {
+	return s == ToolCompleted || s == ToolFailed || s == ToolAborted
+}
+
+// IsOutcome reports whether s is the TOOL's own account of what it did.
+// ToolAborted is excluded for the reason its own constant above states.
+func (s ToolStatus) IsOutcome() bool {
+	return s == ToolCompleted || s == ToolFailed
+}
 
 // ACPUpdateKind identifies the subtype of an ACP session/update notification.
 type ACPUpdateKind string
@@ -215,11 +228,10 @@ type ToolCall struct {
 	OutputSpans []TextSpan `json:"output_spans,omitempty"`
 	Ts          int64      `json:"ts"`
 	DurationMs  int        `json:"duration_ms,omitempty"`
-	// OutputBytes is the PERSISTED output's length and DiffCount the persisted
-	// number of diffs: what the reveal will fetch. Set ONLY alongside HasFull; where
-	// the store also cut the call, Truncated carries the size before THAT cut.
+	// OutputBytes is the PERSISTED output's length: what the reveal will fetch, and
+	// what says the bulk holds output at all. Set ONLY alongside HasFull; where the
+	// store also cut the call, Truncated carries the size before THAT cut.
 	OutputBytes int `json:"output_bytes,omitempty"`
-	DiffCount   int `json:"diff_count,omitempty"`
 	// HasFull says Input, Output and Diffs here are a PREVIEW, and the whole of what
 	// the record kept is at GET /api/chats/{id}/tools/{id}. Set by the transcript
 	// read path alone, because only a page load or scroll-up reads a preview.
@@ -418,6 +430,17 @@ type Message struct {
 	// Absent means the user's, matching what the renderer has always assumed.
 	SteerOrigin SteerOrigin `json:"steer_origin,omitempty"`
 	ID          string      `json:"id"`
+	// KASMessageID is the id the agent's own session log holds this message under,
+	// and the ONLY id `_kiro/checkpoint/revertMultiple` accepts — it matches
+	// `record.id` in that log, while ID is a different space the agent never sees
+	// (`session/prompt` carries no field a client can mint a record id through).
+	// Valid only for the session that minted it, so RecordSession drops every one
+	// at a retirement. Present on a prompt-class user row, a steer row and an
+	// assistant row, live or `session/load`-projected. On an assistant row it is
+	// the replay merge's pairing key and never a revert target, since
+	// userMessageIndex requires RoleUser. No client reads it: the client keeps
+	// sending its own `message_id` on `rewind_chat` and the server maps.
+	KASMessageID string `json:"kas_message_id,omitempty"`
 	// TurnOutcome is how this turn ENDED, stamped on the message that finalized
 	// it: the durable half of a fact otherwise carried only by the live
 	// turn_ended SSE. Its presence also CLOSES a turn for both projections, so an
@@ -464,6 +487,23 @@ type Message struct {
 	// its answer is cut off. Stored though derivable from the raw stop reason, so
 	// the Go and TypeScript projections do not each re-implement the mapping.
 	TurnTruncated bool `json:"turn_truncated,omitempty"`
+}
+
+// IsPrompt reports whether m is a user PROMPT rather than a steer.
+//
+// Here rather than in either reader because both turn projections and the
+// KASMessageID stamp read it, and a turn boundary they could disagree about is the
+// drift this prevents. The TypeScript twin is static-src/turns.ts.
+func (m *Message) IsPrompt() bool {
+	return m.Role == RoleUser && m.UserKind != UserKindSteer
+}
+
+// AgentSideID is m's id in the agent's own session log: KASMessageID when this
+// process recorded one, ID when the row came from a replay, whose projected ID
+// already IS that id. On the type because the revert verb and the replay merge
+// both ask it.
+func (m *Message) AgentSideID() string {
+	return cmp.Or(m.KASMessageID, m.ID)
 }
 
 // Usage is a chat's last-known context and billing snapshot, plus the percentages at
@@ -603,7 +643,10 @@ const (
 // internal/wirespec's binding tests key on the Payload suffix, and
 // auth.WhoamiResponse is the precedent.
 type ConfigTemplateResponse struct {
-	DefaultModel string `json:"default_model,omitempty"`
+	// Subject is the `catalog` digest stamp with the hub epoch, read under the
+	// catalog's lock beside the two lists it vouches for.
+	Subject      *SubjectStamp `json:"subject,omitempty"`
+	DefaultModel string        `json:"default_model,omitempty"`
 	// EffortActive is the `effortLevel` option's currentValue: the tier a
 	// fresh session would run at. Pre-session, this is the only evidence of
 	// a live level.
@@ -700,6 +743,10 @@ func (c *Chat) SessionChain() []string {
 type ComposerState struct {
 	Text        string
 	Attachments []string
+	// Version is the `chat` version the composer write minted, filled by the
+	// store under the chat's lock so the draft_changed broadcast stamps from the
+	// same critical section. Empty on a state nothing minted (a read).
+	Version string
 }
 
 // Composer returns the chat's current composer state.
@@ -739,6 +786,13 @@ func (c *Chat) RecordSession(id string) {
 	// A revisited id lives in exactly one place: the current field.
 	if id != "" {
 		c.PriorACPSessionIDs = slices.DeleteFunc(c.PriorACPSessionIDs, func(s string) bool { return s == id })
+	}
+	// A stamp is valid only for the session that minted it, and a rewind never crosses a
+	// session boundary, so one surviving a retirement names a record the revert cannot
+	// reach while still reading as addressable. Dropping it is what makes an empty field
+	// mean "no usable agent-side id", which is the answer the refusal explains.
+	for i := range c.Messages {
+		c.Messages[i].KASMessageID = ""
 	}
 }
 

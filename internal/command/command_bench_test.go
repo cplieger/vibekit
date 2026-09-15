@@ -30,8 +30,8 @@ func newBenchDeps() *benchDeps {
 // ChatStore() getter it used to return is gone.
 func (d *benchDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
 
-func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
-	return nil
+func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+	return "", nil
 }
 
 func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {

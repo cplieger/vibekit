@@ -12,8 +12,8 @@ type nopChatRecords struct{}
 
 func (nopChatRecords) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
 
-func (nopChatRecords) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
-	return nil
+func (nopChatRecords) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+	return "", nil
 }
 
 func (nopChatRecords) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {

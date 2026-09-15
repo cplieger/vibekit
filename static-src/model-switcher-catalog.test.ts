@@ -75,7 +75,6 @@ vi.mock("./session-context.js", () => ({
   setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: () => "",
-  setLastEffort: vi.fn(),
 }));
 // Only `humanName` is stubbed, to identity; `rateLabel` and the rest stay REAL —
 // see the note on the same mock in model-switcher.test.ts.

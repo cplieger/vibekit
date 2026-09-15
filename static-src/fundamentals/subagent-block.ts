@@ -27,7 +27,7 @@ import {
 } from "./turn-footer.js";
 
 /** What both delegated-work boxes answer to. */
-export interface SubagentBox {
+interface SubagentBox {
   /** The `.subagent-block` root to insert into the DOM. */
   readonly root: HTMLDivElement;
   /** Update the header status glyph and the announced state word. */

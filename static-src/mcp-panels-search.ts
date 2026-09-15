@@ -3,7 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { byId } from "./dom.js";
-import { searchRegistry, type RegistrySearchResult } from "./actions/mcp.js";
+import { searchRegistry, registryFailureOf } from "./actions/mcp.js";
+import type {
+  RegistryEntry,
+  RegistrySearchFailure,
+  RegistrySearchResult,
+} from "./wire/types.gen.js";
 import {
   subscribeToActions,
   bindLoadingState,
@@ -13,12 +18,29 @@ import {
 import type { DebouncedDispatch } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { chevronEl } from "./chevron.js";
+import { emptyNote, type Nouns } from "./textsearch/copy.js";
 import { el } from "@cplieger/reactive";
 
 // --- Types ---
 
-/** Derived from the action's wire type — single source of truth. */
-type RegistryEntry = RegistrySearchResult["servers"][number];
+/** The no-rows answers this surface can give, mapped from its own inputs: a
+ *  502 body, the reply's `filtered` count, the query's length. `tooShort` is
+ *  the shared empty-answer vocabulary's member and renders through its
+ *  `emptyNote`; the other three keep this surface's own sentences until it
+ *  adopts `textsearch/copy.ts` whole. An in-flight search is not an answer and
+ *  has no member. */
+type RegistryEmptyState =
+  | { kind: "none" }
+  | { kind: "withheld"; matched: number }
+  | { kind: "failed"; retryAfterS?: number }
+  | { kind: "tooShort"; min: number };
+
+/** The registry's rows are servers, and it scans nothing of its own, so the
+ *  one noun serves both keys. */
+const NOUNS: Nouns = {
+  match: { one: "server", many: "servers" },
+  scanned: { one: "server", many: "servers" },
+};
 
 /** Callback to switch the modal to a different panel mode. */
 export type SwitchModeFn = (
@@ -55,6 +77,8 @@ const MIN_QUERY_LEN = 2;
 let debouncedSearch: DebouncedDispatch<{ q: string }> | null = null;
 let searchUnsub: (() => void) | null = null;
 let retryBtnUnbind: (() => void) | null = null;
+/** Re-enables a Retry button the registry asked to hold for an interval. */
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let searchBtnUnbind: (() => void) | null = null;
 
 /** The newest query the user has asked for. Dispatches are not scoped, so a
@@ -65,9 +89,21 @@ let wantedQuery = "";
 registerCleanup(() => {
   debouncedSearch?.cancel();
   searchUnsub?.();
-  retryBtnUnbind?.();
+  clearRetry();
   searchBtnUnbind?.();
 });
+
+/** Drops the Retry button's binding and its hold timer together: every render
+ *  that replaces the box replaces the button, and a timer left behind would
+ *  re-enable a node that is no longer on screen. */
+function clearRetry(): void {
+  retryBtnUnbind?.();
+  retryBtnUnbind = null;
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
 
 // --- Public API ---
 
@@ -81,8 +117,7 @@ export function setSwitchMode(fn: SwitchModeFn): void {
 /** Cancel in-flight search work and tear down subscriptions. */
 export function cleanupSearch(): void {
   debouncedSearch?.cancel();
-  retryBtnUnbind?.();
-  retryBtnUnbind = null;
+  clearRetry();
   searchBtnUnbind?.();
   searchBtnUnbind = null;
   searchUnsub?.();
@@ -125,20 +160,20 @@ export function initSearchPanel(): void {
       const d = inst.result as RegistrySearchResult | undefined;
       renderSearchResults(results, d, q);
     } else if (inst.status === "error") {
-      renderSearchError(results, q);
+      renderSearchError(results, q, registryFailureOf(inst.error));
     }
   });
 
-  /** Schedule or fire a query, or clear the box when there is nothing to ask.
+  /** Schedule or fire a query, or say why nothing is asked. A query under the
+   *  floor renders the hint rather than clearing the box: an empty box after
+   *  one typed character reads exactly like an answered query with no matches.
    *  `immediate` is the Enter / button path, which skips the quiet window. */
   const ask = (immediate: boolean): void => {
     const q = input.value.trim();
     wantedQuery = q;
     if (q.length < MIN_QUERY_LEN) {
-      retryBtnUnbind?.();
-      retryBtnUnbind = null;
-      results.replaceChildren();
       debouncedSearch?.cancel();
+      renderEmpty(results, { kind: "tooShort", min: MIN_QUERY_LEN }, q);
       return;
     }
     if (immediate) {
@@ -168,65 +203,130 @@ export function initSearchPanel(): void {
  *  can take ten when it is not, and the box used to sit empty for the whole
  *  wait — which reads as "this does nothing" rather than "this is slow". */
 function renderSearching(results: HTMLDivElement): void {
-  retryBtnUnbind?.();
-  retryBtnUnbind = null;
+  clearRetry();
   results.replaceChildren(el("p", { className: "mcp-empty" }, "Searching the registry…"));
 }
+
+const ROW_SPEC = {
+  key: (e: RegistryEntry) => e.name,
+  mount: (e: RegistryEntry) => renderRegistryResult(e),
+};
 
 function renderSearchResults(
   results: HTMLDivElement,
   d: RegistrySearchResult | undefined,
   q: string,
 ): void {
-  retryBtnUnbind?.();
-  retryBtnUnbind = null;
+  clearRetry();
   for (const child of [...results.children]) {
     if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
       child.remove();
     }
   }
   if (d == null) {
-    renderSearchError(results, q);
+    renderEmpty(results, { kind: "failed" }, q);
     return;
   }
   if (d.servers.length === 0) {
-    reconcile(results, [] as RegistryEntry[], {
-      key: (e) => e.name,
-      mount: () => el("div"),
-    });
-    results.appendChild(el("p", { className: "mcp-empty" }, `No results for "${q}".`));
+    renderEmpty(
+      results,
+      d.filtered > 0 ? { kind: "withheld", matched: d.filtered } : { kind: "none" },
+      q,
+    );
     return;
   }
-  reconcile(results, d.servers, {
-    key: (e: RegistryEntry) => e.name,
-    mount: (e: RegistryEntry) => renderRegistryResult(e),
-  });
+  reconcile(results, d.servers, ROW_SPEC);
+  const note = resultNote(d);
+  if (note !== null) {
+    results.appendChild(el("p", { className: "mcp-empty" }, note));
+  }
 }
 
-function renderSearchError(results: HTMLDivElement, q: string): void {
-  retryBtnUnbind?.();
-  retryBtnUnbind = null;
-  results.replaceChildren();
-  results.appendChild(
-    el(
-      "p",
-      { className: "mcp-empty" },
-      "Registry unreachable. Use the Remote URL or npm package forms instead.",
-    ),
+/** One line under a non-empty list saying how it differs from what matched.
+ *  Both facts are "the list you see is not the list that matched", so they
+ *  share the line. Null when the list is the whole answer. */
+function resultNote(d: RegistrySearchResult): string | null {
+  const parts: string[] = [];
+  if (d.filtered > 0) {
+    parts.push(`${d.filtered} more matched but cannot be installed here.`);
+  }
+  if (d.truncated) {
+    parts.push("More matched than shown; narrow the query to see the rest.");
+  }
+  return parts.length === 0 ? null : parts.join(" ");
+}
+
+/** One sentence per no-rows answer. `tooShort` is the shared sentence; the
+ *  other three are this surface's own until it adopts `textsearch/copy.ts`
+ *  whole, and `none` echoes the query where the shared vocabulary speaks in
+ *  nouns. */
+function registryEmptyNote(state: RegistryEmptyState, q: string): string {
+  switch (state.kind) {
+    case "none":
+      return `No results for "${q}".`;
+    case "withheld":
+      return `${state.matched} matched, but none can be installed here.`;
+    case "failed":
+      return state.retryAfterS === undefined
+        ? "Registry unreachable. Use the Remote URL or npm package forms instead."
+        : `The registry asked for a pause; retry in ${state.retryAfterS}s, or use the Remote URL or npm package forms instead.`;
+    case "tooShort":
+      return emptyNote(state, NOUNS);
+  }
+}
+
+function renderEmpty(results: HTMLDivElement, state: RegistryEmptyState, q: string): void {
+  clearRetry();
+  reconcile(results, [] as RegistryEntry[], ROW_SPEC);
+  results.replaceChildren(el("p", { className: "mcp-empty" }, registryEmptyNote(state, q)));
+  if (state.kind === "failed") {
+    results.appendChild(renderRetry(q, state.retryAfterS));
+  }
+}
+
+/** A failed dispatch. The 502 body's classification, when the server sent
+ *  one, decides whether Retry may fire at once: a rate-limited registry that
+ *  named an interval is refusing, so a click inside it is guaranteed to fail
+ *  again, and the button waits it out. */
+function renderSearchError(
+  results: HTMLDivElement,
+  q: string,
+  failure: RegistrySearchFailure | undefined,
+): void {
+  const retryAfterS = failure?.retry_after;
+  renderEmpty(
+    results,
+    retryAfterS === undefined ? { kind: "failed" } : { kind: "failed", retryAfterS },
+    q,
   );
+}
+
+function renderRetry(q: string, holdS: number | undefined): HTMLButtonElement {
   const retryBtn = el(
     "button",
     { type: "button", className: "btn-small" },
     "Retry",
   ) as HTMLButtonElement;
-  retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn);
+  if (holdS !== undefined) {
+    retryBtn.disabled = true;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryBtn.disabled = false;
+    }, holdS * 1000);
+  }
+  // `disabledFn` is what the binding restores on a pending-to-idle transition;
+  // without it an abandoned prefix's dispatch settling would re-enable the
+  // button inside the hold.
+  retryBtnUnbind = bindLoadingState("mcp.search_registry", retryBtn, {
+    disabledFn: () => retryTimer !== null,
+  });
   retryBtn.addEventListener("click", () => {
     // Re-declare the intent: a failed query is not cached server-side, so this
     // is a real re-fetch, and the subscription only renders the wanted query.
     wantedQuery = q;
     void searchRegistry.dispatch({ q });
   });
-  results.appendChild(retryBtn);
+  return retryBtn;
 }
 
 /** One search result: a compact row that expands. Exported for its test — the
@@ -301,7 +401,9 @@ interface InstallOption {
 function installOptions(entry: RegistryEntry): InstallOption[] {
   const out: InstallOption[] = [];
   for (const pkg of entry.packages ?? []) {
-    out.push(renderInstallOption(entry, "npm", pkg.identifier, pkg.env_vars ?? [], "env"));
+    out.push(
+      renderInstallOption(entry, pkg.registry_type, pkg.identifier, pkg.env_vars ?? [], "env"),
+    );
   }
   for (const rem of entry.remotes ?? []) {
     out.push(

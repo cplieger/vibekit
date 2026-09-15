@@ -36,7 +36,10 @@ type stepReplay struct {
 // whether it is the FIRST reader. A second concurrent reader is refused rather
 // than superseded: superseding would leave the first waiting on a barrier nothing
 // closes.
-func (sr *stepReplays) open(sessionID string) bool {
+//
+// The caller BUILDS the projection, so this registry needs no workspace root of its
+// own and its zero value stays usable.
+func (sr *stepReplays) open(sessionID string, proj *translate.Projection) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	if sr.replays == nil {
@@ -46,7 +49,7 @@ func (sr *stepReplays) open(sessionID string) bool {
 		return false
 	}
 	sr.replays[sessionID] = &stepReplay{
-		proj:    translate.NewProjection(newMessageID),
+		proj:    proj,
 		settled: make(chan struct{}),
 	}
 	return true

@@ -24,7 +24,7 @@ func FuzzStore_MutateGetRoundTrip(f *testing.F) {
 		ctx := t.Context()
 
 		// Create chat with fuzzed name.
-		err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+		_, err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 			c.Name = name
 			return true
 		})

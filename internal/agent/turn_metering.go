@@ -49,7 +49,7 @@ func (bc *BridgeCoordinator) StageConversationTurnSummary(ctx context.Context, c
 // lands after the frame that caused it, on a chat the user may already have
 // deleted — so chat.ErrTombstoned is the designed outcome rather than a fault.
 func (bc *BridgeCoordinator) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply func(*vibekit.Usage)) {
-	err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

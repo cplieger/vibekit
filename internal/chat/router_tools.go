@@ -7,7 +7,7 @@ import (
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // handleToolCall serves GET /api/chats/{id}/tools/{toolCallID}: the whole of one
@@ -76,7 +76,6 @@ func previewToolCall(tc *vibekit.ToolCall) (vibekit.ToolCall, bool) {
 		return out, false
 	}
 	out.OutputBytes = cut.OutputBytes
-	out.DiffCount = cut.DiffCount
 	out.HasFull = true
 	return out, true
 }

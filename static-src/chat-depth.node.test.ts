@@ -252,18 +252,26 @@ describe("one hover recipe for every box header in a transcript", () => {
   });
 });
 
-describe("hint ink stays off the tinted band, on every surface that has one", () => {
-  it("measures why: the band is the rung where the two-rung contract runs out", () => {
-    // `--c-text-tertiary` is valid on the page and box rungs only (01-tokens.css).
-    // The chat's band states this at `.turn-head-row`; the run page's group head is
-    // the same rung, and its duration was reading hint ink there.
-    const hint = pair("var(--c-text-tertiary)", "var(--c-bg-tertiary)");
-    const secondary = pair("var(--c-text-secondary)", "var(--c-bg-tertiary)");
+describe("hint ink stays off the HOVERED band, on every surface that has one", () => {
+  it("measures why: the hovered band is a two-level surface and the band at rest is not", () => {
+    // Since the ink ramp was authored against the hovered box (01-tokens.css "SEEDS:
+    // ink"), the hint ink clears the band AT REST — which is what lets the turn info
+    // panel keep its hint-ink labels. It does not clear the band under the hover wash,
+    // and the two band regions that hover (the chat's `.turn-head-row`, the run
+    // page's group head) are exactly where the step-ups to secondary live. Both
+    // halves are asserted so the step-ups cannot be justified by a stale premise.
+    const hintRest = pair("var(--c-text-tertiary)", "var(--c-bg-tertiary)");
+    const hint = pair("var(--c-text-tertiary)", "over(var(--c-hover), var(--c-bg-tertiary))");
+    const secondary = pair("var(--c-text-secondary)", "over(var(--c-hover), var(--c-bg-tertiary))");
     for (const theme of ["dark", "light"]) {
-      expect(hint[theme]?.ratio ?? 0, `hint ink on the band, ${theme}`).toBeLessThan(4.5);
+      expect(
+        hintRest[theme]?.ratio ?? 0,
+        `hint ink on the band at rest, ${theme}`,
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(hint[theme]?.ratio ?? 0, `hint ink on the hovered band, ${theme}`).toBeLessThan(4.5);
       expect(
         secondary[theme]?.ratio ?? 0,
-        `secondary on the band, ${theme}`,
+        `secondary on the hovered band, ${theme}`,
       ).toBeGreaterThanOrEqual(4.5);
     }
   });
@@ -290,6 +298,6 @@ describe("machine text inside a tool card gets its own surface", () => {
     const css = stripComments(sheet("14-tools.css"));
     const rule = /\.tool-details\s*\{([^{}]*)\}/.exec(css);
     expect(rule, ".tool-details is declared").not.toBeNull();
-    expect(/background:\s*var\(--c-code-bg\);/.test(rule?.[1] ?? "")).toBe(true);
+    expect(/background:\s*var\(--c-well\);/.test(rule?.[1] ?? "")).toBe(true);
   });
 });

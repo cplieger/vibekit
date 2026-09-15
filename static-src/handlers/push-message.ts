@@ -1,21 +1,23 @@
-// Service-worker push messages, in two kinds wanting opposite treatment.
+// Service-worker push messages, in three kinds wanting different treatment.
 //
 //   "arrived"  a push landed while this page was focused, so the worker showed no
 //              OS notification (the sanctioned exception to "every push must show
 //              one" — Chrome's userVisibleOnly would substitute a generic
 //              background notice). Right surface: an ephemeral toast.
-//   "clicked"  the user tapped one. The route is built here because router.ts owns
-//              the route vocabulary, which is why a tab re-routes and never reloads.
+//   "clicked"  the user tapped one. The subject becomes a route through
+//              push-subject.ts, the same one the worker spends, and
+//              notification-open.ts hands it to the route applier.
+//   "subscription_changed"  the browser rotated the push subscription, so the
+//              presence tag derived from its endpoint moved; the page re-derives.
 // ---------------------------------------------------------------------------
 
-import { openChatTab } from "../chat.js";
-import { get } from "../store.js";
-import { openChangeSet } from "../navigate.js";
+import { openPushTarget } from "../notification-open.js";
+import { parsePushTarget } from "../push-subject.js";
 import * as toast from "../toast.js";
 
 interface PushPageMessage {
   type: "push";
-  reason: "clicked" | "arrived";
+  reason: "clicked" | "arrived" | "subscription_changed";
   chatId: string;
   /** The notification's subject when it has no chat behind it — a pull request's
    *  CI flip. Carries a kind prefix so the route below is keyed on what the subject
@@ -25,14 +27,6 @@ interface PushPageMessage {
   body: string;
 }
 
-/** Subject-key prefix for a pull request (vibekit.PRSubjectPrefix, and sw.ts's own
- *  copy). Asserted against the Go constant by push-subject.test.ts. */
-const PR_SUBJECT_PREFIX = "pr:";
-
-/** Subject-key prefix for a workflow run (vibekit.RunSubjectPrefix, and sw.ts's own
- *  copy). The third copy of that literal, pinned by the same test. */
-const RUN_SUBJECT_PREFIX = "run:";
-
 function isPushMessage(d: unknown): d is PushPageMessage {
   if (typeof d !== "object" || d === null) {
     return false;
@@ -40,42 +34,14 @@ function isPushMessage(d: unknown): d is PushPageMessage {
   const m = d as Partial<PushPageMessage>;
   return (
     m.type === "push" &&
-    (m.reason === "clicked" || m.reason === "arrived") &&
+    (m.reason === "clicked" || m.reason === "arrived" || m.reason === "subscription_changed") &&
     typeof m.chatId === "string"
   );
 }
 
-/** Open a run's own tab. Lazily imported the way find-in-chat.ts imports it, so the
- *  static bundle does not pull exec-view/** in for a rarely-taken branch, and called
- *  with an empty name so the tab factory derives the label from the run store. */
-async function openRun(workflowID: string): Promise<void> {
-  const { openRunView } = await import("../run-view.js");
-  openRunView(workflowID, "");
-}
-
-/** Where a clicked notification goes: a PR subject opens the git view, a run subject
- *  opens that run's tab, and everything else routes by chat id. */
+/** Where a clicked notification goes. */
 export function routePushMessage(msg: PushPageMessage): void {
-  const subject = msg.subject ?? "";
-  if (subject.startsWith(PR_SUBJECT_PREFIX)) {
-    openChangeSet();
-    return;
-  }
-  if (subject.startsWith(RUN_SUBJECT_PREFIX)) {
-    // Without this arm the click falls through the chat-id check below and does
-    // nothing: a run's notification carries no chat.
-    const workflowID = subject.slice(RUN_SUBJECT_PREFIX.length);
-    if (workflowID !== "") {
-      void openRun(workflowID);
-    }
-    return;
-  }
-  if (msg.chatId === "") {
-    return;
-  }
-  // openChatTab is idempotent by id; activating routes the URL through
-  // the tab store's own subscriber, so no manual pushRoute is needed.
-  void openChatTab(msg.chatId, get(msg.chatId)?.name ?? msg.title);
+  openPushTarget(parsePushTarget({ chatId: msg.chatId, subject: msg.subject ?? "" }));
 }
 
 /** The toast text. Title and body both come from the server, which builds them
@@ -86,13 +52,19 @@ function notice(msg: PushPageMessage): string {
   return body === "" ? msg.title : body;
 }
 
-export function initPushMessages(): void {
+/** `onSubscriptionChanged` runs when the worker reports a rotated subscription; the
+ *  caller owns the tag re-derivation (app.ts adoptPushTag). */
+export function initPushMessages(onSubscriptionChanged: () => void): void {
   if (!("serviceWorker" in navigator)) {
     return;
   }
   navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
     const msg: unknown = event.data;
     if (!isPushMessage(msg)) {
+      return;
+    }
+    if (msg.reason === "subscription_changed") {
+      onSubscriptionChanged();
       return;
     }
     if (msg.reason === "clicked") {
@@ -104,7 +76,7 @@ export function initPushMessages(): void {
     // LEVEL where a push body is one info toast. A second toast is one fact twice.
     // The class does not exist for agent_finished, whose foreground channel is
     // notifyIfHidden and so is already silent on a focused page.
-    if ((msg.subject ?? "").startsWith(RUN_SUBJECT_PREFIX)) {
+    if (parsePushTarget({ chatId: msg.chatId, subject: msg.subject ?? "" }).kind === "run") {
       return;
     }
     toast.info(notice(msg));

@@ -19,7 +19,8 @@ import {
   pendingSteerCarry,
 } from "../store.js";
 import { noteBoundaryDrop, runArmedResend } from "../steer-resend.js";
-import { notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { askTarget } from "../push-subject.js";
 import { noteAgentFinished } from "../agent-finished-cue.js";
 import { pushDecision, collapseSettledDecision, dropTurnDecisions } from "../decision-dock.js";
 import { setAgentDown, clearAgentDown } from "../send-state.js";
@@ -204,6 +205,7 @@ onSSE("permission_needed", (chatID, p) => {
     p.files !== undefined && p.files.length > 0
       ? "Review this turn's changes"
       : "Permission needed",
+    askTarget(chatID, p.run_id),
   );
   pushDecision({
     kind: "permission",
@@ -222,7 +224,7 @@ onSSE("permission_needed", (chatID, p) => {
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
-  notifyIfHidden(NOTIFY_TITLE, "Input requested by a tool");
+  notifyIfHidden(NOTIFY_TITLE, "Input requested by a tool", askTarget(chatID, p.run_id));
   pushDecision({
     kind: "elicitation",
     chatID,
@@ -240,7 +242,7 @@ onSSE("elicitation_needed", (chatID, p) => {
 });
 
 onSSE("user_input_needed", (chatID, p) => {
-  notifyIfHidden(NOTIFY_TITLE, "The agent has a question");
+  notifyIfHidden(NOTIFY_TITLE, "The agent has a question", askTarget(chatID, p.run_id));
   pushDecision({
     kind: "user_input",
     chatID,
@@ -259,9 +261,15 @@ onSSE("user_input_needed", (chatID, p) => {
 
 // Every ask above is offered to every surface at once; only the first answer
 // is accepted, so the server names the settled request and this retires the
-// card everywhere else.
+// card everywhere else, and the banner with it: the push about the ask carried
+// `askTarget`'s tag, so a device coming back finds no banner for an answered
+// question. The frame names the chat the ask travelled on and not the run it was
+// about, so the run attribution is read back off the dock's own record; an ask
+// this dock never held retracts the chat's banner. Not `permissions_changed`,
+// which is the Cedar policy reload and names no ask.
 onSSE("decision_settled", (chatID, p) => {
-  collapseSettledDecision(chatID, p.kind, p.request_id, p.settled_by);
+  const runID = collapseSettledDecision(chatID, p.kind, p.request_id, p.settled_by);
+  void closeNotificationsFor(askTarget(chatID, runID));
 });
 
 // --- Data-driven error classification (imported from error-routing.ts) ---

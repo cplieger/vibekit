@@ -1,35 +1,15 @@
-// Recursive file-CONTENT search: GET /api/files/search.
+// Recursive file search: GET /api/files/search. Matches an entry's NAME as well as a
+// file's CONTENTS, name ahead of content; lexical and index-free like internal/chat's
+// two searches, on the same textsearch kernel.
 //
-// LEXICAL AND INDEX-FREE, matching internal/chat's two searches: a persistent
-// inverted index would be a second store to keep consistent, and a WORKSPACE
-// index is worse — the agent writes into these trees constantly and nothing
-// here watches for invalidation. So the scan runs inside the request, bounded
-// by the caps below and by the request context.
-//
-// IT SAYS WHAT IT DID NOT READ (`scanned` / `truncated`, matching the
-// cross-chat search's vocabulary), since the cap is reached routinely on a
-// repo-sized tree.
-//
-// CONFINEMENT IS INHERITED, never re-derived. The search ROOT goes through
-// resolveOrForbid, so all four defense layers on paths.go apply to it; the
-// walk then stays inside that mount BY CONSTRUCTION:
-//
-//   - Every open is one NAME against the open DESCRIPTOR of the directory that
-//     name was read from, O_NOFOLLOW (openChild). No path is ever resolved a
-//     second time, so a symlink swapped in for an accepted file — or one of
-//     its ancestors — after the walk classified it is refused by the kernel
-//     rather than followed.
-//   - IsSensitive runs on EVERY entry, since an os.Root cannot deny a
-//     sub-path and a recursive walk reaches a sensitive file from ABOVE
-//     rather than by being asked for it.
-//   - resolvePath is NOT re-run per entry: it calls EvalSymlinks on every
-//     call and can return a DIFFERENT mount when an in-tree symlink crosses
-//     grants, which would silently re-root the walk mid-flight.
+// Confinement is inherited from the resolved ROOT and never re-derived: every open is
+// one NAME against the parent's descriptor with O_NOFOLLOW (openChild), IsSensitive
+// runs on EVERY entry because an os.Root cannot deny a sub-path, and resolvePath is
+// NOT re-run per entry — EvalSymlinks can return a different mount and re-root it.
 
 package filebrowse
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -44,13 +24,13 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/parallel"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/vibekit/internal/textsearch"
+	"github.com/cplieger/webhttp/v3"
 )
 
 const (
@@ -73,10 +53,14 @@ const (
 	// file cannot spend the whole match budget before the reader's own code is
 	// reached.
 	maxFileMatches = 20
-	// maxSearchFileSize is the per-file read ceiling, deliberately smaller
-	// than maxFileSize (the editor's 2 MB): a text file larger than this is
-	// generated or vendored.
-	maxSearchFileSize = 512 * 1024
+	// searchReadBudget bounds the bytes the read fan-out can hold at once, so
+	// searchWorkers full reads never exceed it.
+	searchReadBudget = 4 << 20
+	// maxSearchFileSize is how much of ONE file is read: a file past it is
+	// read to the ceiling and the answer says it was cut (Tally.Truncated),
+	// because the head of a large file is still worth searching. A hit that
+	// straddles the cut is lost with the tail.
+	maxSearchFileSize = searchReadBudget / searchWorkers
 	// searchExcerptRadius is how much of a long line surrounds the match. A
 	// minified bundle is one line, so the excerpt has to be windowed even
 	// though the unit is a line.
@@ -108,35 +92,37 @@ const (
 // act on, so the file is opened, sniffed and dropped.
 var errSearchBinary = errors.New("filebrowse: binary file")
 
-// FileMatch is one matching LINE. A line number rather than a byte offset
-// because the client opens the result at `/file/{path}#L<line>`, which is the
-// editor's existing deep-link form.
+// FileMatchKind is what matched. A defined type with constants rather than a
+// bare string, because the client branches on it.
+type FileMatchKind string
+
+const (
+	// MatchKindContent is a matching LINE: Line >= 1 and Excerpt is that line.
+	MatchKindContent FileMatchKind = "content"
+	// MatchKindName is a matching FILE name. Line is 0 and Excerpt is empty.
+	MatchKindName FileMatchKind = "name"
+	// MatchKindDir is a matching DIRECTORY name. Line 0, Excerpt empty.
+	MatchKindDir FileMatchKind = "dir"
+)
+
+// FileMatch is one hit: a matching LINE, or an entry whose NAME matched. A line
+// number rather than a byte offset, because the client opens a content result at the
+// editor's `/file/{path}#L<line>`; a name hit carries Line 0, which matchLines never
+// produces.
 type FileMatch struct {
 	// Path is the container-absolute path, the same namespace every other
 	// /api/file* route speaks.
-	Path    string `json:"path"`
-	Excerpt string `json:"excerpt"`
-	Line    int    `json:"line"`
+	Path    string        `json:"path"`
+	Excerpt string        `json:"excerpt"`
+	Kind    FileMatchKind `json:"kind"`
+	Line    int           `json:"line"`
 }
 
-// FileSearchResult is GET /api/files/search's reply. Scanned and Truncated
-// share chat.SearchAllResult's field names deliberately, so three surfaces
-// don't report one fact under three names.
+// FileSearchResult is GET /api/files/search's reply: the hits, cut at
+// maxSearchMatches, beside the tally over the files the walk read.
 type FileSearchResult struct {
 	Matches []FileMatch `json:"matches"`
-	// Scanned is how many files the scan OPENED. A file that vanished
-	// mid-scan counts, and so does one the descriptor turned out to say was
-	// oversized — the shape and size of a candidate are only knowable once
-	// it is open (see classify).
-	Scanned int `json:"scanned"`
-	// Truncated says the answer is INCOMPLETE: the walk hit its file,
-	// directory or depth cap, the match cap stopped it opening the rest, or
-	// something it meant to read could not be read. One field rather than
-	// two, because a caller can do exactly one thing with either answer: say
-	// the result is partial. A DELIBERATE skip (an excluded glob, a
-	// symlink, a sensitive path, a binary, a file that vanished under the
-	// walk) is not a loss and never sets this.
-	Truncated bool `json:"truncated"`
+	textsearch.Tally
 }
 
 // --- /api/files/search (GET recursive content search) ---
@@ -301,42 +287,84 @@ type searchCandidate struct {
 // a pre-sized local slice by index, so a worker touches no shared state and
 // the scan needs neither mutex nor atomic.
 type fileScan struct {
-	ctx context.Context
-	// needle is folded when the search is case-insensitive, so the haystack is
-	// folded to match and the two can never disagree.
-	needle        []byte
-	include       []string
-	exclude       []string
-	matches       []FileMatch
-	files         int
-	dirs          int
-	matched       int
-	caseSensitive bool
-	truncated     bool
+	ctx     context.Context
+	include []string
+	exclude []string
+	matches []FileMatch
+	// needle is the one kernel Needle both the name test and the line scan run,
+	// so the two cannot disagree about the fold.
+	needle textsearch.Needle
+	// files is Tally.Scanned, in files.
+	files int
+	// accepted is what the maxSearchFiles budget counts: a candidate at its
+	// admission, which is before its read can refuse it.
+	accepted int
+	dirs     int
+	// matched is Tally.Matched, in matching lines and names.
+	matched int
+	// truncated is Tally.Truncated, set only where a unit went unread: a budget's
+	// refusal, a failed read, or the entry a full reply stops the walk at.
+	truncated bool
 }
 
 func newFileScan(ctx context.Context, needle string, caseSensitive bool, include, exclude []string) *fileScan {
-	raw := []byte(needle)
-	if !caseSensitive {
-		raw = bytes.ToLower(raw)
-	}
 	return &fileScan{
-		ctx:           ctx,
-		needle:        raw,
-		include:       include,
-		exclude:       exclude,
-		caseSensitive: caseSensitive,
+		ctx:     ctx,
+		needle:  textsearch.NewNeedle(needle, caseSensitive),
+		include: include,
+		exclude: exclude,
 	}
 }
 
-// capped reports whether the walk should stop: the request was cancelled, or a
-// budget is spent. Reaching a budget also marks the answer truncated, because
-// the whole point of the field is that a stopped walk left files unread.
+// nameMatches reports whether an entry's name contains the needle, under the scan's
+// own case rule.
+func (s *fileScan) nameMatches(name string) bool {
+	return s.needle.Contains(name)
+}
+
+// nameFirst is the ranking class: a NAME or DIRECTORY hit sorts ahead of a CONTENT
+// hit. Two classes rather than three, so a directory and a file share rank and then
+// sort by path, which puts a directory ahead of its own children for free.
+func nameFirst(k FileMatchKind) int {
+	if k == MatchKindContent {
+		return 1
+	}
+	return 0
+}
+
+// noteNameMatch records a NAME hit for an entry classify ADMITTED, so a hit's path is
+// one the listing shows: classify has already refused every excluded glob and
+// sensitive path a name row must not disclose.
+//
+// The include gate is re-applied for a DIRECTORY because classify deliberately does
+// not: an `include=*.go` over directories would prune every one and the walk would
+// never reach a Go file. It opens nothing, and it runs BEFORE the file-budget
+// pre-accept check, so a candidate that budget refuses still keeps its name row.
+func (s *fileScan) noteNameMatch(d searchDir, name string, isDir bool) {
+	if !s.nameMatches(name) {
+		return
+	}
+	abs, srel := d.child(name)
+	kind := MatchKindName
+	if isDir {
+		kind = MatchKindDir
+		if len(s.include) > 0 && !matchAnyGlob(s.include, srel) {
+			return
+		}
+	}
+	s.collect([]FileMatch{{Path: abs, Kind: kind}}, 1)
+}
+
+// capped reports whether the walk should stop at the entry in hand: the request
+// was cancelled, or the reply is full. A full reply marks the answer truncated,
+// because that entry and everything after it go unread. The reply cap counts
+// ROWS, since it bounds the response size. It is never consulted before a
+// ReadDir: only the read can say whether anything was left to skip.
 func (s *fileScan) capped() bool {
 	if s.ctx.Err() != nil {
 		return true
 	}
-	if s.files >= maxSearchFiles || s.dirs >= maxSearchDirs || s.matched >= maxSearchMatches {
+	if len(s.matches) >= maxSearchMatches {
 		s.truncated = true
 		return true
 	}
@@ -446,41 +474,35 @@ func (s *fileScan) addRoot(l loc) bool {
 // descriptor openSearchRoot already holds — so the reopen this walk exists to
 // avoid does not sneak back in at the root.
 func (s *fileScan) searchRootFile(f *os.File, abs string, info os.FileInfo) bool {
-	if !info.Mode().IsRegular() || info.Size() > maxSearchFileSize {
+	if !info.Mode().IsRegular() {
 		return true
 	}
-	if s.files >= maxSearchFiles {
+	if s.accepted >= maxSearchFiles {
 		s.truncated = true
 		return false
 	}
-	s.files++
-	data, err := readSearchFile(s.ctx, f, info.Size())
-	if err != nil {
-		if !errors.Is(err, errSearchBinary) {
-			logSearchReadError(abs, err)
-		}
-		return true
-	}
-	s.collect(s.matchLines(abs, data))
+	s.accepted++
+	s.fold(s.readHits(f, abs, info.Size()))
 	return true
 }
 
-// walkDir consumes an already-open directory handle: it enumerates the directory
-// in bounded chunks and, for every chunk, reads that chunk's candidates and then
-// descends into its subdirectories. The handle is closed on the way out, after
-// everything that had to be opened against it has been.
+// walkDir consumes an already-open directory handle: chunked enumeration, each
+// chunk's candidates read and its subdirectories descended, the handle closed on
+// the way out after everything opened against it. A directory past the directory
+// budget is refused before it is listed, and the refusal is what Truncated reports.
 //
-// Entries arrive in DIRECTORY order, sorted only within a chunk. That is the
-// deliberate half of the bounded-memory trade: a global order over an untrusted
-// directory means holding its whole inventory, so WHICH files a spent budget
-// happened to include is not stable across runs on a directory larger than one
-// chunk. The RESULT order is unaffected — results are sorted by path and line
-// before they are returned.
+// Entries arrive in DIRECTORY order, sorted only within a chunk: a global order
+// over an untrusted directory means holding its whole inventory, so WHICH files a
+// spent budget included is not stable on a directory larger than one chunk.
 func (s *fileScan) walkDir(d searchDir) bool {
 	defer func() { _ = d.f.Close() }()
+	if s.dirs >= maxSearchDirs {
+		s.truncated = true
+		return false
+	}
 	s.dirs++
 	for {
-		if s.capped() {
+		if s.ctx.Err() != nil {
 			return false
 		}
 		entries, err := d.f.ReadDir(searchReadDirChunk)
@@ -518,21 +540,25 @@ func (s *fileScan) consumeChunk(d searchDir, entries []fs.DirEntry) bool {
 			s.readChunk(d, cands)
 			return false
 		}
-		switch verdict, name := s.classify(d, e); verdict {
+		verdict, name := s.classify(d, e)
+		if verdict != entrySkip {
+			s.noteNameMatch(d, name, verdict == entryDir)
+		}
+		switch verdict {
 		case entryCandidate:
-			if s.files >= maxSearchFiles {
+			if s.accepted >= maxSearchFiles {
 				// Checking BEFORE the accept is what makes `truncated` exact: it
 				// is set only when there really was one more file to read.
 				s.truncated = true
 				s.readChunk(d, cands)
 				return false
 			}
-			s.files++
+			s.accepted++
 			abs, _ := d.child(name)
 			cands = append(cands, searchCandidate{name: name, abs: abs})
 		case entryDir:
 			subdirs = append(subdirs, name)
-		case entrySkip:
+		case entrySkip, entryName:
 		}
 	}
 	s.readChunk(d, cands)
@@ -548,34 +574,27 @@ func (s *fileScan) consumeChunk(d searchDir, entries []fs.DirEntry) bool {
 type entryVerdict int
 
 const (
+	// entrySkip is an entry the search must not show: excluded, or sensitive.
 	entrySkip entryVerdict = iota
+	// entryCandidate is a regular file whose bytes are read.
 	entryCandidate
+	// entryDir is a directory the walk descends into.
 	entryDir
+	// entryName is an entry the listing shows but the search never opens — a
+	// symlink, a FIFO, a device, a socket — so only its name can match.
+	entryName
 )
 
-// classify applies every gate to one directory entry, in the order that keeps
-// the file budget from being spent on entries that were never going to match:
-// entry type, then the sensitive-path denial, then the globs, and only then an
-// open.
-//
-// The size ceiling is deliberately NOT one of these gates. fs.DirEntry.Info
-// answers it with an lstat of the entry's PATHNAME, which is both a stat storm
-// over a walk and the one path resolution this walk exists to have removed — the
-// size that decides the read is taken off the descriptor in openCandidate, where
-// it cannot describe a different file than the one about to be read. The visible
-// consequence is that an oversized file is opened, measured and put down, so it
-// counts against `scanned` and the file budget where it used to be skipped
-// unseen.
+// classify applies every gate to one directory entry: the sensitive-path denial,
+// then the globs, then the entry type. A symlink is never followed (an in-mount
+// directory link would cycle until a cap absorbs it, a file link would report one
+// content under two names; fs.WalkDir makes the same choice), but its NAME still
+// matches, because the listing shows it. The size ceiling is deliberately not a
+// gate: fs.DirEntry.Info answers it with an lstat of the PATHNAME, the one path
+// resolution this walk exists to have removed, so the read is bounded off the
+// descriptor in readSearchFile instead.
 func (s *fileScan) classify(d searchDir, e fs.DirEntry) (verdict entryVerdict, name string) {
 	name = e.Name()
-	// Symlinks are skipped rather than followed. An out-of-mount target is
-	// already refused by the os.Root, so this is about the two things that
-	// remain: an in-mount directory link can make the walk cycle until the cap
-	// absorbs it, and a file link reports the same content twice under two
-	// names. fs.WalkDir makes the same choice.
-	if e.Type()&fs.ModeSymlink != 0 {
-		return entrySkip, name
-	}
 	abs, srel := d.child(name)
 	if IsSensitive(abs) {
 		return entrySkip, name
@@ -590,14 +609,14 @@ func (s *fileScan) classify(d searchDir, e fs.DirEntry) (verdict entryVerdict, n
 		}
 		return entryDir, name
 	}
-	if !e.Type().IsRegular() {
-		return entrySkip, name
-	}
 	if matchAnyGlob(s.exclude, srel) {
 		return entrySkip, name
 	}
 	if len(s.include) > 0 && !matchAnyGlob(s.include, srel) {
 		return entrySkip, name
+	}
+	if !e.Type().IsRegular() {
+		return entryName, name
 	}
 	return entryCandidate, name
 }
@@ -648,129 +667,144 @@ func (s *fileScan) readChunk(d searchDir, cands []searchCandidate) {
 	}
 	per := make([]candidateRead, len(cands))
 	parallel.Bounded(s.ctx, cands, searchWorkers, func(i int, c searchCandidate) {
-		per[i].hits, per[i].unread = s.readCandidate(d.f, c)
+		per[i] = s.readCandidate(d.f, c)
 	})
 	for i := range per {
-		s.collect(per[i].hits)
-		if per[i].unread {
-			s.truncated = true
-		}
+		s.fold(per[i])
 	}
 }
 
 // candidateRead is one candidate's outcome, carried back by index rather than
-// folded in by the worker: an unreadable file has to reach `truncated`, and
-// `truncated` is the walk goroutine's to write — which is what keeps the fan-out
-// free of a mutex.
+// folded in by the worker: the tally is the walk goroutine's to write — which is
+// what keeps the fan-out free of a mutex.
 type candidateRead struct {
-	hits   []FileMatch
-	unread bool
+	hits []FileMatch
+	// matched is every matching line, counted past the per-file cap.
+	matched int
+	// unread says the file was left UNREAD for a reason the walk did not choose,
+	// so the answer has a hole; partial says it was read only to its ceiling.
+	unread  bool
+	partial bool
 }
 
-// collect folds one file's hits into the reply.
-func (s *fileScan) collect(hits []FileMatch) {
+// fold applies one read's outcome to the tally. An unread file was never
+// scanned; a partial one was, and both leave the answer incomplete.
+func (s *fileScan) fold(r candidateRead) {
+	s.collect(r.hits, r.matched)
+	if r.unread {
+		s.truncated = true
+		return
+	}
+	s.files++
+	if r.partial {
+		s.truncated = true
+	}
+}
+
+// collect folds one entry's hits into the reply: a file's content hits with the
+// count they were cut from, or a single NAME hit for a file or a directory.
+func (s *fileScan) collect(hits []FileMatch, matched int) {
 	s.matches = append(s.matches, hits...)
-	s.matched += len(hits)
+	s.matched += matched
 }
 
-// readCandidate opens one candidate against its directory's descriptor and
-// returns its hits, plus whether the file was left UNREAD for a reason the walk
-// did not choose — a file counted in `scanned` that contributed no lines because
-// the kernel refused it is a hole in the answer, not a skip.
-func (s *fileScan) readCandidate(dir *os.File, c searchCandidate) (hits []FileMatch, unread bool) {
-	f, size, err := openCandidate(dir, c)
-	if err != nil {
-		return nil, logSearchReadError(c.abs, err)
-	}
-	defer func() { _ = f.Close() }()
-	data, err := readSearchFile(s.ctx, f, size)
-	switch {
-	case errors.Is(err, errSearchBinary):
-		// Not a loss: a binary holds no lines to report, so the answer covers it.
-		return nil, false
-	case err != nil:
-		return nil, logSearchReadError(c.abs, err)
-	}
-	return s.matchLines(c.abs, data), false
-}
-
-// openCandidate opens one accepted candidate as a single name against the
-// directory handle it was found in, and takes its shape and size off THAT
-// descriptor: a mode or a size read from the pathname again describes whatever
-// currently wears the name, not what is about to be read.
-func openCandidate(dir *os.File, c searchCandidate) (*os.File, int64, error) {
+// readCandidate opens one candidate against its directory's descriptor and reads
+// it. The shape is taken off THAT descriptor: a mode read from the pathname again
+// describes whatever currently wears the name, not what is about to be read. A
+// refusal there is the kernel keeping the walk's classification honest, and
+// logSearchReadError says which refusals are losses.
+func (s *fileScan) readCandidate(dir *os.File, c searchCandidate) candidateRead {
 	f, err := openChild(dir, c.name, c.abs, searchFileFlags)
 	if err != nil {
-		return nil, 0, err
+		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		_ = f.Close()
-		return nil, 0, err
+		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
-	// atomicfile's sentinels rather than local ones, so "not a regular file" and
-	// "too large" mean one thing across this package and logSearchReadError
-	// triages both halves of the read path the same way.
 	if !info.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, 0, fmt.Errorf("%w: %s (type %s)", atomicfile.ErrNotRegular, c.abs, info.Mode().Type())
+		err = fmt.Errorf("%w: %s (type %s)", atomicfile.ErrNotRegular, c.abs, info.Mode().Type())
+		return candidateRead{unread: logSearchReadError(c.abs, err)}
 	}
-	if info.Size() > maxSearchFileSize {
-		_ = f.Close()
-		return nil, 0, fmt.Errorf("%w: %d bytes (max %d)", atomicfile.ErrFileTooLarge, info.Size(), maxSearchFileSize)
+	return s.readHits(f, c.abs, info.Size())
+}
+
+// readHits reads one open regular file and scans it. A binary is not a loss —
+// it holds no lines to report, so the answer covers it — and neither is a file
+// read to its ceiling, which is reported as partial rather than dropped.
+func (s *fileScan) readHits(f *os.File, abs string, size int64) candidateRead {
+	data, partial, err := readSearchFile(s.ctx, f, size)
+	switch {
+	case errors.Is(err, errSearchBinary):
+		return candidateRead{}
+	case err != nil:
+		return candidateRead{unread: logSearchReadError(abs, err)}
 	}
-	return f, info.Size(), nil
+	hits, matched := s.matchLines(abs, data)
+	return candidateRead{hits: hits, matched: matched, partial: partial}
 }
 
 // readSearchFile reads one candidate from an OPEN descriptor: the binary sniff
-// prefix first and on its own, then the rest only if the file is text.
+// prefix first and on its own, then the rest only if the file is text, and no
+// more than maxSearchFileSize in all. partial reports that the file held more.
 //
 // The two-step read is the point. A binary costs the sniff window rather than
 // the whole per-file ceiling, so eight workers cannot each be holding 512 KiB of
 // bytes that were never going to be reported. Reading the file whole and then
 // asking whether it was binary is the same answer at 64x the memory and the I/O.
-func readSearchFile(ctx context.Context, f *os.File, size int64) ([]byte, error) {
+func readSearchFile(ctx context.Context, f *os.File, size int64) (data string, partial bool, err error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
+		return "", false, ctxErr
 	}
 	sniff := make([]byte, min(int64(binarySniffN), size))
 	n, err := io.ReadFull(f, sniff)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, err
+		return "", false, err
 	}
 	// Sliced to what was actually read: ReadFull leaves the tail of a short read
 	// zeroed, and a zero byte is exactly what looksBinary looks for.
 	sniff = sniff[:n]
 	if looksBinary(sniff) {
-		return nil, errSearchBinary
+		return "", false, errSearchBinary
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
+		return "", false, ctxErr
 	}
-	// The REST from the same descriptor. One byte past the ceiling, so a file
-	// that grew during the read is reported rather than silently truncated into
-	// a result.
-	rest, err := io.ReadAll(io.LimitReader(f, maxSearchFileSize-int64(n)+1))
-	if err != nil {
-		return nil, err
+	// The REST from the same descriptor, into the one buffer the scan then reads
+	// as a string, so a worker never holds a second copy of a file. One byte past
+	// the ceiling: that byte is what says the file was cut, and it is dropped
+	// rather than scanned.
+	var text strings.Builder
+	text.Grow(int(min(size, maxSearchFileSize)) + 1)
+	text.Write(sniff)
+	if _, copyErr := io.Copy(&text, io.LimitReader(f, maxSearchFileSize-int64(n)+1)); copyErr != nil {
+		return "", false, copyErr
 	}
-	if int64(n+len(rest)) > maxSearchFileSize {
-		return nil, fmt.Errorf("%w: file grew past %d bytes during the search read",
-			atomicfile.ErrFileTooLarge, maxSearchFileSize)
+	data = text.String()
+	if len(data) > maxSearchFileSize {
+		return data[:maxSearchFileSize], true, nil
 	}
-	return append(sniff, rest...), nil
+	return data, false, nil
 }
 
 // results folds the walk's hits into the reply.
 func (s *fileScan) results() FileSearchResult {
 	flat := s.matches
 	slices.SortFunc(flat, func(a, b FileMatch) int {
-		return cmp.Or(strings.Compare(a.Path, b.Path), cmp.Compare(a.Line, b.Line))
+		return cmp.Or(
+			// 0 for a name or directory hit, 1 for a content hit.
+			cmp.Compare(nameFirst(a.Kind), nameFirst(b.Kind)),
+			strings.Compare(a.Path, b.Path),
+			cmp.Compare(a.Line, b.Line),
+		)
 	})
-	truncated := s.truncated
+	// RANK-AWARE: it cuts the tail of the list the comparator just ordered, so a
+	// query with more than maxSearchMatches name hits answers name rows only, and
+	// Matched > len(Matches) is what says so. No content quota, because a sorted
+	// truncated list must not drop a higher-ranked row to keep a lower-ranked one.
 	if len(flat) > maxSearchMatches {
 		flat = flat[:maxSearchMatches]
-		truncated = true
 	}
 	if flat == nil {
 		// A nil slice serialises as JSON null, which the client must not have to
@@ -780,7 +814,8 @@ func (s *fileScan) results() FileSearchResult {
 	return FileSearchResult{
 		Matches:   flat,
 		Scanned:   s.files,
-		Truncated: truncated,
+		Matched:   s.matched,
+		Truncated: s.truncated,
 	}
 }
 
@@ -800,8 +835,7 @@ func logSearchReadError(abs string, err error) (lost bool) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return false
-	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular),
-		errors.Is(err, atomicfile.ErrFileTooLarge), isSwapRefusal(err):
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular), isSwapRefusal(err):
 		slog.Debug("filebrowse: search skipped file", "path", logsafe.Field(abs), "error", logsafe.Field(err.Error()))
 		return false
 	default:
@@ -810,44 +844,50 @@ func logSearchReadError(abs string, err error) (lost bool) {
 	}
 }
 
-// matchLines finds every matching line in one file's bytes, capped per file.
-func (s *fileScan) matchLines(abs string, data []byte) []FileMatch {
-	var out []FileMatch
+// matchLines finds every matching line in one file's text: the rows, cut at
+// maxFileMatches, and the count they were cut from.
+func (s *fileScan) matchLines(abs, data string) (hits []FileMatch, matched int) {
 	line := 0
-	for rest := data; len(rest) > 0; {
+	for rest := data; rest != ""; {
 		seg := rest
-		if idx := bytes.IndexByte(rest, '\n'); idx >= 0 {
+		if idx := strings.IndexByte(rest, '\n'); idx >= 0 {
 			seg, rest = rest[:idx], rest[idx+1:]
 		} else {
-			rest = nil
+			rest = ""
 		}
 		line++
-		hay := seg
-		if !s.caseSensitive {
-			hay = bytes.ToLower(seg)
-		}
-		at := bytes.Index(hay, s.needle)
-		if at < 0 {
+		hit, ok := firstHit(s.needle, seg)
+		if !ok {
 			continue
 		}
-		out = append(out, FileMatch{Path: abs, Excerpt: excerptLine(seg, at), Line: line})
-		if len(out) >= maxFileMatches {
-			return out
+		matched++
+		if len(hits) < maxFileMatches {
+			hits = append(hits, FileMatch{
+				Path: abs, Excerpt: excerptLine(seg, hit.Rune), Kind: MatchKindContent, Line: line,
+			})
 		}
 	}
-	return out
+	return hits, matched
+}
+
+// firstHit is the first occurrence of needle in text, if any.
+func firstHit(needle textsearch.Needle, text string) (textsearch.Hit, bool) {
+	for hit := range needle.Occurrences(text) {
+		return hit, true
+	}
+	return textsearch.Hit{}, false
 }
 
 // excerptLine renders one matching line for a result row: the trailing CR of a
 // CRLF file dropped, and the line windowed around the match when it is long
-// enough that shipping it whole would cost more than it tells. Rune-indexed so a
-// multi-byte character is never split; the ellipsis is the U+2026 the transcript
-// search uses.
-func excerptLine(seg []byte, at int) string {
-	runes := []rune(strings.TrimRight(string(seg), "\r"))
-	hit := utf8.RuneCount(seg[:min(at, len(seg))])
-	start := max(hit-searchExcerptRadius, 0)
-	end := min(hit+searchExcerptRadius, len(runes))
+// enough that shipping it whole would cost more than it tells. The window is
+// placed at the hit's RUNE index into the original line, so a fold that changes
+// byte length cannot move it off the match; the ellipsis is the U+2026 the
+// transcript search uses.
+func excerptLine(seg string, hitRune int) string {
+	runes := []rune(strings.TrimRight(seg, "\r"))
+	start := max(hitRune-searchExcerptRadius, 0)
+	end := min(hitRune+searchExcerptRadius, len(runes))
 	var b strings.Builder
 	if start > 0 {
 		b.WriteString("\u2026")

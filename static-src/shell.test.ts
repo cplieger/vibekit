@@ -18,6 +18,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { CreateTerminalOptions, TerminalHandle } from "@cplieger/web-terminal-ui";
+import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 import type * as Shell from "./shell.js";
 
 /** Cache-buster for the re-imports below.
@@ -339,7 +340,20 @@ describe("shell.ts: lazy terminal creation", () => {
     const [root, opts] = call as [HTMLElement, CreateTerminalOptions];
     expect(root).toBe(h.shellTerminal);
     expect(opts.wsPath).toBe("/api/shell/ws");
-    expect(opts.fontReady).toBeDefined();
+    // The awaited face is the EXACT stack the theme asks for. `document.fonts.load`
+    // resolves against nothing for a family no @font-face matches, so the await
+    // returns immediately and the first resize is measured on the fallback's cell
+    // metrics — which the server then sizes the PTY from. A toBeDefined() here
+    // passed for any string at all, including the library's Monaspace default.
+    expect(opts.fontReady).toBe('14px "Web Terminal Glyphs", "Monaspace Neon NF"');
+    // The glyph family FIRST, ahead of the text face: it carries only the
+    // codepoints that have to tile, so dropping it or reordering it takes box
+    // drawing and the block elements back to Monaspace's own, which is the row-gap
+    // defect this stack exists to fix. Asserted as the whole declaration rather
+    // than a `toContain`, because order is the property.
+    expect(opts.theme?.["--font-mono"]).toBe(
+      '"Web Terminal Glyphs", "Monaspace Neon NF", monospace',
+    );
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
     // A THUNK, not a built array (ui v5's lazy `features`), so a throw while
     // composing the list fails inside createTerminal rather than at this call
@@ -626,6 +640,63 @@ describe("shell.ts: resize handle", () => {
     expect(h.shellResize.getAttribute("aria-orientation")).toBe("horizontal");
     expect(h.shellResize.getAttribute("aria-label")).toBe("Resize shell");
     expect(h.shellResize.tabIndex).toBe(0);
+  });
+
+  it("seeds the separator's VALUE from the panel's own CSS default height", async () => {
+    // TWO facts in one case, deliberately, because they are one fact from two ends.
+    //
+    // (a) A focusable `role="separator"` is a splitter, so ARIA requires
+    // `aria-valuenow` — axe reports its absence as a critical `aria-required-attr`,
+    // measured on the deployed panel, and a screen-reader user arrowing the handle
+    // otherwise hears no value at all. `shellHeight()` is mocked to 0 here, which is
+    // the case with no height to read: the panel is closed, so its box measures 0.
+    //
+    // (b) `SHELL_DEFAULT_H` is therefore shadowed in shell.ts, and the EXPECTATION
+    // here is read off `.shell-panel`'s own `height` fallback instead — an
+    // independent oracle, so a drift on either side fails, and moving both together
+    // (a genuine redesign of the default) passes. The constant stays module-private:
+    // exporting it to be asserted would add surface the app has no use for.
+    const shell = loadCSS("21-shell-panel.css");
+    const panel = ruleContaining(shell, ".shell-panel", "top");
+    const fallback = /height:\s*var\(--shell-h,\s*([\d.]+rem)\)/u.exec(panel.body);
+    expect(fallback, "the panel declares its height with a rem fallback").not.toBeNull();
+    // rem to px through the engine rather than a hardcoded 16, so a root font-size
+    // does not silently move the expectation.
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:fixed;width:${fallback?.[1] ?? "0"}`;
+    document.body.appendChild(probe);
+    const cssDefault = Math.round(probe.getBoundingClientRect().width);
+    probe.remove();
+
+    const h = await setup();
+    h.mod.initShellPanel();
+    const max = Math.round(window.innerHeight * 0.8);
+    expect(
+      h.shellResize.getAttribute("aria-valuenow"),
+      "the seeded value is the CSS default, clamped",
+    ).toBe(String(Math.min(cssDefault, max)));
+    expect(h.shellResize.getAttribute("aria-valuemin")).toBe("96");
+    expect(h.shellResize.getAttribute("aria-valuemax")).toBe(String(max));
+    // And the seed does NOT pin the panel's height: writing --shell-h here would
+    // take it off CSS for the session.
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("");
+  });
+
+  it("moves the separator's value with every applied height", async () => {
+    // One writer, so the value cannot describe a height the panel does not have.
+    // Both doors: the drag and the keyboard step.
+    const h = await setup();
+    h.mod.initShellPanel();
+
+    h.shellResize.dispatchEvent(ptr("pointerdown", 500));
+    h.shellResize.dispatchEvent(ptr("pointermove", 300));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("200px");
+    expect(h.shellResize.getAttribute("aria-valuenow")).toBe("200");
+    h.shellResize.dispatchEvent(ptr("pointerup", 300));
+
+    h.shellResize.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    expect(h.shellPanel.style.getPropertyValue("--shell-h")).toBe("96px");
+    expect(h.shellResize.getAttribute("aria-valuenow")).toBe("96");
   });
 
   it("drag up grows the panel (bottom-docked math) and persists on release", async () => {

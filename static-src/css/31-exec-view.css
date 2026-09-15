@@ -865,12 +865,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* A GROUP HEAD IS THE TERTIARY RUNG, WHERE HINT INK IS NOT VALID, and this is the
-   rule the chat's own tinted band already carries: `.turn-head-row` (29-turns.css)
-   steps its 11px timestamp up to secondary for exactly this reason, and the two-rung
-   contract on `--c-text-tertiary` (01-tokens.css) is the general statement. Measured
-   on the head's fill: hint 3.601:1 dark / 3.900:1 light against secondary's 6.085:1
-   / 6.025:1, so the duration was under AA at REST, before any hover.
+/* A GROUP HEAD IS A HOVERED BAND — the tertiary rung under the hover wash — which
+   the ink ramp declares a two-level surface (01-tokens.css): hint ink clears the
+   band at rest now, and still reads 3.44:1 dark / 3.78:1 light under the wash. The
+   chat's own tinted band already carries the rule: `.turn-head-row` (29-turns.css)
+   steps its 11px timestamp up to secondary for exactly this reason.
 
    `:where()` so this scores (0,2,0) and LOSES to 70-selection.css's (0,3,0) muted-ink
    rule: a selected head keeps `--c-selected-muted-fg`, and this may not outrank the
@@ -1110,12 +1109,16 @@
    Results — what the SELECTED step produced
    -------------------------------------------------------------------------- */
 
-/* A FIXED REGION above the panes, at the column's full width, present only while
-   the selected step has settled and produced something. No disclosure at either
-   level, so no `overflow: hidden` either — that declaration existed to clip the
-   box's own corners while the disclosure animated its height, and with no animation
-   the region joins `.ev-pane`'s no-overflow rule rather than being a scroll
-   container nothing scrolls. */
+/* A FIXED REGION below the panes, at the column's full width, present only while
+   the selected step has settled and produced something. BELOW rather than above
+   because its `hidden` flips as the reader clicks between a settled step and an
+   unsettled one: above the panes that shifted the tree and the detail by this
+   region's height, moving the rows under the pointer that had just chosen one. Last
+   in the column, the flip moves nothing anybody is aiming at. No disclosure at
+   either level, so no `overflow: hidden` either — that declaration existed to clip
+   the box's own corners while the disclosure animated its height, and with no
+   animation the region joins `.ev-pane`'s no-overflow rule rather than being a
+   scroll container nothing scrolls. */
 .ev-results {
   flex: 0 0 auto;
   background: var(--c-bg-secondary);

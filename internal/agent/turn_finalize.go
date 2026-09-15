@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -632,8 +633,8 @@ func persistsEmptyCarrier(t *Turn, segmented bool) bool {
 // announcesEmptyEnd reports whether a turn that persisted NO carrier must still announce its
 // end. A STEP's end belongs to its run rather than to the launching chat, whose own last turn
 // did not end; every other source's end is this chat's own. Withholding the frame latches the
-// client instead: replayTurnState sets thinking at connect and GET /api/chats/{id} reports
-// turn_open, and only a settled turn_ended or a transport gap retracts either.
+// client instead: `connected.busy_chats` sets thinking at connect and GET /api/chats/{id}
+// reports turn_open, and only a settled turn_ended or a transport gap retracts either.
 func announcesEmptyEnd(t *Turn) bool {
 	return t.Source != vibekit.TurnSourceWorkflowStep
 }
@@ -819,17 +820,23 @@ func (bc *BridgeCoordinator) closeOnLocalShell(ctx context.Context, t *Turn) vib
 // message id comes back WITH the changed calls rather than being read off the
 // buffer: this runs on the settling goroutine, not the dispatch loop.
 func (bc *BridgeCoordinator) abortInFlightTools(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
-	messageID, changed := buf.MarkInFlightToolsAborted()
+	messageID, changed, version := buf.MarkInFlightToolsAborted()
 	for i := range changed {
 		// The status is the only thing that moved, so the frame carries the id and
 		// the status and nothing else — the buffer already holds the rest, and a
-		// reconnecting client reads it from turn_state.
-		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+		// reconnecting client refetches it through GET /api/chats/{id}.
+		frame := vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
 			vibekit.ToolCallUpdatePayload{
 				MessageID:  messageID,
 				ToolCallID: changed[i].ID,
 				Status:     changed[i].Status,
-			}))
+			})
+		// One write, several frames: only the LAST carries the stamp, so a client
+		// that loses the stream mid-burst still reads changed on its next digest.
+		if i == len(changed)-1 {
+			frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+		}
+		bc.broadcast(ctx, frame)
 	}
 }
 

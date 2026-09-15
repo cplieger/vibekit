@@ -54,7 +54,7 @@ const EXPECTED_KEYS = [
 
 /** Written by `patchSettings` but deliberately slotless: each is set from outside
  *  Settings, where the control the user moved is the confirmation. */
-const NO_SLOT_KEYS = ["theme", "fb_path", "last_model", "last_effort"] as const;
+const NO_SLOT_KEYS = ["theme", "fb_path", "last_model", "last_effort_by_model"] as const;
 
 function slots(): HTMLElement[] {
   const host = document.createElement("div");

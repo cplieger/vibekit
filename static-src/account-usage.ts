@@ -63,14 +63,28 @@ function renderAccountUsage(u: AccountUsage | null): void {
   const box = $.stAccount;
   const planEl = $.acctPlan;
   const meterEl = $.acctMeter;
+  const overageEl = $.acctOverage;
   box.hidden = false;
 
   if (u === null) {
     planEl.textContent = "Usage unavailable";
     meterEl.textContent = "";
     meterEl.removeAttribute("data-tooltip");
+    overageEl.textContent = "";
     return;
   }
+
+  // Whether overage billing is on. READ-ONLY: nothing in kiro-cli sets it, so the
+  // row's own link is the way to change it — this line is what tells the reader
+  // there is something there to change.
+  //
+  // Written HERE rather than in the arms below, because every arm past this point
+  // returns and the state is a property of the ACCOUNT rather than of a breakdown
+  // line. The branch is TOTAL because the wire field carries no `omitempty`
+  // (internal/vibekit/account.go), so a payload always states the value; blank is
+  // reserved for the null arm above, where an absent snapshot says nothing about
+  // the account and "Overages off" would be a claim.
+  overageEl.textContent = u.overages_enabled ? "Overages on" : "Overages off";
 
   const plan =
     u.plan_name !== undefined && u.plan_name !== "" ? u.plan_name : (u.note ?? "Account");

@@ -39,7 +39,7 @@ func readRawChat(t *testing.T, dir string, chatID vibekit.ChatID) string {
 // newChat seeds a persisted chat so SetDraft has a record to write to.
 func newChat(t *testing.T, s *Store, id vibekit.ChatID) {
 	t.Helper()
-	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "a chat"
 		return true
 	}); err != nil {
@@ -126,7 +126,7 @@ func TestSetDraft(t *testing.T) {
 		if err := s.writeChat("c1", c); err != nil {
 			t.Fatalf("writeChat: %v", err)
 		}
-		if err := s.Mutate(t.Context(), "c1", func(ch *vibekit.Chat, _ bool) bool {
+		if _, err := s.Mutate(t.Context(), "c1", func(ch *vibekit.Chat, _ bool) bool {
 			ch.Name = "renamed"
 			return true
 		}); err != nil {
@@ -262,7 +262,7 @@ func TestSetDraft(t *testing.T) {
 		c2Before := readRawChat(t, dir, "c2")
 		writeRawChat(t, dir, "c1", `{"id":"c2","name":"impostor","messages":[]}`)
 
-		err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		_, err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "renamed"
 			return true
 		})
@@ -305,7 +305,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		_, err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Draft = string([]byte{0xff})
 			return true
 		})

@@ -69,25 +69,25 @@ func TestSyncPushPreferences_SparsePatchDoesNotResetAnOmittedKind(t *testing.T) 
 			persisted:    "",
 			patch:        `{}`,
 			wantFinished: true,
-			wantPR:       true,
-			why:          "nothing on disk and nothing in the patch leaves the registry's DefaultOn",
+			wantPR:       false,
+			why:          "nothing on disk and nothing in the patch leaves each kind at its own registry default, which is ON for agent_finished and OFF for pr_status",
 		},
 		"an unparseable settings file falls back to the registry defaults": {
 			persisted:    `{not json`,
 			patch:        `{}`,
 			wantFinished: true,
-			wantPR:       true,
+			wantPR:       false,
 			// readStoredSettings reports the corrupt file as an error, which
 			// the WRITE arms refuse on. This runs after the write succeeded, so
 			// there is no stored value left to honour and the registry default is
 			// the only answer available; the failure is logged, not swallowed.
-			why: "an unreadable config.json leaves every kind at its registry default",
+			why: "an unreadable config.json leaves every kind at its own registry default, which is per-kind and OFF for pr_status",
 		},
 		"a malformed patch value falls back to the registry default": {
 			persisted:    `{"notify_agent_finished":false}`,
 			patch:        `{"notify_agent_finished":"nonsense"}`,
 			wantFinished: true,
-			wantPR:       true,
+			wantPR:       false,
 			// The key IS present, so this is not the sparse case. The write path
 			// persists the patch verbatim, so the junk value is now on disk too and
 			// the next ReloadPreferences resolves it to the same default — pinning
@@ -246,10 +246,11 @@ func TestExistingSettingsForMerge_SizeCapIsInclusive(t *testing.T) {
 
 // TestSyncPushPreferences_MasterSwitch is the master switch's SERVER-side enforcement,
 // and the polarity is the whole design. `notifications_enabled` defaults OFF (it means
-// "the reader has not opted in") while every keyed kind defaults ON ("if the master is
-// on, which kinds"), so only an EXPLICIT false may zero the set — reading an ABSENT
-// master as a decision would silence every kind for every workspace that has never
-// touched Settings.
+// "the reader has not opted in") while each keyed kind carries its own declared default
+// (settings.Default*, two ON and one OFF) answering "if the master is on, which kinds",
+// so only an EXPLICIT false may zero the set — reading an ABSENT master as a decision
+// would silence every kind for every workspace that has never touched Settings,
+// whatever each kind's own default says.
 //
 // The zeroing includes `permission`, which is the one kind with no settings key: that
 // is what "everything off together" means, and the browser already has no

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -18,8 +19,11 @@ import (
 // upstream has. Growth is bounded by those removals, ClearForChat and the cap below.
 type steerBuffer struct {
 	waiting map[steerKey]vibekit.SteerQueuedPayload
-	maxN    int
-	mu      sync.Mutex
+	// versions holds the shared `pending` counter every queue and removal bumps
+	// under mu; see mintPending.
+	versions *subject.Versions
+	maxN     int
+	mu       sync.Mutex
 }
 
 // steerKey addresses one waiting steer: the chat that owns it plus KAS's own id.
@@ -55,6 +59,7 @@ func (b *steerBuffer) SteerWaiting(chatID vibekit.ChatID, p vibekit.SteerQueuedP
 		b.evictOldestLocked(chatID)
 	}
 	b.waiting[k] = p
+	mintPending(&b.versions)
 }
 
 // SteerRead drops the one steer an injected frame names: the model has read it, so
@@ -87,6 +92,9 @@ func (b *steerBuffer) SteerForgotten(chatID vibekit.ChatID, steerIDs []string) [
 			delete(b.waiting, k)
 		}
 	}
+	if len(held) > 0 {
+		mintPending(&b.versions)
+	}
 	return held
 }
 
@@ -98,12 +106,17 @@ func (b *steerBuffer) ClearForChat(chatID vibekit.ChatID) {
 		return
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	removed := false
 	for k := range b.waiting {
 		if k.chat == chatID {
 			delete(b.waiting, k)
+			removed = true
 		}
 	}
-	b.mu.Unlock()
+	if removed {
+		mintPending(&b.versions)
+	}
 }
 
 // List returns the waiting steers as the events a connect replay writes, filtered to

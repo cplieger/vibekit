@@ -38,6 +38,9 @@ vi.mock("./confirm.js", () => ({ confirm: async () => false }));
 vi.mock("./actions/index.js", () => ({ registerCleanup: noop }));
 vi.mock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
 vi.mock("./run-view.js", () => ({ openRunView: noop }));
+// The transcript's find, which a search row hands its hit to: its graph reaches
+// the block dispatcher and the store, neither of which this suite stages.
+vi.mock("./find-in-chat.js", () => ({ openChatFindAt: noop }));
 vi.mock("./tabs.js", () => ({
   // The toggle takes no callback now: the tab factory owns the page's loader.
   // The suite mounts the page itself, so this only has to resolve.
@@ -59,8 +62,6 @@ vi.mock("./scroll.js", () => ({
     fn();
   },
 }));
-vi.mock("./tool-group.js", () => ({ trackInProgress: noop }));
-
 import { loadHistoryView, refreshHistoryView } from "./history.js";
 
 describe("a11y: History row accessible names", () => {
@@ -88,7 +89,7 @@ describe("a11y: History row accessible names", () => {
     // The row is a plain container; its two controls are siblings.
     expect(row.getAttribute("role")).toBeNull();
     expect(row.getAttribute("tabindex")).toBeNull();
-    const open = row.querySelector<HTMLElement>("button.list-row-name")!;
+    const open = row.querySelector<HTMLElement>("button.history-row-main")!;
     // The name still opens with the action, then states the verdict.
     expect(open.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
     // The slot carrying the mark is decorative: the name already says the word.

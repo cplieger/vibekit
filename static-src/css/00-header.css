@@ -29,32 +29,18 @@
   initial-value: 0;
 }
 
-@property --stagger-index {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-/* THE TIMELINE RAIL'S POSITIONS, each a 0..1 fraction of the track written per
+/* A TIMELINE-RAIL MARKER'S POSITION, a 0..1 fraction of the track written per
  * element by `turn-rail.ts` and consumed by one rule in 29-turns.css. Registered
- * for the reason `--stagger-index` is: an unregistered property with no inline
- * value makes the `calc()` reading it invalid at computed-value time, which drops
- * the whole `top` declaration, where a typed initial value lands the element at
- * the head of the track instead. `--rail-at` is one marker's own position;
- * `--rail-from` / `--rail-to` bound a seam's band. */
+ * because an unregistered property with no inline value makes the `calc()` reading
+ * it invalid at computed-value time, which drops the whole `top` declaration, where
+ * a typed initial value lands the element at the head of the track instead.
+ * `--stagger-index` was the other member of that class until 2026-09-14, when the
+ * file browser's stagger moved to `sibling-index()` and the transcript's writes
+ * turned out to have had no reader at all (19-files.css).
+ * `--rail-at` is one marker's own position, and it is
+ * the only one left: `--rail-from` / `--rail-to` bounded the pause band, and the band
+ * and the pause reporting behind it are both deleted (29-turns.css). */
 @property --rail-at {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-@property --rail-from {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-@property --rail-to {
   syntax: "<number>";
   inherits: false;
   initial-value: 0;

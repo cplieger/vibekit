@@ -15,7 +15,7 @@ import (
 // asserting the source it just assigned would pin nothing.
 func stagedStepTurn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -51,7 +51,7 @@ func outcomeMarkerCount(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID) 
 // row the client renders AFTER the reply it arrived during.
 func appendUserRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = append(c.Messages, vibekit.Message{
 			ID:      newMessageID(),
 			Role:    vibekit.RoleUser,

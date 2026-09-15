@@ -57,6 +57,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGetTyped } from "./api-client.js";
+import { observeStamp } from "./subject-versions.js";
 import type { TabSubject, TabsChangedPayload } from "./types.js";
 import { decodeTabList } from "./wire/decoders.gen.js";
 
@@ -620,19 +621,21 @@ async function drain(): Promise<void> {
  *  (mechanism 3) and answers false with nothing wrong. Boot is the one caller that
  *  reads it — there the strip is empty, so an unadopted read leaves the reader
  *  with no tabs and nothing saying why. */
-export function listTabs(): Promise<boolean> {
-  return relist();
+export function listTabs(signal?: AbortSignal): Promise<boolean> {
+  return relist(signal);
 }
 
-function relist(): Promise<boolean> {
-  listInFlight ??= readList().finally(() => {
+/** One read at a time; a caller arriving while one is out shares its answer, so the
+ *  first caller's signal is the one the shared read carries. */
+function relist(signal?: AbortSignal): Promise<boolean> {
+  listInFlight ??= readList(signal).finally(() => {
     listInFlight = null;
   });
   return listInFlight;
 }
 
-async function readList(): Promise<boolean> {
-  const list = await apiGetTyped("/api/tabs", decodeTabList);
+async function readList(signal?: AbortSignal): Promise<boolean> {
+  const list = await apiGetTyped("/api/tabs", decodeTabList, signal);
   if (list === null) {
     // Unreachable or undecodable. The projection is left exactly as it stands:
     // an arrangement is re-derivable and a client that cannot read it must still
@@ -682,6 +685,11 @@ async function readList(): Promise<boolean> {
   // Transition 4 over the snapshot: an op whose committed version the adopted
   // list covers is absorbed, correlation or not.
   absorbCommitted();
+  // AFTER the adoption: the `tabs` digest stamp certifies the set the projection now
+  // holds. A `tabs_changed` frame carries no stamp — the collection `version` inside
+  // the payload is the client's watermark for the event stream, and the stamp is the
+  // same number spelled for the digest.
+  observeStamp(list.subject);
   return true;
 }
 

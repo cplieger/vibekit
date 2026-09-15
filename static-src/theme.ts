@@ -54,6 +54,17 @@ const LABEL: Record<ThemeChoice, string> = {
   system: "system theme",
 };
 
+/** A Record rather than a ternary so a fourth choice fails the type check
+ *  instead of silently borrowing another state's wash. */
+const GLOW: Record<ThemeChoice, string> = {
+  light: "glow-sun",
+  dark: "glow-moon",
+  system: "glow-system",
+};
+
+/** Every class GLOW can add, so the cleanup cannot fall behind the table. */
+const GLOW_CLASSES = Object.values(GLOW);
+
 function updateIcon(): void {
   const btn = $.themeBtn;
   const icons: Record<ThemeChoice, Element | null> = {
@@ -70,9 +81,8 @@ function updateIcon(): void {
 
   // Subflux-inspired vertical slide: the outgoing icon slides down
   // ("setting"), then we swap visibility and the incoming icon slides
-  // up from below ("rising"). A warm/cool glow on the button sells
-  // the sun/moon metaphor; "system" borrows the cool one.
-  const glowClass = current === "light" ? "glow-sun" : "glow-moon";
+  // up from below ("rising").
+  const glowClass = GLOW[current];
 
   let settled = false;
   const settle = (): void => {
@@ -97,13 +107,13 @@ function updateIcon(): void {
     incoming.addEventListener(
       "transitionend",
       () => {
-        btn.classList.remove("glow-sun", "glow-moon");
+        btn.classList.remove(...GLOW_CLASSES);
       },
       { once: true },
     );
     // Safety: clear glow if transitionend doesn't fire (e.g. reduced motion).
     setTimeout(() => {
-      btn.classList.remove("glow-sun", "glow-moon");
+      btn.classList.remove(...GLOW_CLASSES);
     }, 350);
   };
 

@@ -19,7 +19,6 @@ import { describe, it, expect } from "vitest";
 import { loadCSS, ruleBody } from "./__test-helpers__/css-rules.js";
 import execPageSrc from "./exec-view/page.ts?raw";
 import steerNoteSrc from "./fundamentals/steer-note.ts?raw";
-import pendingSteersSrc from "./pending-steers.ts?raw";
 import runInputSrc from "./run-input.ts?raw";
 import userInputSrc from "./user-input.ts?raw";
 
@@ -49,13 +48,16 @@ interface ClampPair {
 // `attachClamp` itself, which decides by measurement and never reads the
 // declaration.
 //
-// THE TURN HEADER'S REQUEST IS DELIBERATELY ABSENT. Its clamp is CSS-only and
-// FOLD-conditional (`.turn[data-folded] .turn-req-text`, 29-turns.css), so there
-// is no constant to pair it against and no `[data-clamped]` rule for the sweep
-// below to find — the contract this file states cannot express a one-language
-// clamp, and widening `ClampPair` to make one representable would give the sweep
-// a row it can never check. The count is asserted where it can be, against real
-// layout, in `disclosure-row-css.test.ts`.
+// TWO CSS-ONLY CLAMPS ARE DELIBERATELY ABSENT, and neither can be expressed
+// here: the turn header's request (`.turn[data-folded] .turn-req-text`,
+// 29-turns.css), which is fold-conditional, and the dock's steer row
+// (`.steer-text`, 26-dock.css), which has no opener. Both carry their count in
+// the stylesheet alone, so there is no constant to pair them against and no
+// `[data-clamped]` rule for the sweep below to find — the contract this file
+// states cannot express a one-language clamp, and widening `ClampPair` to make
+// one representable would give the sweep a row it can never check. Each count is
+// asserted where it can be, against real layout: the header's in
+// `disclosure-row-css.test.ts`, the dock row's in `pending-steers.test.ts`.
 const PAIRS: readonly ClampPair[] = [
   {
     what: "the run page's instructions",
@@ -80,14 +82,6 @@ const PAIRS: readonly ClampPair[] = [
     constant: "CLAMP_LINES",
     sheet: "13-messages.css",
     selector: ".steer-note-text[data-clamped]",
-  },
-  {
-    what: "a steer row in the dock",
-    tsFile: "pending-steers.ts",
-    tsSrc: pendingSteersSrc,
-    constant: "DOCK_CLAMP_LINES",
-    sheet: "26-dock.css",
-    selector: ".steer-text[data-clamped]",
   },
   {
     what: "a parked workflow step's question",

@@ -215,7 +215,7 @@ func TestHandleSSE_ReplaysTheSteersStillWaitingInKASsBuffer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/events?chat_id=c1", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	h.handleSSE(rec, req)
@@ -243,7 +243,7 @@ func TestHandleSSE_DoesNotReplayASteerTheModelHasRead(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/events?chat_id=c1", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	h.handleSSE(rec, req)
@@ -254,29 +254,6 @@ func TestHandleSSE_DoesNotReplayASteerTheModelHasRead(t *testing.T) {
 	}
 	if strings.Contains(body, "delivered") {
 		t.Errorf("a steer the model had read was re-offered to the dock: %q", body)
-	}
-}
-
-// The filter, on the real handler: a client subscribed to one chat must not be sent
-// another chat's dock rows.
-func TestHandleSSE_ReplaysOnlyTheSubscribedChatsSteers(t *testing.T) {
-	h, _, _ := newTestHub()
-	h.bus.steers.SteerWaiting("c1", queued("steer-1", "for c1"))
-	h.bus.steers.SteerWaiting("c2", queued("steer-2", "for c2"))
-
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/events?chat_id=c1", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-
-	h.handleSSE(rec, req)
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "for c1") {
-		t.Fatalf("the subscribed chat's steer was not replayed: %q", body)
-	}
-	if strings.Contains(body, "for c2") {
-		t.Errorf("another chat's steer was replayed: %q", body)
 	}
 }
 

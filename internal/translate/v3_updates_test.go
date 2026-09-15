@@ -620,7 +620,7 @@ func TestHandleSessionInfoUpdate_TurnEndWithoutStopDetailsSaysNothing(t *testing
 func TestHandleConfigOptionUpdate_RefreshesTheEntitlementSet(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(rolesOf(deps))
-	_ = store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.ServedModelIDs = []string{"old-a", "old-b"}
 		return true
 	})

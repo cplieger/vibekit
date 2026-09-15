@@ -33,17 +33,17 @@ import {
   transcriptStale,
   setTurnOpen,
   turnLive,
-  noteTruncatedSnapshot,
+  noteAdoptedSnapshot,
+  snapshotBlockBase,
   isTruncatedSnapshot,
-  clearTruncatedSnapshot,
-  clearTruncatedSnapshots,
+  clearAdoptedSnapshot,
+  clearAdoptedSnapshots,
 } from "./store.js";
 import {
   _resetForTest as resetFreshness,
-  bumpSyncEpoch,
-  noteLoaded,
-  syncEpoch,
-} from "./tab-freshness.js";
+  observeStamp,
+  forgetSubject,
+} from "./subject-versions.js";
 import type { Block, ChatHeader, Message, Session } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 import { effect } from "@cplieger/reactive";
@@ -1418,9 +1418,9 @@ describe("republishWindowToolCalls", () => {
 
 // ---------------------------------------------------------------------------
 // The chunk watermark: what this client has already folded into the chat's in-flight
-// assistant message. TWO writers — a server-sent whole copy of the turn (the connect
-// replay's `turn_state`, or the transcript GET's `live_turn`), and `appendChunk` as live
-// chunks land — and the second is what lets a copy fetched LATER be told from a stale one.
+// assistant message. TWO writers — a server-sent whole copy of the turn (the transcript
+// GET's `live_turn`), and `appendChunk` as live chunks land — and the second is what lets
+// a copy fetched LATER be told from a stale one.
 // ---------------------------------------------------------------------------
 
 import { setChunkWatermark, clearChunkWatermark, chunkWatermark } from "./store.js";
@@ -1796,7 +1796,7 @@ describe("Store failure latch", () => {
 //
 // `thinking` alone cannot answer it. It is this client's memory of a stream it has
 // watched, and it starts false — so between `GET /api/chats/{id}` painting and the
-// held `turn_state` frame releasing, a turn whose reply is still in the server's
+// held `connected` frame releasing, a turn whose reply is still in the server's
 // buffer read "not running", and the projection derived `unknown` ("nothing closed
 // this turn") for a turn the server knew was running.
 // ---------------------------------------------------------------------------
@@ -3460,11 +3460,11 @@ describe("transcriptStale (the activation refetch gate)", () => {
 
   function loadedNow(chatID: string): Session {
     const s: Session = { ...makeSession(chatID), residency: "loaded" };
-    noteLoaded("chat", chatID, syncEpoch());
+    observeStamp({ kind: "chat", ref: chatID, version: "1" });
     return s;
   }
 
-  it("a loaded window from the current epoch is fresh", () => {
+  it("a loaded window whose version is held is fresh", () => {
     expect(transcriptStale(loadedNow("c-fresh"))).toBe(false);
   });
 
@@ -3476,7 +3476,7 @@ describe("transcriptStale (the activation refetch gate)", () => {
 
   it("an evicted window is stale whatever its stamp says", () => {
     const s: Session = { ...makeSession("c-evicted"), residency: "evicted" };
-    noteLoaded("chat", "c-evicted", syncEpoch());
+    observeStamp({ kind: "chat", ref: "c-evicted", version: "1" });
     expect(transcriptStale(s)).toBe(true);
   });
 
@@ -3484,20 +3484,27 @@ describe("transcriptStale (the activation refetch gate)", () => {
     // Background ingest into an evicted chat: some rows resident, the window
     // around them not — only a newest-page load may claim otherwise.
     const s: Session = { ...makeSession("c-partial"), residency: "partial" };
-    noteLoaded("chat", "c-partial", syncEpoch());
+    observeStamp({ kind: "chat", ref: "c-partial", version: "1" });
     expect(transcriptStale(s)).toBe(true);
   });
 
-  it("a gap flips a fresh window stale", () => {
-    const s = loadedNow("c-gapped");
+  it("a load_failed window is stale whatever its stamp says", () => {
+    const s: Session = { ...makeSession("c-failed"), residency: "load_failed" };
+    observeStamp({ kind: "chat", ref: "c-failed", version: "1" });
+    expect(transcriptStale(s)).toBe(true);
+  });
+
+  it("forgetting the held version flips a fresh window stale", () => {
+    // What a digest `removed` answer and a whole reconcile's bind both do to the map.
+    const s = loadedNow("c-forgotten");
     expect(transcriptStale(s)).toBe(false);
-    bumpSyncEpoch();
+    forgetSubject("chat", "c-forgotten");
     expect(transcriptStale(s)).toBe(true);
   });
 
-  it("a loaded window with no ledger record is stale", () => {
+  it("a loaded window with no held version is stale", () => {
     // A row claiming loaded that no loader ever stamped must refetch, not trust the
-    // hole: only a load that ANSWERED writes a record.
+    // hole: only a load that ANSWERED observes a version.
     const s: Session = { ...makeSession("c-unstamped"), residency: "loaded" };
     expect(transcriptStale(s)).toBe(true);
   });
@@ -3573,7 +3580,7 @@ describe("a server-persisted row lands before the unflushed reply", () => {
   });
 
   // An UNPERSISTED frame keeps appending: message_created and a reconnect's
-  // turn_state describe the live turn itself, which is not in the file at all.
+  // `live_turn` describe the live turn itself, which is not in the file at all.
   it("still appends an unpersisted frame", () => {
     streamingChat("chat-ord4");
     upsertMessage("chat-ord4", { id: "m-later", role: "assistant", ts: 2, content: "second" });
@@ -4094,66 +4101,95 @@ describe("subagentStatusFor maps a delegate's tool status to its dot state", () 
 });
 
 // ---------------------------------------------------------------------------
-// The capped-snapshot marker.
+// The adopted-snapshot record.
 //
-// A connect-time turn_state can carry only the TAIL of a big in-flight turn, and
-// this set is what lets the renderer say so. It is the CONSUMER the wire's
-// required `truncated` field exists for: without one a client would read a
-// bounded payload as complete.
+// The transcript GET's live_turn can carry only the TAIL of a big in-flight
+// turn — re-indexed from zero. So the record
+// holds TWO facts about that one transfer: whether anything was withheld (which
+// is what lets the renderer say so, and the CONSUMER the wire's required
+// `truncated` field exists for), and WHERE the delivered array sits in the turn's
+// own, which is what a later absolute block_index is measured against.
 // ---------------------------------------------------------------------------
-describe("truncated snapshot markers", () => {
+describe("adopted snapshot records", () => {
   it("records and reads one message id", () => {
-    clearTruncatedSnapshots("chat-1");
+    clearAdoptedSnapshots("chat-1");
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-    noteTruncatedSnapshot("chat-1", "m1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
+  });
+
+  // The base's own reader, and the answer §6 states for a message nothing was
+  // adopted for: 0, because such a client holds the array from index 0 and the
+  // subtraction has to be a no-op there rather than an arithmetic hazard.
+  it("answers base 0 for a message with no record, and the recorded base for one with", () => {
+    clearAdoptedSnapshots("chat-1");
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(117);
+    // And per message, like the marker beside it: a second id in the same chat
+    // has its own window.
+    expect(snapshotBlockBase("chat-1", "m2")).toBe(0);
+  });
+
+  // The two facts are INDEPENDENT: the GET's caps are wide enough that an
+  // ordinary turn is not cut, so a base of 0 with `truncated: false` is the
+  // ordinary answer and a cut without a base is unrepresentable rather than
+  // impossible. Reading one off the other is what a single flag would force.
+  it("keeps the base and the marker independent", () => {
+    clearAdoptedSnapshots("chat-1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: false });
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(117);
+    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
   });
 
   // PER-CHAT, so a capped snapshot in a background chat cannot put a
   // withheld-output note on the reply the reader is looking at. Two chats can be
   // mid-turn at once and the connect replay caps each independently.
   it("is per chat", () => {
-    clearTruncatedSnapshots("chat-1");
-    clearTruncatedSnapshots("chat-2");
-    noteTruncatedSnapshot("chat-1", "m1");
+    clearAdoptedSnapshots("chat-1");
+    clearAdoptedSnapshots("chat-2");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
     expect(isTruncatedSnapshot("chat-2", "m1")).toBe(false);
-    noteTruncatedSnapshot("chat-2", "m2");
+    noteAdoptedSnapshot("chat-2", "m2", { blockBase: 0, truncated: true });
     expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
     expect(isTruncatedSnapshot("chat-2", "m2")).toBe(true);
   });
 
-  // A SET rather than a flag: a reconnect names whichever message is in flight
-  // then, so two ids can carry the marker across the life of one chat view.
+  // A MAP rather than a flag: a reconnect names whichever message is in flight
+  // then, so two ids can carry a record across the life of one chat view.
   it("holds several ids for one chat, and clears them one at a time", () => {
-    clearTruncatedSnapshots("chat-1");
-    noteTruncatedSnapshot("chat-1", "m1");
-    noteTruncatedSnapshot("chat-1", "m2");
-    clearTruncatedSnapshot("chat-1", "m1");
+    clearAdoptedSnapshots("chat-1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 5, truncated: true });
+    noteAdoptedSnapshot("chat-1", "m2", { blockBase: 9, truncated: true });
+    clearAdoptedSnapshot("chat-1", "m1");
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
     expect(isTruncatedSnapshot("chat-1", "m2")).toBe(true);
+    expect(snapshotBlockBase("chat-1", "m2")).toBe(9);
   });
 
   // What `clearTurnState` calls on both its doors (turn_ended and
   // transport:gap). The turn is over, so either the whole message arrived or the
   // replay ring no longer covers what was missed — the note has nothing left to
   // be true about, and left standing it claims output is still coming.
-  it("clearTruncatedSnapshots empties the whole chat's set", () => {
-    noteTruncatedSnapshot("chat-1", "m1");
-    noteTruncatedSnapshot("chat-1", "m2");
-    clearTruncatedSnapshots("chat-1");
+  it("clearAdoptedSnapshots empties the whole chat's records", () => {
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
+    noteAdoptedSnapshot("chat-1", "m2", { blockBase: 3, truncated: true });
+    clearAdoptedSnapshots("chat-1");
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
     expect(isTruncatedSnapshot("chat-1", "m2")).toBe(false);
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
   });
 
   // The HEAL, driven through the real ingest path: message_appended is the
   // persist echo, so it carries the whole message and the tail the cap left is
   // replaced. A `message_updated` for the same id is NOT a heal and must leave
-  // the marker standing — `turn_state`'s own handler upserts right after setting
-  // it, so a clear on the shared merge path would erase it in the same tick.
-  it("message_appended clears the marker; upsertMessage does not", () => {
+  // the marker standing — `adoptLiveTurn` upserts right after setting it, so a
+  // clear on the shared merge path would erase it in the same tick.
+  it("message_appended clears the record; upsertMessage does not", () => {
     setSessions([makeSession("chat-1")]);
-    clearTruncatedSnapshots("chat-1");
-    noteTruncatedSnapshot("chat-1", "m1");
+    clearAdoptedSnapshots("chat-1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
 
     upsertMessage("chat-1", { id: "m1", role: "assistant", ts: 1, content: "tail only" });
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
@@ -4162,19 +4198,23 @@ describe("truncated snapshot markers", () => {
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
   });
 
-  it("removeChat drops the chat's markers", () => {
+  it("removeChat drops the chat's records", () => {
     setSessions([makeSession("chat-1")]);
-    noteTruncatedSnapshot("chat-1", "m1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 117, truncated: true });
     removeChat("chat-1");
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
+    expect(snapshotBlockBase("chat-1", "m1")).toBe(0);
   });
 
-  // Nothing to key a marker on. Guarded so a malformed frame cannot seed a set
-  // under the empty chat id, where nothing would ever clear it.
+  // Nothing to key a record on. Guarded so a malformed frame cannot seed one
+  // under the empty chat id, where nothing would ever clear it — and so
+  // `snapshotBlockBase` is never answerable for a chat that does not exist.
   it("ignores an empty chat id or message id", () => {
-    noteTruncatedSnapshot("", "m1");
-    noteTruncatedSnapshot("chat-1", "");
+    noteAdoptedSnapshot("", "m1", { blockBase: 117, truncated: true });
+    noteAdoptedSnapshot("chat-1", "", { blockBase: 117, truncated: true });
     expect(isTruncatedSnapshot("", "m1")).toBe(false);
     expect(isTruncatedSnapshot("chat-1", "")).toBe(false);
+    expect(snapshotBlockBase("", "m1")).toBe(0);
+    expect(snapshotBlockBase("chat-1", "")).toBe(0);
   });
 });

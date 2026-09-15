@@ -68,7 +68,7 @@ func TestTrackFileChanges_Table(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buf := &buffer.Buffer{}
+			buf := buffer.New()
 			buf.TrackFileChanges(tt.diffs, tt.isNewFile)
 			if tt.wantFiles == nil {
 				if len(buf.ChangedFiles) > 0 {
@@ -101,7 +101,7 @@ func TestTrackFileChanges_Table(t *testing.T) {
 
 func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("finished"))
@@ -121,7 +121,7 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 
 func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)})
@@ -139,7 +139,7 @@ func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 // turn_outcome_test.go pins the same conclusion through the wire bracket.
 func TestEmitTurnEnded_NoBufferPersistsOnlyTheOutcomeMarker(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.SettleTurnOnResponse(t.Context(), "c1", epoch, 0, &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)})
@@ -159,7 +159,7 @@ func TestEmitTurnEnded_NoBufferPersistsOnlyTheOutcomeMarker(t *testing.T) {
 
 func TestEmitTurnEnded_CancelledAbortsInFlightTools(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
@@ -180,28 +180,29 @@ func TestEmitTurnEnded_CancelledAbortsInFlightTools(t *testing.T) {
 }
 
 func TestToolStartTimeTracking(t *testing.T) {
-	buf := &buffer.Buffer{ToolStartTimes: make(map[string]int64)}
+	buf := buffer.New()
 	buf.RecordToolStart("tc1")
 
-	dur := buf.ComputeDuration("tc1")
+	dur, _ := buf.ComputeDuration("tc1")
 	if dur < 0 {
 		t.Errorf("duration = %d, want >= 0", dur)
 	}
-	dur2 := buf.ComputeDuration("tc1")
+	dur2, _ := buf.ComputeDuration("tc1")
 	if dur2 != 0 {
 		t.Errorf("second duration = %d, want 0", dur2)
 	}
 }
 
 func TestMarkInFlightToolsAborted(t *testing.T) {
-	buf := &buffer.Buffer{
-		ToolCalls: []vibekit.ToolCall{
-			{ID: "tc1", Status: vibekit.ToolInProgress},
-			{ID: "tc2", Status: vibekit.ToolCompleted},
-			{ID: "tc3", Status: vibekit.ToolPending},
-		},
+	buf := buffer.New()
+	for _, call := range []vibekit.ToolCall{
+		{ID: "tc1", Status: vibekit.ToolInProgress},
+		{ID: "tc2", Status: vibekit.ToolCompleted},
+		{ID: "tc3", Status: vibekit.ToolPending},
+	} {
+		buf.AppendToolCall(&call)
 	}
-	_, changed := buf.MarkInFlightToolsAborted()
+	_, changed, _ := buf.MarkInFlightToolsAborted()
 	if len(changed) != 2 {
 		t.Fatalf("changed = %d, want 2", len(changed))
 	}
@@ -218,7 +219,7 @@ func TestMarkInFlightToolsAborted(t *testing.T) {
 
 func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	raw := mustJSON(t, map[string]any{
@@ -246,7 +247,7 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 
 func TestToolCallDurationMs(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
@@ -282,7 +283,7 @@ func TestToolCallDurationMs(t *testing.T) {
 
 func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
+	_, _ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c2", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c2", newChunkMsg("hello from c2"))

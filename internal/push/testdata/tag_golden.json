@@ -1,0 +1,10 @@
+[
+  {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/dQw4w9WgXcQ:APA91bGolden-Fixture-Endpoint-0001",
+    "tag": "amxAEqwvwjG23476CxNmK6"
+  },
+  {
+    "endpoint": "https://web.push.apple.com/QGoldenFixtureEndpoint0002",
+    "tag": "GLO6S3sRHwYdqE5aIMtyd3"
+  }
+]

@@ -285,7 +285,7 @@ func startedChatBridge(t *testing.T, opts ...Option) *fakeBridge {
 	h := New(context.Background(), t.TempDir(), func() ACPBridge { return br }, cs, opts...)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

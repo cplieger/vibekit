@@ -43,12 +43,8 @@ import {
   toolCallSigs,
   toolCallSigKey,
 } from "./store-signals.js";
-import {
-  _resetForTest as resetFreshness,
-  noteLoaded,
-  syncEpoch,
-  viewStale,
-} from "./tab-freshness.js";
+import { _resetForTest as resetFreshness, observeStamp } from "./subject-versions.js";
+import { viewStale } from "./view-freshness.js";
 import type { Message, Session, ToolCall } from "./types.js";
 
 function session(id: string, over: Partial<Session> = {}): Session {
@@ -428,7 +424,7 @@ describe("the ledger record eviction drops", () => {
 
   it("evictChatMessages drops the record, so a re-activation refetches", () => {
     setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
-    noteLoaded("chat", "c1", syncEpoch());
+    observeStamp({ kind: "chat", ref: "c1", version: "1" });
     expect(viewStale("chat", "c1")).toBe(false);
 
     evictChatMessages("c1");
@@ -438,7 +434,7 @@ describe("the ledger record eviction drops", () => {
 
   it("removeChat drops it too — the subject is gone, not just its window", () => {
     setSessions([session("c1", { messages: [msg("m1")], message_count: 1 })]);
-    noteLoaded("chat", "c1", syncEpoch());
+    observeStamp({ kind: "chat", ref: "c1", version: "1" });
 
     removeChat("c1");
 

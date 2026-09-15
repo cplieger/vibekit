@@ -17,9 +17,34 @@ type EventType string
 // object; handlers type-assert based on Type. Construct it through NewEvent,
 // which keeps the payload typed at the emit site.
 type ServerEvent struct {
-	Payload any       `json:"payload,omitempty"`
-	Type    EventType `json:"type"`
-	ChatID  ChatID    `json:"chat_id,omitempty"`
+	Payload any `json:"payload,omitempty"`
+	// Subject is the version stamp of the projection this frame COMPLETES, set by
+	// the writer inside the critical section that minted it. Nil on a frame that
+	// completes no certified projection; the client's version map ignores those.
+	Subject *SubjectStamp `json:"subject,omitempty"`
+	Type    EventType     `json:"type"`
+	ChatID  ChatID        `json:"chat_id,omitempty"`
+}
+
+// SubjectStamp names one digest subject at one version. Kind and Ref spell the
+// subject the way internal/subject does; Version is opaque to the client and
+// compared by equality only. Epoch is filled by REST responses alone, so a
+// response issued under a previous hub epoch is refused by the client's map.
+type SubjectStamp struct {
+	Kind    string `json:"kind"`
+	Ref     string `json:"ref"`
+	Version string `json:"version"`
+	Epoch   string `json:"epoch,omitempty"`
+}
+
+// NewSubjectStamp builds the stamp a frame carries, or nil when version is
+// empty: a mutation that moved no counter certifies nothing, and a frame with no
+// Subject leaves the client's map untouched.
+func NewSubjectStamp(kind, ref, version string) *SubjectStamp {
+	if version == "" {
+		return nil
+	}
+	return &SubjectStamp{Kind: kind, Ref: ref, Version: version}
 }
 
 // NewEvent constructs a ServerEvent with a typed payload, providing
@@ -104,7 +129,12 @@ const (
 	// staged writes are KAS's.
 	EventPermissionNeeded   EventType = "permission_needed"
 	EventPermissionsChanged EventType = "permissions_changed"
-	EventPolicyError        EventType = "policy_error"
+	// EventPendingSnapshot is the whole pending set (permissions, run asks,
+	// steers, across every chat) as ONE frame on a v3 connect, stamped with the
+	// `pending` version. Possibly empty: an empty set is what clears a row that
+	// was resolved elsewhere while the client was away.
+	EventPendingSnapshot EventType = "pending_snapshot"
+	EventPolicyError     EventType = "policy_error"
 	// EventRunStarted and the two below are the workflow-run lifecycle. Three,
 	// not six — see domain_workflow.go for what the other three would have been
 	// and why none of them can exist. All ride the launching chat's topic.
@@ -150,6 +180,16 @@ const (
 	EventSafetyStatus     EventType = "safety_status"
 	EventSafetyProperties EventType = "safety_properties"
 	EventSettingsUpdated  EventType = "settings_updated"
+	// EventStatusSnapshot is every retained waiting_on_user row as ONE frame on a
+	// v3 connect, stamped with the `status` version; the per-row chat_status
+	// replay is the legacy-connect form. Possibly empty, for pending_snapshot's
+	// reason.
+	EventStatusSnapshot EventType = "status_snapshot"
+	// EventSubjectChanged is a fetch instruction and nothing else: the frame that
+	// should have carried this stamp was too large for the hub, so the client
+	// refetches the subject through its action and observes on commit. The
+	// payload is empty; the stamp rides the envelope's Subject.
+	EventSubjectChanged EventType = "subject_changed"
 	// EventTabsChanged is ONE aggregate frame per committed mutation of the
 	// open-tab set: what changed, what was removed, and the order the set is now
 	// in, stamped with the version that mutation produced.
@@ -193,7 +233,6 @@ const (
 	EventToolJobChanged  EventType = "tool_job_changed"
 	EventToolJobOutput   EventType = "tool_job_output"
 	EventTurnEnded       EventType = "turn_ended"
-	EventTurnState       EventType = "turn_state"
 	EventWorkingLabel    EventType = "working_label"
 )
 

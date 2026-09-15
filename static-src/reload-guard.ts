@@ -1,7 +1,7 @@
 // The rapid-reload counter: count this tab's reloads and, past a threshold, boot
 // REDUCED. transport.ts's backoff ramp escalates within ONE document, so a page
 // crashing and reloading every ~1.5s retries at full rate forever, and each of those
-// boots pays for a connect snapshot and a transcript paint. This module CHEAPENS a
+// boots pays for a connect and a transcript paint. This module CHEAPENS a
 // run's later boots rather than ending it, blind to WHY the page reloaded: whatever
 // the cause, the loop costs the same.
 

@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/sse"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2/sse"
 )
 
-// TestChatStatusCache covers the one turn_state input the assistant buffer
+// TestChatStatusCache covers the one status_snapshot input the assistant buffer
 // cannot supply. chat_status arrives on KAS's focus_update channel, so it lives
 // on no message and in no replay — deleting the turn mirror without this would
 // have silently dropped the label from every mid-turn reconnect.
@@ -42,6 +42,15 @@ func TestChatStatusCache(t *testing.T) {
 	// that the turn ended and a person still owes an answer, so a refresh or a second
 	// device must still find it. Measured 2026-09-08: deleting that early return left
 	// this package green, so nothing pinned the rule the amber dot rests on.
+	//
+	// Retention is the right rule and is UNCHANGED; what changed is that turn end is no
+	// longer the only exit from the window it opens. The claim now also ends when the
+	// user answers through one of the agent's structured channels (a userInput card, an
+	// MCP elicitation, a permission option — internal/command/discharge.go's
+	// dischargeByAnswer rows), because those answer the agent as squarely as a prompt
+	// does and nothing used to invalidate the claim after one. The mid-turn declaration
+	// that survives a turn the agent finished by itself is a separate shape the wire
+	// carries no discriminator for, so retention still covers it deliberately.
 	c.Merge("c2", vibekit.ChatStatusPayload{Status: vibekit.ChatStatusWaitingOnUser, Description: "needs a decision"})
 	c.ClearAtTurnEnd("c2")
 	if got := c.Get("c2"); got.Status != vibekit.ChatStatusWaitingOnUser || got.Description != "needs a decision" {
@@ -114,7 +123,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 			Status:      vibekit.ChatStatusWaitingOnUser,
 			Description: "waiting on the user to disposition both proposals",
 		})
-		_, head := rt.bus.fanout.Bounds()
+		head := rt.bus.fanout.Position().Head
 
 		rt.DischargeWaiting(t.Context(), "c1")
 
@@ -132,7 +141,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 
 	t.Run("a chat with no entry publishes nothing", func(t *testing.T) {
 		rt, _, _ := newTestHub()
-		_, head := rt.bus.fanout.Bounds()
+		head := rt.bus.fanout.Position().Head
 
 		rt.DischargeWaiting(t.Context(), "c1")
 
@@ -145,7 +154,7 @@ func TestDischargeWaiting_BroadcastsTheClear(t *testing.T) {
 		rt, _, _ := newTestHub()
 		live := vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading the parser"}
 		rt.bus.chatStatus.Merge("c1", live)
-		_, head := rt.bus.fanout.Bounds()
+		head := rt.bus.fanout.Position().Head
 
 		rt.DischargeWaiting(t.Context(), "c1")
 
@@ -261,7 +270,7 @@ func TestEmitChatStatus_PublishesTheMergedPayload(t *testing.T) {
 		Status:      vibekit.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
-	_, head := rt.bus.fanout.Bounds()
+	head := rt.bus.fanout.Position().Head
 
 	rt.bus.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1",
 		vibekit.ChatStatusPayload{Description: "d2"}))
@@ -287,7 +296,7 @@ func TestEmitChatStatus_StatusOnlyKeepsTheDescription(t *testing.T) {
 		Status:      vibekit.ChatStatusWaitingOnUser,
 		Description: "d1",
 	})
-	_, head := rt.bus.fanout.Bounds()
+	head := rt.bus.fanout.Position().Head
 
 	rt.bus.Broadcast(t.Context(), vibekit.NewEvent(vibekit.EventChatStatus, "c1",
 		vibekit.ChatStatusPayload{Status: "idle"}))
@@ -374,7 +383,7 @@ func TestStartTurn_DischargesTheWaitingRetention(t *testing.T) {
 	t.Run("a prompt clears it", func(t *testing.T) {
 		rt, _, _ := newTestHub()
 		rt.bus.chatStatus.Merge("c1", waiting)
-		_, head := rt.bus.fanout.Bounds()
+		head := rt.bus.fanout.Position().Head
 
 		if epoch := rt.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt); epoch == 0 {
 			t.Fatal("the fixture could not open a prompt turn")

@@ -1,5 +1,5 @@
 // The exec view page: one full tab for one delegated execution — header, alert,
-// timeline, results, tree, detail — owning the selection between them and one clock
+// timeline, tree, detail, results — owning the selection between them and one clock
 // for all of them. It must name no source: a consumer hands it an `ExecRun`.
 
 import { el } from "@cplieger/reactive";
@@ -130,7 +130,12 @@ export function buildExecPage(opts: ExecPageOpts): ExecPageView {
   );
   const results = el("div", { className: "ev-results", hidden: true }, resultsHead, resultsBody);
 
-  const root = el("div", { className: "ev-page" }, head, alert, timeline.root, results, panes);
+  // Results sit BELOW the panes: the region appears and disappears as the reader
+  // clicks between a settled step and an unsettled one, so above the panes its
+  // `hidden` flip moved the tree and the detail under the pointer. Last, nothing it
+  // does moves anything the reader is aiming at, and the reading order matches the
+  // gesture — pick a step, then read what it produced.
+  const root = el("div", { className: "ev-page" }, head, alert, timeline.root, panes, results);
 
   let current: ExecRun | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;

@@ -1,0 +1,288 @@
+{
+  "_comment": [
+    "Occurrences of a needle in a text, as the Go kernel reports them.",
+    "",
+    "Go PRODUCES this file from textsearch.Needle.Occurrences (TestOccurrencesFixture) and",
+    "the TypeScript twin in static-src/textsearch CONSUMES it, asserting each row's hit",
+    "count and every utf16 position. Positions index the ORIGINAL text: rune is a code",
+    "point index, byte a UTF-8 offset, utf16 a UTF-16 code unit index (two per code point",
+    "above U+FFFF). Both folds are Unicode's simple per-code-point lowercase, so the",
+    "final-sigma rows pin that a context-sensitive lowercase would diverge.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/textsearch/ -run TestOccurrencesFixture",
+    "then, from static-src/: npx vitest --run --project node textsearch/occurrences.node.test.ts"
+  ],
+  "rows": [
+    {
+      "name": "ascii_non_overlapping",
+      "text": "aaa",
+      "needle": "aa",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        }
+      ]
+    },
+    {
+      "name": "ascii_adjacent_matches",
+      "text": "aaaa",
+      "needle": "aa",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 2,
+          "byte": 2,
+          "utf16": 2
+        }
+      ]
+    },
+    {
+      "name": "ascii_multi_rune_non_overlapping",
+      "text": "abababa",
+      "needle": "aba",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4
+        }
+      ]
+    },
+    {
+      "name": "case_insensitive_ascii",
+      "text": "Retry retry RETRY",
+      "needle": "retry",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 6,
+          "byte": 6,
+          "utf16": 6
+        },
+        {
+          "rune": 12,
+          "byte": 12,
+          "utf16": 12
+        }
+      ]
+    },
+    {
+      "name": "case_sensitive_ascii",
+      "text": "Retry retry RETRY",
+      "needle": "retry",
+      "case_sensitive": true,
+      "hits": [
+        {
+          "rune": 6,
+          "byte": 6,
+          "utf16": 6
+        }
+      ]
+    },
+    {
+      "name": "kelvin_sign_folds_to_k",
+      "text": "KKKkelvin",
+      "needle": "k",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 1,
+          "byte": 3,
+          "utf16": 1
+        },
+        {
+          "rune": 2,
+          "byte": 6,
+          "utf16": 2
+        },
+        {
+          "rune": 3,
+          "byte": 9,
+          "utf16": 3
+        }
+      ]
+    },
+    {
+      "name": "kelvin_sign_in_the_needle",
+      "text": "kelvin",
+      "needle": "K",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        }
+      ]
+    },
+    {
+      "name": "case_sensitive_kelvin_sign_is_literal",
+      "text": "K k K",
+      "needle": "K",
+      "case_sensitive": true,
+      "hits": [
+        {
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4
+        }
+      ]
+    },
+    {
+      "name": "dotted_capital_I_folds_to_i",
+      "text": "İİi",
+      "needle": "i",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 1,
+          "byte": 2,
+          "utf16": 1
+        },
+        {
+          "rune": 2,
+          "byte": 4,
+          "utf16": 2
+        }
+      ]
+    },
+    {
+      "name": "capital_sharp_s_folds_to_sharp_s",
+      "text": "Straẞe",
+      "needle": "ß",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 4,
+          "byte": 4,
+          "utf16": 4
+        }
+      ]
+    },
+    {
+      "name": "final_sigma_medial_needle_matches",
+      "text": "ΟΔΟΣ",
+      "needle": "σ",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 3,
+          "byte": 6,
+          "utf16": 3
+        }
+      ]
+    },
+    {
+      "name": "final_sigma_final_needle_misses",
+      "text": "ΟΔΟΣ",
+      "needle": "ς",
+      "case_sensitive": false,
+      "hits": []
+    },
+    {
+      "name": "astral_runes_before_the_match",
+      "text": "😀😀x",
+      "needle": "x",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 2,
+          "byte": 8,
+          "utf16": 4
+        }
+      ]
+    },
+    {
+      "name": "astral_runes_between_matches",
+      "text": "a😀b😀c",
+      "needle": "b",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 2,
+          "byte": 5,
+          "utf16": 3
+        }
+      ]
+    },
+    {
+      "name": "astral_rune_as_the_needle",
+      "text": "x😀y😀",
+      "needle": "😀",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 1,
+          "byte": 1,
+          "utf16": 1
+        },
+        {
+          "rune": 3,
+          "byte": 6,
+          "utf16": 4
+        }
+      ]
+    },
+    {
+      "name": "kelvin_astral_and_final_sigma_together",
+      "text": "K😀ΟΔΟΣ k",
+      "needle": "k",
+      "case_sensitive": false,
+      "hits": [
+        {
+          "rune": 0,
+          "byte": 0,
+          "utf16": 0
+        },
+        {
+          "rune": 7,
+          "byte": 16,
+          "utf16": 8
+        }
+      ]
+    },
+    {
+      "name": "needle_longer_than_text",
+      "text": "ab",
+      "needle": "abc",
+      "case_sensitive": false,
+      "hits": []
+    },
+    {
+      "name": "empty_text",
+      "text": "",
+      "needle": "x",
+      "case_sensitive": false,
+      "hits": []
+    }
+  ]
+}

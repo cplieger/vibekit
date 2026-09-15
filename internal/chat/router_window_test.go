@@ -95,7 +95,7 @@ type windowPage struct {
 // servePage runs GET /api/chats/c1<query> against store s holding msgs.
 func servePage(t *testing.T, s *Store, msgs []vibekit.Message, query string) (page windowPage, ids []string, bodyLen int) {
 	t.Helper()
-	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = msgs
 		return true
@@ -221,7 +221,7 @@ func TestHandleOne_EmptyWindowIsAnArrayNotNull(t *testing.T) {
 	// The generated decoder rejects `null` for an array, so an empty window has
 	// to marshal as []. Same guard the make+copy this replaced provided.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = []vibekit.Message{fatMessage("a", 8)}
 		return true
@@ -501,7 +501,7 @@ func TestHandleOne_ServesTheWindowBase(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Messages = msgs
 				return true

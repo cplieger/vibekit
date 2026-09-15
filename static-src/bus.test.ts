@@ -5,8 +5,10 @@ import {
   onBus,
   emitBus,
   BUS_KEYS_ESCAPE,
-  BUS_TRANSPORT_GAP,
+  BUS_RECONCILE,
   BUS_TURN_IDLE,
+  decodeEnvelope,
+  registerSSEDecoder,
 } from "./bus.js";
 import type { ServerEvent } from "./types.js";
 
@@ -203,10 +205,10 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
 
   it("subscriber receives event with payload", () => {
     const handler = vi.fn();
-    const unsub = onBus(BUS_TRANSPORT_GAP, handler);
+    const unsub = onBus(BUS_RECONCILE, handler);
     try {
-      const payload = { lastSeen: 7, floor: 2, head: 9 };
-      emitBus(BUS_TRANSPORT_GAP, payload);
+      const payload = { cause: "must_refetch", signal: new AbortController().signal };
+      emitBus(BUS_RECONCILE, payload);
       expect(handler).toHaveBeenCalledTimes(1);
       expect(handler).toHaveBeenCalledWith(payload);
     } finally {
@@ -316,5 +318,51 @@ describe("onBus / emitBus (typed cross-module bus)", () => {
       unsub1();
       unsub2();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decodeEnvelope: the one door both a live frame and a pending_snapshot item take.
+// ---------------------------------------------------------------------------
+
+describe("decodeEnvelope", () => {
+  it("decodes the type, the chat id and a subject stamp", () => {
+    const evt = decodeEnvelope({
+      type: "message_appended",
+      chat_id: "c1",
+      payload: { id: "m1" },
+      subject: { kind: "chat", ref: "c1", version: "3" },
+    });
+    expect(evt.type).toBe("message_appended");
+    expect(evt.chat_id).toBe("c1");
+    expect(evt.subject).toEqual({ kind: "chat", ref: "c1", version: "3" });
+  });
+
+  it("runs the registered payload decoder and lets its throw out", () => {
+    registerSSEDecoder("working_label", (v) => {
+      const o = v as { label?: unknown };
+      if (typeof o.label !== "string") {
+        throw new TypeError("label must be a string");
+      }
+      return { label: o.label };
+    });
+    expect(decodeEnvelope({ type: "working_label", payload: { label: "x" } }).payload).toEqual({
+      label: "x",
+    });
+    expect(() => decodeEnvelope({ type: "working_label", payload: { label: 1 } })).toThrow(
+      /label must be a string/,
+    );
+  });
+
+  it("passes a payload with no registered decoder through untyped", () => {
+    const evt = decodeEnvelope({ type: "mcp_prewarm", payload: { anything: true } });
+    expect(evt.payload).toEqual({ anything: true });
+  });
+
+  it("refuses an envelope with no type and a malformed stamp", () => {
+    expect(() => decodeEnvelope({ chat_id: "c1" })).toThrow();
+    expect(() =>
+      decodeEnvelope({ type: "chat_updated", subject: { kind: "chat", ref: "c1" } }),
+    ).toThrow();
   });
 });

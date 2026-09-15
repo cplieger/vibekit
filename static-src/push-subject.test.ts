@@ -1,116 +1,109 @@
-// D101 / D104, client side.
-//
-// Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
-// codegen behind it: the PR subject prefix is spelled in Go (vibekit.PRSubjectPrefix),
-// in the service worker and in the page handler — which is DOM-bound, so the worker
-// cannot take the prefix from it. Three copies of one literal is what the read below
-// turns into a test rather than a hope.
-import { describe, it, expect, beforeEach } from "vitest";
-import { settingsPayload } from "./__test-helpers__/settings.js";
+// ---------------------------------------------------------------------------
+// push-subject.ts's own suite. The cross-language PREFIX contract is
+// push-kinds.test.ts's; what is pinned here is what the module DECIDES.
+// ---------------------------------------------------------------------------
+
+import { describe, it, expect } from "vitest";
 import pushTypesGo from "../internal/vibekit/push_types.go?raw";
-import pushServiceGo from "../internal/push/service.go?raw";
-import settingsDefaultsGo from "../internal/settings/defaults.go?raw";
-import swSrc from "./sw.ts?raw";
-import pushMessageSrc from "./handlers/push-message.ts?raw";
+import {
+  askTarget,
+  chatTarget,
+  parsePushTarget,
+  prIdentity,
+  pushTargetRoute,
+  pushTargetTag,
+  runTarget,
+} from "./push-subject.js";
 
-/** The two TypeScript copies of the Go literal, by the path a failure should name. */
-const tsCopies: Record<string, string> = {
-  "static-src/sw.ts": swSrc,
-  "static-src/handlers/push-message.ts": pushMessageSrc,
-};
-
-/** Each subject-key prefix, by the Go constant that declares it and the TypeScript
- *  constant every copy has to spell. A run's prefix is the second member: it is read
- *  by the worker's route and by the page handler's, so it is three copies for the
- *  same reason the PR one is. */
-const prefixes = [
-  { goConst: "PRSubjectPrefix", tsConst: "PR_SUBJECT_PREFIX" },
-  { goConst: "RunSubjectPrefix", tsConst: "RUN_SUBJECT_PREFIX" },
-];
-
-describe("subject prefixes", () => {
-  for (const { goConst, tsConst } of prefixes) {
-    it(`${goConst} is the same literal in Go, the service worker and the page handler`, () => {
-      const m = new RegExp(`${goConst} = "([^"]+)"`).exec(pushTypesGo);
-      expect(m, `vibekit.${goConst} not found in internal/vibekit/push_types.go`).not.toBeNull();
-      const want = m?.[1] ?? "";
-      expect(want).not.toBe("");
-      for (const [rel, ts] of Object.entries(tsCopies)) {
-        expect(ts, `${rel} does not carry the Go prefix ${want}`).toContain(
-          `${tsConst} = "${want}"`,
-        );
-      }
+describe("parsePushTarget", () => {
+  it("reads every prefix, an empty remainder and an empty pair", () => {
+    expect(parsePushTarget({ chatId: "", subject: "pr:gh:github.com:a/b#1" })).toEqual({
+      kind: "pr",
+      identity: "gh:github.com:a/b#1",
     });
-  }
+    expect(parsePushTarget({ chatId: "", subject: "run:wf_1" })).toEqual({
+      kind: "run",
+      workflowID: "wf_1",
+    });
+    expect(parsePushTarget({ chatId: "c1", subject: "" })).toEqual({ kind: "chat", chatID: "c1" });
+    // A bare prefix is reachable only from a malformed envelope, and it resolves to the
+    // workspace rather than to /git or /run/.
+    expect(parsePushTarget({ chatId: "", subject: "pr:" })).toEqual({ kind: "workspace" });
+    expect(parsePushTarget({ chatId: "", subject: "run:" })).toEqual({ kind: "workspace" });
+    expect(parsePushTarget({ chatId: "", subject: "" })).toEqual({ kind: "workspace" });
+  });
+
+  it("falls to the chat id for a subject with no recognised prefix", () => {
+    expect(parsePushTarget({ chatId: "c1", subject: "something-else" })).toEqual({
+      kind: "chat",
+      chatID: "c1",
+    });
+  });
 });
 
-// The keyed-kind table drives both the settings rows and the per-kind state, so
-// it has to agree with the server's registry.
-describe("keyed push kinds", () => {
-  it("names every kind the server registry gives a settings key, and no other", async () => {
-    const { KEYED_PUSH_KINDS } = await import("./notify.js");
-    // Each keyed entry reads {vibekit.PushKind<Name>, settings.Key<Name>, <default>};
-    // the floor is the one entry whose key is the empty string.
-    const entries = [
-      ...pushServiceGo.matchAll(/\{vibekit\.PushKind(\w+),\s*(settings\.Key\w+|""),/g),
-    ];
-    expect(entries.length, "no kindRegistry entries parsed").toBeGreaterThan(1);
-    const keyedCount = entries.filter((e) => e[2] !== '""').length;
-    expect(Object.keys(KEYED_PUSH_KINDS)).toHaveLength(keyedCount);
-    // And the settings keys match the ones the server reads.
-    for (const settingsKey of Object.values(KEYED_PUSH_KINDS)) {
-      expect(settingsDefaultsGo, `${settingsKey} is not a declared settings key`).toContain(
-        `= "${settingsKey}"`,
+describe("pushTargetRoute", () => {
+  it("maps each kind to its destination", () => {
+    expect(pushTargetRoute({ kind: "chat", chatID: "c1" })).toEqual({ kind: "chat", id: "c1" });
+    expect(pushTargetRoute({ kind: "pr", identity: "gh:github.com:a/b#1" })).toEqual({
+      kind: "git",
+      tab: "prs",
+      pr: "gh:github.com:a/b#1",
+    });
+    expect(pushTargetRoute({ kind: "run", workflowID: "wf_1" })).toEqual({
+      kind: "run",
+      id: "wf_1",
+    });
+    // The default chat route: "/" is what the worker opens when no page is up.
+    expect(pushTargetRoute({ kind: "workspace" })).toEqual({ kind: "chat", id: "" });
+  });
+});
+
+describe("pushTargetTag", () => {
+  it("gives a keyed subject, a chat and the workspace their own tray slot", () => {
+    expect(pushTargetTag({ kind: "pr", identity: "gh:github.com:a/b#1" })).toBe(
+      "vibekit:pr:gh:github.com:a/b#1",
+    );
+    expect(pushTargetTag({ kind: "run", workflowID: "wf_1" })).toBe("vibekit:run:wf_1");
+    expect(pushTargetTag({ kind: "chat", chatID: "c1" })).toBe("vibekit:c1");
+    expect(pushTargetTag({ kind: "workspace" })).toBe("vibekit");
+  });
+});
+
+describe("prIdentity", () => {
+  it("is vibekit.PRSubject's composition minus the prefix", () => {
+    // The Go side reads `PRSubjectPrefix + forgeID + ":" + repo + "#" + strconv.Itoa(number)`;
+    // this is the same key with the prefix stripped, which is what makes the identity
+    // comparable against one the PRs tab builds for its own rows.
+    const m =
+      /func PRSubject\([^)]*\)[^{]*\{\s*return PushSubject\{Key: PRSubjectPrefix \+ ([^}]+)\}/.exec(
+        pushTypesGo,
       );
-    }
-  });
-
-  it("does not give the permission floor an off switch", async () => {
-    const { KEYED_PUSH_KINDS, setKindEnabled, isKindEnabled } = await import("./notify.js");
-    expect(Object.keys(KEYED_PUSH_KINDS)).not.toContain("permission");
-    // Nothing can create one by passing the name: an ask blocks the turn and has
-    // no per-tab marker, so a channel that could go dark on its own would stall
-    // every later turn with nothing on screen to say why.
-    setKindEnabled("permission", false);
-    expect(isKindEnabled("permission")).toBe(true);
+    expect(m, "vibekit.PRSubject's composition not found").not.toBeNull();
+    expect((m?.[1] ?? "").replace(/\s+/g, " ").trim()).toBe(
+      'forgeID + ":" + repo + "#" + strconv.Itoa(number)',
+    );
+    expect(prIdentity("gh:github.com", "cplieger/vibekit", 42)).toBe(
+      "gh:github.com:cplieger/vibekit#42",
+    );
   });
 });
 
-describe("restoreNotifications", () => {
-  beforeEach(async () => {
-    const notify = await import("./notify.js");
-    notify.setNotificationsEnabled(false);
+describe("the constructors", () => {
+  it("refuses a synthetic run: chat id and answers the RUN", () => {
+    // internal/agent/run_host.go registers a parentless run's bridge under
+    // `run:<workflowId>`, so that run's asks arrive as the envelope chat id. The only
+    // mechanical proof of the parentless-run ruling.
+    expect(chatTarget("run:wf_1")).toEqual({ kind: "run", workflowID: "wf_1" });
   });
 
-  it("reads every keyed kind from the payload", async () => {
-    const notify = await import("./notify.js");
-    notify.restoreNotifications(
-      settingsPayload({
-        notifications_enabled: true,
-        notify_agent_finished: false,
-        notify_pr_status: true,
-      }),
-    );
-    expect(notify.areNotificationsEnabled()).toBe(true);
-    expect(notify.isKindEnabled("agent_finished")).toBe(false);
-    expect(notify.isKindEnabled("pr_status")).toBe(true);
+  it("answers the workspace for an id that cannot be addressed", () => {
+    expect(chatTarget("")).toEqual({ kind: "workspace" });
+    expect(runTarget("")).toEqual({ kind: "workspace" });
   });
 
-  it("defaults an absent kind to on, matching the server registry", async () => {
-    const notify = await import("./notify.js");
-    // A config.json written before pr_status existed carries no value for it, and
-    // the server's registry entry is DefaultOn.
-    notify.restoreNotifications(
-      settingsPayload({ notifications_enabled: true, notify_agent_finished: true }),
-    );
-    expect(notify.isKindEnabled("pr_status")).toBe(true);
-  });
-
-  it("keeps agent_finished's own getter working", async () => {
-    const notify = await import("./notify.js");
-    notify.restoreNotifications(
-      settingsPayload({ notifications_enabled: true, notify_agent_finished: false }),
-    );
-    expect(notify.isAgentFinishedEnabled()).toBe(false);
+  it("lets a non-empty run id win over the envelope's chat id", () => {
+    expect(askTarget("c-7", "wf_1")).toEqual({ kind: "run", workflowID: "wf_1" });
+    expect(askTarget("c-7", "")).toEqual({ kind: "chat", chatID: "c-7" });
+    expect(askTarget("c-7", undefined)).toEqual({ kind: "chat", chatID: "c-7" });
   });
 });

@@ -14,7 +14,8 @@ import (
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // --- /api/file/upload (POST multipart into a target directory) ---
@@ -43,7 +44,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	dir := cmp.Or(r.FormValue("dir"), defaultUploadDir)
+	dir := cmp.Or(r.FormValue("dir"), vibekit.DefaultUploadDir)
 	dirLoc, ok := h.resolveOrForbid(w, dir)
 	if !ok {
 		return
@@ -57,6 +58,12 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpreply.Forbidden(w, "upload target is protected")
 		return
 	}
+	// Create a nested target on demand, inside the mount's own os.Root. This is
+	// a no-op for the DEFAULT target now that the uploads directory IS a mount:
+	// dirLoc.rel() is "." there, and os.Root.MkdirAll(".") returns nil. Creating
+	// the uploads directory therefore moved to boot (composition's
+	// ensureUploadDir), because a mount that cannot be opened is skipped and no
+	// upload would reach this line to create it.
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
 		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
 		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,

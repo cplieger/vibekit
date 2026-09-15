@@ -27,7 +27,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.Cha
 		return
 	}
 	if p.Fallback != "" && chatID != "" {
-		err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}

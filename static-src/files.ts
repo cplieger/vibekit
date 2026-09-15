@@ -9,14 +9,20 @@
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
-import { getActiveTabKind, showFilesView, toggleFilesView } from "./tabs.js";
-import { openFile } from "./editor-openers.js";
+import {
+  filesTabIdFor,
+  getActiveTabKind,
+  openTab,
+  renameTab,
+  setFilesRoute,
+  openFilesView,
+  toggleFilesView,
+} from "./tabs.js";
+import { openFile, openFileInBackground } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
 import { fileDownloadURL } from "./utils-url.js";
 import { onGitStatusChange, statusForPath, statusUnder } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
-import { activeSession } from "./store.js";
-import type { Session } from "./types.js";
 import { confirm as confirmDialog } from "./confirm.js";
 // The browser's path is a WORKSPACE preference, so it rides config.json with
 // the theme rather than a per-device blob: a second device opening the browser
@@ -26,10 +32,9 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { patchSettings } from "./persist.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { pushRoute } from "./router.js";
 import { attachPathsToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
-import { initFilesSearch, resetFilesSearch } from "./files-search.js";
+import { closeFilesSearch, initFilesSearch, resetFilesSearch } from "./files-search.js";
 import { screenUploads } from "./upload-policy.js";
 import * as toast from "./toast.js";
 import {
@@ -41,8 +46,6 @@ import {
   parentPath,
   FB_ROOT,
   normalizeDirPath,
-  withAncestors,
-  matchesRelative,
   errorRow,
   sortEntries,
   initEditablePath,
@@ -65,24 +68,151 @@ import {
   downloadFiles,
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { el, effect } from "@cplieger/reactive";
+import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { FileBrowserState } from "./files-state.js";
 export { FileBrowserState } from "./files-state.js";
 
 type FbEntry = { kind: "parent" } | { kind: "entry"; entry: FileEntry };
 
-/** Per-browser abort holder — prevents picker from aborting browser fetches. */
+/** ONE holder for every browser: only the bound tab fetches, and a switch must
+ *  ABORT the outgoing tab's in-flight read or its response paints into the incoming
+ *  tab's listing. It also keeps the picker from aborting a browser fetch. */
 const browserFetchHolder: FetchDirOpts = { controllerHolder: { current: null } };
 registerCleanup(() => browserFetchHolder.controllerHolder.current?.abort());
 
-const state = new FileBrowserState();
+/** One state per files TAB, keyed by that tab's NORMALISED ref. `filesTabIdFor` and
+ *  `filesTabForRoute` normalise both sides of their compare, so one folder has one key
+ *  however its ref was spelled, and the ref itself is immutable. */
+const browserStates = new Map<string, FileBrowserState>();
+
+/** The ref of the files tab the shared DOM is bound to, or "" when none is. */
+let boundRef = "";
+
+/** The bound tab's state, or a DETACHED one when no files tab is bound.
+ *
+ *  The detached answer is what keeps every caller total without a null check. It is
+ *  not in `browserStates`, so nothing can bind to it and nothing renders from it,
+ *  and it is EMPTY, so every read-and-repaint path over it is a no-op rather than a
+ *  lie. The callers that would do more than read are gated at their own site. */
+function cur(): FileBrowserState {
+  return browserStates.get(boundRef) ?? new FileBrowserState();
+}
+
+/** The state for one TAB ref, created at `normalizeDirPath(ref)` on first sight — the
+ *  ONE creation site, so a ref from the tab set (arbitrary text bounded only by
+ *  MaxRefBytes) enters the path space through the door that owns it. */
+function stateFor(ref: string): FileBrowserState {
+  const existing = browserStates.get(ref);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = new FileBrowserState(normalizeDirPath(ref));
+  browserStates.set(ref, created);
+  return created;
+}
+
+/** The folder a NEWLY opened Files tab starts at, seeded from settings and
+ *  refreshed by every navigation.
+ *
+ *  A module-level value rather than a re-read of the settings payload, because
+ *  `patchSettings` debounces: a reader is not guaranteed to see their own last
+ *  write, and the recorder is the value in force. */
+let defaultDir = FB_ROOT;
+
+/** Seed the folder a NEWLY opened Files tab starts at, from the loaded settings.
+ *  `""` (a fresh volume, or a workspace nobody has browsed) means the mounts
+ *  listing. LOCAL only: the value came from the server, so patching it back is a
+ *  write that says nothing, and the seed must not depend on `patchSettings`' dedup
+ *  tracker having been seeded first. */
+export function noteDefaultBrowsePath(path: string): void {
+  defaultDir = normalizeDirPath(path);
+}
+
+/** That folder, FB_ROOT when none was recorded. */
+export function defaultBrowsePath(): string {
+  return defaultDir;
+}
+
+/** Record a navigation as the new default: the local value AND config.json. The
+ *  navigation doors call this in place of a bare `patchSettings`, so the in-memory
+ *  default and the persisted one cannot drift. */
+function recordBrowsePath(path: string): void {
+  defaultDir = normalizeDirPath(path);
+  void patchSettings({ fb_path: path });
+}
+
+/** Bind the shared browser DOM to one files tab, WITHOUT loading.
+ *
+ *  The early return is what makes a repeat activation of the SAME browser a pure
+ *  load rather than a re-paint of rows the fetch is about to replace. */
+export function bindFilesTab(ref: string): void {
+  if (boundRef === ref) {
+    return;
+  }
+  const st = stateFor(ref);
+  boundRef = ref;
+  renameTab(filesTabIdFor(ref), filesRowName(st.currentPath));
+  updateNavButtons();
+  // From the state's cached entries, so the switch paints instantly and the fetch
+  // that follows corrects it.
+  renderList({ transition: false });
+}
+
+/** Bind and load — what a files tab's activation means. The factory's `refresh`. */
+export function showFilesTab(ref: string): void {
+  bindFilesTab(ref);
+  loadDir();
+}
+
+/** Drop a closed tab's state, and unbind when it was the one on screen.
+ *
+ *  Deliberately does NOT write `fb_path`: under its narrowed meaning that field says
+ *  where a NEWLY opened tab starts, so closing one of N tabs must not wipe a
+ *  workspace-global preference, and the last folder anyone was looking at is still
+ *  the best answer for the next tab. */
+export function releaseFilesTab(ref: string): void {
+  browserStates.delete(ref);
+  if (boundRef !== ref) {
+    return;
+  }
+  boundRef = "";
+  resetFilesSearch();
+  // Rows kept while hidden would replay their entry animation in unison on the next
+  // display flip and skip fresh mounts in reconcile.
+  $.fbList.replaceChildren();
+}
+
+/** Point one files TAB at a directory, from outside the module: a document history
+ *  entry, or a pasted deep link, so `dir` is normalised rather than trusted.
+ *
+ *  By REF and not by "the bound tab", so either order is correct when an activation
+ *  follows: an unbound state is pointed and the imminent `showFilesTab(ref)` loads it,
+ *  a bound one is loaded here. */
+export function pointFilesTab(ref: string, dir: string): void {
+  const target = normalizeDirPath(dir);
+  stateFor(ref).pointTo(target);
+  recordBrowsePath(target);
+  setFilesRoute(ref, target);
+  renameTab(filesTabIdFor(ref), filesRowName(target));
+  if (boundRef === ref) {
+    updateNavButtons();
+    loadWithTransition();
+  }
+}
+
+/** The tab label for a folder: its last segment, or "Files" at the mounts listing.
+ *  Twinned with tab-materialize.ts's `filesTabName`, which the factory spends at
+ *  open; this is the rename the browser issues as the tab navigates. */
+function filesRowName(dir: string): string {
+  return dir === FB_ROOT ? "Files" : (dir.split("/").pop() ?? dir);
+}
 
 // --- Init ---
 
 export function initFileBrowser(): void {
   $.filesBtn.addEventListener("click", () => {
-    void toggleFilesView();
+    void toggleFilesView(defaultBrowsePath());
   });
   $.fbBack.addEventListener("click", goBack);
   $.fbForward.addEventListener("click", goForward);
@@ -99,34 +229,17 @@ export function initFileBrowser(): void {
   $.fbDownload.addEventListener("click", downloadSelected);
   $.fbUpload.addEventListener("click", uploadViaDialog);
   $.fbAddToChat.addEventListener("click", addSelectedToChat);
-  $.fbChatFilter.addEventListener("click", () => {
-    $.fbChatFilter.setAttribute("aria-pressed", String(toggleChatFilter()));
-  });
-
-  // The filter's OTHER input is which chat is active, and the browser is a
-  // singleton tab that stays open across chat switches — so without this the
-  // filter would keep showing the previous chat's set until the next refresh, i.e.
-  // claiming one chat's writes belong to another. Gated on the filter being on and
-  // guarded by a set comparison, because `activeSession` re-derives on every
-  // streaming chunk.
-  effect(() => {
-    const changed = chatFilterOn ? changedPathsOf(activeSession.value) : new Set<string>();
-    const key = [...changed].sort().join("\n");
-    if (key === lastChangedKey) {
-      return;
-    }
-    lastChangedKey = key;
-    repaintRows();
-  });
 
   initPathInput();
   initBrowserDragDrop({
-    getCurrentPath: () => state.currentPath,
-    getEntryMap: () => state.entryMap,
+    getCurrentPath: () => cur().currentPath,
+    getEntryMap: () => cur().entryMap,
     reload: loadDir,
   });
   initFilesSearch({
-    getSearchPath: () => state.currentPath,
+    // "" when nothing is bound, which the bar refuses: the detached state's FB_ROOT
+    // would search the MOUNTS ROOT instead of the tab's folder.
+    getSearchPath: () => (boundRef === "" ? "" : cur().currentPath),
     // SHOW, never toggle. The search surface lives inside the files view, so a
     // Ctrl-F raised from another tab has to bring the browser forward first — and
     // this used to call `toggleFilesView` on the reasoning that the caller is
@@ -140,7 +253,13 @@ export function initFileBrowser(): void {
     // gesture later, so the leak was reported as inherited search state rather
     // than as a tab that closed itself.
     activateBrowser: () => {
-      void showFilesView();
+      void openFilesView(defaultBrowsePath());
+    },
+    // Close FIRST: `#fb-list` is hidden while the bar is open, so navigating
+    // first would paint the folder into an element nobody can see.
+    openFolder: (path) => {
+      closeFilesSearch();
+      navigate(path);
     },
   });
 
@@ -160,10 +279,14 @@ export function initFileBrowser(): void {
   bindLoadingState(fileOps, $.fbRename, { preserveDisabled: true });
   bindLoadingState(fileOps, $.fbDelete, { preserveDisabled: true });
 
-  // Escape deselects all.
+  // Gated on the ACTIVE tab: every Escape in the app reaches this listener, and one
+  // browser's selection is not the app's to clear from another view.
   onBus(BUS_KEYS_ESCAPE, () => {
-    if (state.selected.size > 0) {
-      state.deselectAll();
+    if (getActiveTabKind() !== "files") {
+      return;
+    }
+    if (cur().selected.size > 0) {
+      cur().deselectAll();
       updateActionButtons();
       updateRowHighlights();
     }
@@ -183,61 +306,21 @@ export function initFileBrowser(): void {
     if (getActiveTabKind() !== "files") {
       return;
     }
-    if (state.selected.size !== 1) {
+    if (cur().selected.size !== 1) {
       return;
     }
     e.preventDefault();
     renameSelected();
   });
 
-  // Picker uploads should refresh this view if it's open.
+  // BOUND rather than active, so a backgrounded browser still picks an upload up; the
+  // gate stops an unbound loadDir painting the detached state into the shared list.
   setOnUploadComplete(() => {
-    loadDir();
+    if (boundRef !== "") {
+      loadDir();
+    }
   });
 }
-
-/** True while currentPath came from a restore (the persisted fb_path or a
- *  /files deep link) and has not yet loaded successfully. A stale
- *  restored path — one outside the granted browse roots (e.g. saved
- *  before the allow-list conversion, or a revoked VIBEKIT_BROWSE_ROOTS
- *  grant) or since-deleted — auto-falls back to the root mount listing
- *  instead of stranding the user on an error row. In-session
- *  navigation failures keep the error row (with a Go-to-root escape)
- *  so a transient server error isn't papered over. */
-let pendingRestore = false;
-
-/** Restore the file browser path from settings or a `/files/<path>` deep link.
- *
- *  Normalised, because both of those arrive from outside this module and neither
- *  can be trusted to be in its space: a URL carries whatever was bookmarked and
- *  `fb_path` carries whatever an older build persisted. `""` still means "nothing
- *  saved" and leaves the browser on its own root. */
-export function restoreFileBrowser(path: string): void {
-  if (path !== "") {
-    const dir = normalizeDirPath(path);
-    state.currentPath = dir;
-    state.history[0] = dir;
-    pendingRestore = true;
-  }
-}
-
-/** Reset the file browser to root. */
-function resetFileBrowser(): void {
-  state.reset();
-  resetFilesSearch();
-  // Clear the DOM too: rows kept while hidden would replay their entry
-  // animation in unison on the next display flip (a block translate) and
-  // skip fresh mounts in reconcile. A fresh mount every open keeps the
-  // entry animation deterministic; entries are refetched on every open.
-  $.fbList.replaceChildren();
-  void patchSettings({ fb_path: "" });
-}
-
-// `resetFileBrowser` is exported for the tab factory (tab-materialize.ts), which
-// has to be able to describe a files tab's close for EVERY door rather than only
-// the two inside this module. It stays the module's own function; the export just
-// makes the behaviour reachable from the one place that must name it once.
-export { loadDir as loadFileBrowser, resetFileBrowser };
 
 // --- Path input ---
 
@@ -247,7 +330,7 @@ function initPathInput(): void {
     onNavigate: (target) => {
       navigate(target);
     },
-    getCurrentPath: () => state.currentPath,
+    getCurrentPath: () => cur().currentPath,
   });
 }
 
@@ -279,10 +362,10 @@ function loadDir(): void {
   // arm gated on the container alone would clear rows the reader is working in, and a
   // directory that really is empty is an answer rather than an absence.
   const skeleton =
-    state.entries.length === 0 && !state.answered
+    cur().entries.length === 0 && !cur().answered
       ? skeletonTiming(() => paintPlaceholder($.fbList, fileRowsSkeleton))
       : null;
-  void fetchDir(state.currentPath, browserFetchHolder).then((d) => {
+  void fetchDir(cur().currentPath, browserFetchHolder).then((d) => {
     // Read BEFORE the cancel: the placeholder shares this container with the rows, so
     // it is content on screen, and the fade is what keeps the rows from cutting over it.
     const onScreen = $.fbList.childElementCount > 0;
@@ -291,32 +374,32 @@ function loadDir(): void {
       if (d.error === "stale") {
         return;
       }
-      // Restored path no longer loads (outside the granted roots, or
-      // deleted since): heal to the root mount listing once instead of
-      // stranding the user on an error row they never navigated to.
-      if (pendingRestore && state.currentPath !== FB_ROOT) {
-        pendingRestore = false;
-        state.reset();
-        void patchSettings({ fb_path: "" });
+      // This tab's ORIGIN folder no longer loads: heal to the mounts listing once
+      // rather than strand the reader on an error row. `fb_path` is NOT cleared —
+      // one tab's failed read says nothing about a workspace-global preference.
+      if (cur().pendingRestore && cur().currentPath !== FB_ROOT) {
+        cur().pendingRestore = false;
+        cur().reset();
+        setFilesRoute(boundRef, FB_ROOT);
         updateNavButtons();
         loadDir();
         return;
       }
-      state.entries = [];
-      state.entryMap.clear();
-      state.dirWritable = false;
+      cur().entries = [];
+      cur().entryMap.clear();
+      cur().dirWritable = false;
       showError(d.error);
       updateWriteButtons();
       return;
     }
-    pendingRestore = false;
-    state.entries = d.files;
-    state.answered = true;
-    state.entryMap.clear();
-    for (const e of state.entries) {
-      state.entryMap.set(e.name, e);
+    cur().pendingRestore = false;
+    cur().entries = d.files;
+    cur().answered = true;
+    cur().entryMap.clear();
+    for (const e of cur().entries) {
+      cur().entryMap.set(e.name, e);
     }
-    state.dirWritable = d.writable;
+    cur().dirWritable = d.writable;
     // First populate (empty list) renders WITHOUT the entry fade: the
     // view-open fade is usually still running, and a list fade would cancel
     // it (one-slot replacement) to animate rows the CSS stagger already
@@ -326,17 +409,17 @@ function loadDir(): void {
 }
 
 function loadDirAsync(): Promise<void> {
-  return fetchDir(state.currentPath, browserFetchHolder).then((d) => {
+  return fetchDir(cur().currentPath, browserFetchHolder).then((d) => {
     if (d.error !== undefined) {
       return;
     }
-    state.entries = d.files;
-    state.answered = true;
-    state.entryMap.clear();
-    for (const e of state.entries) {
-      state.entryMap.set(e.name, e);
+    cur().entries = d.files;
+    cur().answered = true;
+    cur().entryMap.clear();
+    for (const e of cur().entries) {
+      cur().entryMap.set(e.name, e);
     }
-    state.dirWritable = d.writable;
+    cur().dirWritable = d.writable;
     // transition:false so the DOM is updated synchronously — callers
     // chain inline rename on the freshly-created row immediately.
     renderList({ transition: false });
@@ -349,7 +432,7 @@ function showError(msg: string): void {
   // Anywhere but the root: offer the way back to the mount listing.
   // Covers e.g. ".." above a nested granted root (its parent is not
   // browsable) and a directory deleted from under the browser.
-  if (state.currentPath !== FB_ROOT) {
+  if (cur().currentPath !== FB_ROOT) {
     const home = el("button", { type: "button", className: "btn-small" }, "Go to root");
     home.addEventListener("click", () => {
       navigate(FB_ROOT);
@@ -361,32 +444,34 @@ function showError(msg: string): void {
 
 // --- Navigation ---
 
-function navigate(path: string): void {
-  state.navigate(path);
-  void patchSettings({ fb_path: path });
-  pushRoute({ kind: "files", path });
+/** Publish the bound tab's new directory: its ROW's route, its label, and the folder
+ *  the next tab starts at. The route rather than a `pushRoute`, because the projection
+ *  is the ONE URL writer and a second one means whichever emitted last wins. */
+function publishDir(path: string): void {
+  recordBrowsePath(path);
+  setFilesRoute(boundRef, path);
+  renameTab(filesTabIdFor(boundRef), filesRowName(path));
   updateNavButtons();
   loadWithTransition();
+}
+
+function navigate(path: string): void {
+  cur().navigate(path);
+  publishDir(path);
 }
 
 function goBack(): void {
-  if (!state.goBack()) {
+  if (!cur().goBack()) {
     return;
   }
-  void patchSettings({ fb_path: state.currentPath });
-  pushRoute({ kind: "files", path: state.currentPath });
-  updateNavButtons();
-  loadWithTransition();
+  publishDir(cur().currentPath);
 }
 
 function goForward(): void {
-  if (!state.goForward()) {
+  if (!cur().goForward()) {
     return;
   }
-  void patchSettings({ fb_path: state.currentPath });
-  pushRoute({ kind: "files", path: state.currentPath });
-  updateNavButtons();
-  loadWithTransition();
+  publishDir(cur().currentPath);
 }
 
 function loadWithTransition(): void {
@@ -403,21 +488,21 @@ function loadWithTransition(): void {
 // --- Button state ---
 
 function updateNavButtons(): void {
-  $.fbBack.disabled = state.historyIdx <= 0;
-  $.fbForward.disabled = state.historyIdx >= state.history.length - 1;
-  $.fbPath.value = state.currentPath;
+  $.fbBack.disabled = cur().historyIdx <= 0;
+  $.fbForward.disabled = cur().historyIdx >= cur().history.length - 1;
+  $.fbPath.value = cur().currentPath;
   $.fbPath.readOnly = true;
   updateToolbarContext();
 }
 
 function updateActionButtons(): void {
-  const count = state.selected.size;
+  const count = cur().selected.size;
   const single = count === 1;
   const any = count > 0;
   // Download: enabled when at least one item is selected.
   $.fbDownload.disabled = !any;
-  $.fbRename.disabled = !single || !state.dirWritable;
-  $.fbDelete.disabled = !any || !state.dirWritable;
+  $.fbRename.disabled = !single || !cur().dirWritable;
+  $.fbDelete.disabled = !any || !cur().dirWritable;
   $.fbAddToChat.disabled = !any;
   updateWriteButtons();
 }
@@ -427,16 +512,16 @@ function updateActionButtons(): void {
 function updateToolbarContext(): void {
   $.fbBack
     .closest<HTMLElement>(".view-toolbar-inner")
-    ?.classList.toggle("has-selection", state.selected.size > 0);
+    ?.classList.toggle("has-selection", cur().selected.size > 0);
 }
 
 function updateWriteButtons(): void {
-  $.fbNewFile.disabled = !state.dirWritable;
-  $.fbNewFolder.disabled = !state.dirWritable;
-  $.fbUpload.disabled = !state.dirWritable;
+  $.fbNewFile.disabled = !cur().dirWritable;
+  $.fbNewFolder.disabled = !cur().dirWritable;
+  $.fbUpload.disabled = !cur().dirWritable;
   $.fbNewFile
     .closest<HTMLDetailsElement>(".fb-new-menu")
-    ?.toggleAttribute("data-unavailable", !state.dirWritable);
+    ?.toggleAttribute("data-unavailable", !cur().dirWritable);
   updateToolbarContext();
 }
 
@@ -445,19 +530,14 @@ function updateWriteButtons(): void {
 function renderList(opts: { transition?: boolean } = {}): void {
   updateNavButtons();
 
-  // Once per PASS, not once per row. `changedPathsOf` folds every message of the
-  // session into a set, so calling it inside `entryRow` made a render
-  // O(rows x messages). `repaintRows` already hoists it — one shape across both.
-  const changed = chatFilterOn ? changedPathsOf(activeSession.peek()) : new Set<string>();
-
   const swap = (): HTMLElement => {
-    const sorted = sortEntries(state.entries);
-    state.sortedNames = sorted.map((e) => e.name);
+    const sorted = sortEntries(cur().entries);
+    cur().sortedNames = sorted.map((e) => e.name);
 
     $.fbList.setAttribute("role", "list");
 
     const items: FbEntry[] = [];
-    if (state.currentPath !== FB_ROOT) {
+    if (cur().currentPath !== FB_ROOT) {
       items.push({ kind: "parent" });
     }
     for (const entry of sorted) {
@@ -466,7 +546,7 @@ function renderList(opts: { transition?: boolean } = {}): void {
 
     reconcile($.fbList, items, {
       key: (e: FbEntry) => (e.kind === "parent" ? "__parent__" : `entry:${e.entry.name}`),
-      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry, changed)),
+      mount: (e: FbEntry) => (e.kind === "parent" ? parentRow() : entryRow(e.entry)),
       update: (row: HTMLElement, e: FbEntry) => {
         if (e.kind !== "entry") {
           return;
@@ -487,16 +567,6 @@ function renderList(opts: { transition?: boolean } = {}): void {
       },
     });
 
-    // Staggered list entry (design system): 30ms per row, capped at 8.
-    // Set by visual position on every render; only freshly-mounted rows
-    // animate, so updating the property on kept rows is inert. Runs before
-    // the frame paints, so delays apply from the animation's first frame.
-    let idx = 0;
-    for (const row of $.fbList.children) {
-      (row as HTMLElement).style.setProperty("--stagger-index", String(Math.min(idx, 8)));
-      idx++;
-    }
-
     updateActionButtons();
     updateRowHighlights();
     return $.fbList;
@@ -514,6 +584,30 @@ function renderList(opts: { transition?: boolean } = {}): void {
   }
 }
 
+/** Middle-click opens in the BACKGROUND. No engine emits `click` for a middle button,
+ *  so the row's own open handler cannot also fire — disjoint by construction.
+ *
+ *  The `mousedown` companion cancels the PLATFORM default, which `preventDefault` on
+ *  auxclick does not reach: autoscroll and X11 middle-click paste are both driven by
+ *  mousedown, and `.fb-list-wrap` IS a scroller. */
+function wireBackgroundOpen(row: HTMLElement, open: () => void): void {
+  row.addEventListener("auxclick", (e: MouseEvent) => {
+    if (e.button !== 1) {
+      return;
+    }
+    if ((e.target as HTMLElement).closest(`.${FB_CHECK}, .fb-git-letter`) !== null) {
+      return;
+    }
+    e.preventDefault();
+    open();
+  });
+  row.addEventListener("mousedown", (e: MouseEvent) => {
+    if (e.button === 1) {
+      e.preventDefault();
+    }
+  });
+}
+
 function parentRow(): HTMLDivElement {
   const checkSpan = el("span", { className: FB_CHECK });
 
@@ -521,7 +615,7 @@ function parentRow(): HTMLDivElement {
 
   const nameSpan = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, "..");
   nameSpan.addEventListener("click", () => {
-    navigate(parentPath(state.currentPath));
+    navigate(parentPath(cur().currentPath));
   });
 
   const metaSpan = el("span", { className: FB_META });
@@ -534,34 +628,17 @@ function parentRow(): HTMLDivElement {
     nameSpan,
     metaSpan,
   ) as HTMLDivElement;
+  // The same pair every listing row gets, so ".." is not the one row where the
+  // gesture does nothing. One folder branch: this row carries no checkbox or badge.
+  wireBackgroundOpen(row, () => {
+    void openTab({
+      kind: "files",
+      ref: parentPath(cur().currentPath),
+      activate: false,
+    });
+  });
   return row;
 }
-
-/** Every workspace-relative path one chat changed, plus their ancestors.
- *
- *  No new request and no reverse query: `changed_files` is stamped on each turn's
- *  final assistant message, so "what did this chat touch" is a fold over data the
- *  transcript already holds. The opposite question — "which chat owns this path"
- *  — is deliberately NOT built; it would need a server-side path→chat index that
- *  nothing else wants.
- *
- *  Nor is the per-row "turn that last touched this file" link §3.10 sketches: a
- *  turn's ordinal in the loaded window is not its ordinal in the session (the
- *  store is paginated), so the link would name the wrong turn on any chat long
- *  enough to page — and the honest source, the rail's session-wide index, is a
- *  fetch and a cross-view jump the done-when does not ask for. */
-function changedPathsOf(s: Session | undefined): ReadonlySet<string> {
-  const rels: string[] = [];
-  for (const m of s?.messages ?? []) {
-    rels.push(...Object.keys(m.changed_files ?? {}));
-  }
-  return withAncestors(rels);
-}
-
-/** Serialized change set the last repaint was painted from. Lets the
- *  active-session effect skip the ~20/second repaints a streaming turn would
- *  otherwise trigger without changing a single row. */
-let lastChangedKey = "";
 
 /** The git letter badge for one row: the file's own status, or for a directory
  *  the worst status beneath it. Clicking a file's badge opens its change.
@@ -593,19 +670,18 @@ function statusBadge(absPath: string, isDir: boolean): HTMLElement | null {
   return badge;
 }
 
-/** One listing row. `changed` is the pass's attribution set, threaded in by
- *  `renderList` rather than folded here — see the note at its call site. */
-function entryRow(entry: FileEntry, changed: ReadonlySet<string>): HTMLDivElement {
+/** One listing row. */
+function entryRow(entry: FileEntry): HTMLDivElement {
   const check = el("input", {
     type: "checkbox",
     className: FB_CHECK,
-    checked: state.selected.has(entry.name),
+    checked: cur().selected.has(entry.name),
   }) as HTMLInputElement;
   check.addEventListener("change", () => {
     if (check.checked) {
-      state.selectEntry(entry.name);
+      cur().selectEntry(entry.name);
     } else {
-      state.deselectEntry(entry.name);
+      cur().deselectEntry(entry.name);
     }
     updateActionButtons();
     updateRowHighlights();
@@ -615,14 +691,14 @@ function entryRow(entry: FileEntry, changed: ReadonlySet<string>): HTMLDivElemen
 
   const name = el("span", { className: `${FB_NAME} ${FB_NAME_LINK}` }, entry.name);
   name.addEventListener("click", (e: MouseEvent) => {
-    if (e.shiftKey && state.lastClickedName !== "") {
-      shiftSelect(state.lastClickedName, entry.name);
+    if (e.shiftKey && cur().lastClickedName !== "") {
+      shiftSelect(cur().lastClickedName, entry.name);
       return;
     }
     if (entry.isDir) {
-      navigate(joinPath(state.currentPath, entry.name));
+      navigate(joinPath(cur().currentPath, entry.name));
     } else {
-      openFile(joinPath(state.currentPath, entry.name));
+      openFile(joinPath(cur().currentPath, entry.name));
     }
   });
 
@@ -634,9 +710,8 @@ function entryRow(entry: FileEntry, changed: ReadonlySet<string>): HTMLDivElemen
   parts.push(entry.mode);
   const meta = el("span", { className: FB_META }, parts.join("   ·   "));
 
-  const abs = joinPath(state.currentPath, entry.name);
+  const abs = joinPath(cur().currentPath, entry.name);
   const badge = statusBadge(abs, entry.isDir);
-  const mine = chatFilterOn && matchesRelative(abs, changed);
 
   const row = el(
     "div",
@@ -653,32 +728,22 @@ function entryRow(entry: FileEntry, changed: ReadonlySet<string>): HTMLDivElemen
     ...(badge !== null ? [badge] : []),
     meta,
   ) as HTMLDivElement;
-  // The filter DIMS rather than hides. Hiding would make the listing lie about
-  // what is on disk, and a folder whose only changed child is filtered out would
-  // read as empty.
-  row.classList.toggle("fb-row-unattributed", chatFilterOn && !mine);
+
+  wireBackgroundOpen(row, () => {
+    if (entry.isDir) {
+      void openTab({ kind: "files", ref: normalizeDirPath(abs), activate: false });
+    } else {
+      openFileInBackground(abs);
+    }
+  });
 
   return row;
 }
 
-/** "Changed by this chat" — off by default. */
-let chatFilterOn = false;
-
-/** Toggle the attribution filter and repaint the current listing. Returns the
- *  new state; the caller mirrors it onto the button's `aria-pressed`, which is
- *  also what makes the button LOOK pressed (see `.icon-btn[aria-pressed]`). No
- *  second class on the list: one signal for one piece of state. */
-export function toggleChatFilter(): boolean {
-  chatFilterOn = !chatFilterOn;
-  repaintRows();
-  return chatFilterOn;
-}
-
-/** Repaint every row's decoration in place: the git letter (which the poll
- *  refreshes) and the attribution dim. In place rather than a reload, because a
- *  30-second poll must not blow away the user's selection or scroll. */
+/** Repaint every row's git letter in place, which is what the poll refreshes. In
+ *  place rather than a reload, because a 30-second poll must not blow away the
+ *  user's selection or scroll. */
 function repaintRows(): void {
-  const changed = chatFilterOn ? changedPathsOf(activeSession.peek()) : new Set<string>();
   for (const row of $.fbList.querySelectorAll<HTMLElement>(`.${FB_ROW}[data-path]`)) {
     const abs = row.dataset["path"] ?? "";
     const isDir = row.dataset["isDir"] === "true";
@@ -687,7 +752,6 @@ function repaintRows(): void {
     if (badge !== null) {
       row.insertBefore(badge, row.querySelector(`.${FB_META}`));
     }
-    row.classList.toggle("fb-row-unattributed", chatFilterOn && !matchesRelative(abs, changed));
   }
 }
 
@@ -697,17 +761,17 @@ export function _repaintRowsForTest(): void {
 }
 
 function shiftSelect(from: string, to: string): void {
-  const a = state.sortedNames.indexOf(from);
-  const b = state.sortedNames.indexOf(to);
+  const a = cur().sortedNames.indexOf(from);
+  const b = cur().sortedNames.indexOf(to);
   if (a === -1 || b === -1) {
     return;
   }
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
   for (let i = lo; i <= hi; i++) {
-    state.selected.add(state.sortedNames[i]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    cur().selected.add(cur().sortedNames[i]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
   }
-  state.lastClickedName = to;
+  cur().lastClickedName = to;
   updateActionButtons();
   updateRowHighlights();
 }
@@ -719,10 +783,10 @@ function updateRowHighlights(): void {
     if (name === undefined) {
       continue;
     }
-    node.classList.toggle("fb-row-selected", state.selected.has(name));
+    node.classList.toggle("fb-row-selected", cur().selected.has(name));
     const check = node.querySelector<HTMLInputElement>(`.${FB_CHECK}`);
     if (check !== null) {
-      check.checked = state.selected.has(name);
+      check.checked = cur().selected.has(name);
     }
   }
 }
@@ -740,7 +804,7 @@ function createEntry(action: "touch" | "mkdir", name: string): void {
   const actionFn = action === "mkdir" ? createFolder : createFile;
   void actionFn.dispatch(
     {
-      dir: state.currentPath,
+      dir: cur().currentPath,
       name,
     },
     {
@@ -754,7 +818,7 @@ function createEntry(action: "touch" | "mkdir", name: string): void {
 }
 
 function addSelectedToChat(): void {
-  if (state.selected.size === 0) {
+  if (cur().selected.size === 0) {
     return;
   }
   // Directory attachments are plain paths like anywhere else — the chat
@@ -762,15 +826,15 @@ function addSelectedToChat(): void {
   //
   // DETACHED: a toolbar click with nothing after it that reads the chat.
   void attachPathsToActiveChat(
-    [...state.selected].map((name) => joinPath(state.currentPath, name)),
+    [...cur().selected].map((name) => joinPath(cur().currentPath, name)),
   );
 }
 
 function renameSelected(): void {
-  if (state.selected.size !== 1) {
+  if (cur().selected.size !== 1) {
     return;
   }
-  startInlineRename([...state.selected][0]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  startInlineRename([...cur().selected][0]!); // eslint-disable-line @typescript-eslint/no-non-null-assertion
 }
 
 function startInlineRename(targetName: string): void {
@@ -817,12 +881,12 @@ function startInlineRename(targetName: string): void {
     }
 
     void renameFile.dispatch(
-      { dir: state.currentPath, original, newName },
+      { dir: cur().currentPath, original, newName },
       {
         onSuccess: () => {
           // Reload the directory to rebuild rows with click handlers and
           // correct sort order (fixes stale handler + sort-after-rename).
-          state.deselectAll();
+          cur().deselectAll();
           updateActionButtons();
           loadDir();
         },
@@ -856,12 +920,12 @@ function startInlineRename(targetName: string): void {
 }
 
 function deleteSelected(): void {
-  if (state.selected.size === 0) {
+  if (cur().selected.size === 0) {
     return;
   }
-  const names = [...state.selected];
+  const names = [...cur().selected];
   const label = names.length === 1 ? names[0]! : `${String(names.length)} items`; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const capturedDir = state.currentPath;
+  const capturedDir = cur().currentPath;
   void (async () => {
     const ok = await confirmDialog(
       `Delete ${label}? This cannot be undone.`,
@@ -875,7 +939,7 @@ function deleteSelected(): void {
       { dir: capturedDir, names, listEl: $.fbList },
       {
         onSuccess: () => {
-          state.deselectAll();
+          cur().deselectAll();
           updateActionButtons();
           setTimeout(loadDir, 200);
         },
@@ -888,16 +952,16 @@ function deleteSelected(): void {
 }
 
 function downloadSelected(): void {
-  if (state.selected.size === 0) {
+  if (cur().selected.size === 0) {
     return;
   }
-  const names = [...state.selected];
+  const names = [...cur().selected];
   // Single file (non-directory): use the simple GET endpoint.
   // NOTE: No double-click guard here — the anchor-click approach is
   // idempotent (browser deduplicates rapid same-URL downloads). If this
   // ever becomes an issue, disable the button briefly via setTimeout.
   const singleName = names.length === 1 ? names[0] : undefined;
-  if (singleName !== undefined && state.entryMap.get(singleName)?.isDir !== true) {
+  if (singleName !== undefined && cur().entryMap.get(singleName)?.isDir !== true) {
     // A same-origin anchor to this route, and it is safe for exactly one reason:
     // the server answers `Content-Disposition: attachment`, so a `.svg` — which
     // arrives as `Content-Type: image/svg+xml` and is script-capable when
@@ -905,7 +969,7 @@ function downloadSelected(): void {
     // origin. The `download` attribute is the same instruction from this side.
     // Never turn this into a "view in a tab" affordance.
     const a = el("a", {
-      href: fileDownloadURL(joinPath(state.currentPath, singleName)),
+      href: fileDownloadURL(joinPath(cur().currentPath, singleName)),
       download: singleName,
       rel: "noopener",
     });
@@ -915,7 +979,7 @@ function downloadSelected(): void {
     return;
   }
   // Multiple items or includes a directory: POST for zip.
-  const paths = names.map((n) => joinPath(state.currentPath, n));
+  const paths = names.map((n) => joinPath(cur().currentPath, n));
   void downloadFiles.dispatch({ paths });
 }
 
@@ -937,7 +1001,7 @@ function uploadViaDialog(): void {
       return;
     }
     void upload.dispatch(
-      { files: screened.files, targetDir: state.currentPath },
+      { files: screened.files, targetDir: cur().currentPath },
       {
         onSuccess: (paths) => {
           loadDir();

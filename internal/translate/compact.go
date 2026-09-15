@@ -37,7 +37,7 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 	if err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
-	err = t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	_, err = t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}

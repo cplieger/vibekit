@@ -9,12 +9,12 @@
 // The upstream v0.1 API shape:
 //
 //	GET /v0.1/servers?search=<q>&limit=<n>
-//	{ "servers": [{ "server": {...}, "_meta": {...} }], "metadata": {...} }
+//	{ "servers": [{ "server": {...}, "_meta": {...} }], "metadata": { "nextCursor": ..., "count": n } }
 //
 // Each server has one "version" and carries either `packages[]` (stdio
 // via npm/docker/etc) or `remotes[]` (http/sse), with declared
 // `environmentVariables` / `headers` telling the user what secrets are
-// needed.
+// needed. testdata/registry_search_upstream.json is one real reply.
 
 package mcp
 
@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,7 +36,7 @@ import (
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -44,21 +45,27 @@ const (
 	registryHost     = "registry.modelcontextprotocol.io"
 	registryTimeout  = 10 * time.Second
 	registryCacheTTL = 60 * time.Second
-	// Hard cap on the server-side proxy so a browser can't DOS upstream.
-	maxSearchLimit = 25
+	// Hard cap on the rows a browser may ask for, so it can't DOS upstream.
+	// doFetch asks for one more, its sentinel row, so the upstream ask tops
+	// out at 25.
+	maxSearchLimit = 24
 	// Upper bound on the `q` string. Real search queries are a handful
 	// of words; anything longer is a cache-fill DoS attempt.
 	maxSearchQueryLen = 128
-	// Upper bound on distinct cached entries. Each entry is the raw
-	// upstream body (up to 2 MiB). With this cap the cache holds at
-	// most maxCacheEntries × 2 MiB = 128 MiB in the worst case. Oldest
+	// Upper bound on distinct cached entries. Each entry is one decoded
+	// reply, no larger than the 2 MiB body it came from, so the cache holds
+	// at most maxCacheEntries × 2 MiB = 128 MiB in the worst case. Oldest
 	// entries get evicted on insert when full.
 	maxCacheEntries = 64
-	// Max upstream response body we'll read + cache. 2 MiB comfortably
-	// covers the full registry at maxSearchLimit=25; the +1 sentinel
-	// in fetchSearch turns an at-cap read into an explicit error
-	// instead of a silently-truncated JSON that would parse as empty.
+	// Max upstream response body we'll read. 2 MiB comfortably covers
+	// the full registry at the 25-row upstream ask; the +1 sentinel in
+	// doFetch turns an at-cap read into an explicit error instead of a
+	// silently-truncated JSON that would parse as empty.
 	maxRegistryBody = 2 * 1024 * 1024
+	// Ceiling on the pause an upstream Retry-After may impose on the
+	// browser's Retry button. The registry recovers in about a minute;
+	// a header naming an hour would otherwise lock the button for it.
+	maxRetryAfter = 5 * time.Minute
 	// drainLimit caps how many bytes of an error-response body we
 	// read for connection reuse. Large enough for typical upstream
 	// error envelopes, small enough that a hostile upstream can't tie
@@ -74,7 +81,8 @@ type RegistryProxy struct {
 
 type registryCacheEntry struct {
 	insertedAt time.Time
-	body       []byte
+	// result is a decoded reply, so a body that did not parse is never cached.
+	result RegistrySearchResult
 }
 
 // NewRegistryProxy returns a ready-to-use proxy with sensible timeouts and
@@ -147,7 +155,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// instead of hand-rolled if-guards: fewer branches, same result.
 	limit = min(max(limit, 1), maxSearchLimit)
 
-	body, cached, err := p.fetchSearch(r.Context(), q, limit)
+	result, cached, err := p.fetchSearch(r.Context(), q, limit)
 	if err != nil {
 		// Only the REQUEST's own context can report that the client walked
 		// away. The returned ERROR cannot: our own fetch deadline and
@@ -161,34 +169,108 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("mcp: registry search failed",
 			"q", logsafe.Field(q), "limit", limit, "error", err)
-		// Generic sentinel to the browser; full detail is in the Warn
-		// above, since the error text can leak upstream operational
-		// signals.
-		webhttp.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
-			"error": "registry unavailable",
-		})
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, classifyRegistryFailure(err))
 		return
 	}
-	normalised := normaliseRegistryResponse(body)
 	slog.Debug("mcp: registry search",
-		"q", logsafe.Field(q), "limit", limit, "results", len(normalised), "cached", cached)
-	webhttp.WriteJSON(w, map[string]any{"servers": normalised})
+		"q", logsafe.Field(q), "limit", limit, "results", len(result.Servers),
+		"filtered", result.Filtered, "truncated", result.Truncated, "cached", cached)
+	webhttp.WriteJSON(w, result)
 }
 
-// fetchSearch returns raw upstream response bytes (from cache when fresh).
-// The second return value reports whether the result came from the
-// cache. Concurrent identical misses coalesce to a single upstream
-// request via singleflight.
+// RegistrySearchFailure is the 502 body. Error stays the fixed sentinel,
+// because upstream error text can leak operational signals; Reason is the
+// coarse class that lets the browser tell "wait" from "narrow the query";
+// RetryAfter is upstream's own interval in seconds, when it sent one.
+type RegistrySearchFailure struct {
+	Error      string                `json:"error"`
+	Reason     RegistryFailureReason `json:"reason"`
+	RetryAfter int                   `json:"retry_after,omitempty"`
+}
+
+// RegistryFailureReason classifies why a search produced no answer.
+type RegistryFailureReason string
+
+const (
+	// ReasonRateLimited is an upstream 429: the query was fine, the
+	// registry wants a pause before the next one.
+	ReasonRateLimited RegistryFailureReason = "rate_limited"
+	// ReasonRejected is any other upstream 4xx: the registry refused this
+	// query, so retrying it unchanged will not help.
+	ReasonRejected RegistryFailureReason = "rejected"
+	// ReasonUnavailable is everything else: an upstream 5xx, a timeout, a
+	// refused redirect, or a 200 whose body is not a registry reply.
+	ReasonUnavailable RegistryFailureReason = "unavailable"
+)
+
+const registryUnavailable = "registry unavailable"
+
+func classifyRegistryFailure(err error) RegistrySearchFailure {
+	f := RegistrySearchFailure{Error: registryUnavailable, Reason: ReasonUnavailable}
+	var up *upstreamStatusError
+	if !errors.As(err, &up) {
+		return f
+	}
+	f.RetryAfter = up.retryAfter
+	switch {
+	case up.status == http.StatusTooManyRequests:
+		f.Reason = ReasonRateLimited
+	case up.status >= 400 && up.status < 500:
+		f.Reason = ReasonRejected
+	}
+	return f
+}
+
+// upstreamStatusError is a non-200 from the registry, kept as a type so
+// handleSearch can classify it without parsing the message.
+type upstreamStatusError struct {
+	status     int
+	retryAfter int
+}
+
+func (e *upstreamStatusError) Error() string {
+	return fmt.Sprintf("upstream returned %d", e.status)
+}
+
+// retryAfterSeconds reads an upstream Retry-After header (delay-seconds or
+// an HTTP-date, per RFC 9110) into whole seconds, clamped to maxRetryAfter.
+// Zero means none: absent, unparseable, or already in the past.
+func retryAfterSeconds(header string, now time.Time) int {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return 0
+	}
+	var wait time.Duration
+	if n, err := strconv.Atoi(header); err == nil {
+		wait = time.Duration(n) * time.Second
+	} else if at, err := http.ParseTime(header); err == nil {
+		wait = at.Sub(now)
+	}
+	if wait <= 0 {
+		return 0
+	}
+	wait = min(wait, maxRetryAfter)
+	return int(math.Ceil(wait.Seconds()))
+}
+
+// fetchSearch returns the decoded reply for (q, limit), from the cache when
+// fresh. The second return value reports whether it came from the cache.
+// Concurrent identical misses coalesce to a single upstream request via
+// singleflight.
 //
 // The leader derives its timeout from the request-scoped context so
 // upstream fetches respect client disconnection and server shutdown.
-func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (body []byte, cached bool, err error) {
+func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (result RegistrySearchResult, cached bool, err error) {
 	key := searchCacheKey(q, limit)
 
-	return p.cache.GetOrFetch(ctx, key, func() ([]byte, error) {
+	return p.cache.GetOrFetch(ctx, key, func() (RegistrySearchResult, error) {
 		fetchCtx, fetchCancel := context.WithTimeout(ctx, registryTimeout)
 		defer fetchCancel()
-		return p.doFetch(fetchCtx, q, limit)
+		body, err := p.doFetch(fetchCtx, q, limit)
+		if err != nil {
+			return RegistrySearchResult{}, err
+		}
+		return normaliseRegistryResponse(body, limit)
 	})
 }
 
@@ -209,6 +291,11 @@ func searchCacheKey(q string, limit int) string {
 
 // doFetch issues the upstream GET. Factored out of fetchSearch so the
 // in-flight barrier code stays focused on coordination.
+//
+// It asks for one row past limit: a reply holding limit+1 rows is the proof
+// that upstream held more than the caller asked for, which is what sets
+// RegistrySearchResult.Truncated. Upstream's own metadata is not trusted
+// with that job on its own.
 func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byte, error) {
 	u, err := url.Parse(registryBaseURL + "/servers")
 	if err != nil {
@@ -218,7 +305,7 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 	if q != "" {
 		v.Set("search", q)
 	}
-	v.Set("limit", strconv.Itoa(limit))
+	v.Set("limit", strconv.Itoa(limit+1))
 	u.RawQuery = v.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
@@ -241,7 +328,10 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 		// query — under an upstream incident with retries, the cost
 		// compounds.
 		drainRegistryBody(resp.Body)
-		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+		return nil, &upstreamStatusError{
+			status:     resp.StatusCode,
+			retryAfter: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	// Pre-check upstream-declared size so we fail fast on oversize
 	// responses instead of reading up to the cap and then silently
@@ -278,10 +368,9 @@ func drainRegistryBody(r io.Reader) {
 
 // --- Cache ---
 
-// registryCache is a TTL-bounded, singleflight-protected byte cache
-// for upstream registry responses. It encapsulates the map, TTL,
-// max-entries cap, and request coalescing that were previously inline
-// on RegistryProxy.
+// registryCache is a TTL-bounded, singleflight-protected cache of decoded
+// registry replies. It encapsulates the map, TTL, max-entries cap, and
+// request coalescing that were previously inline on RegistryProxy.
 type registryCache struct {
 	sf      singleflight.Group
 	entries map[string]registryCacheEntry
@@ -298,21 +387,21 @@ func newRegistryCache(maxSize int) *registryCache {
 	}
 }
 
-// GetOrFetch returns cached data for key if fresh, otherwise calls
-// fetchFn (coalesced via singleflight) and caches the result.
+// GetOrFetch returns the cached reply for key if fresh, otherwise calls
+// fetchFn (coalesced via singleflight) and caches what it returns.
 // Followers bail early on ctx cancellation.
-func (c *registryCache) GetOrFetch(ctx context.Context, key string, fetchFn func() ([]byte, error)) (body []byte, cached bool, err error) {
+func (c *registryCache) GetOrFetch(ctx context.Context, key string, fetchFn func() (RegistrySearchResult, error)) (result RegistrySearchResult, cached bool, err error) {
 	c.mu.Lock()
 	if entry, ok := c.entries[key]; ok && time.Since(entry.insertedAt) < c.ttl {
-		body = entry.body
+		result = entry.result
 		c.mu.Unlock()
-		return body, true, nil
+		return result, true, nil
 	}
 	c.mu.Unlock()
 
 	// DoChan coalesces concurrent misses without a wrapper goroutine.
 	ch := c.sf.DoChan(key, func() (any, error) {
-		b, doErr := fetchFn()
+		r, doErr := fetchFn()
 		if doErr != nil {
 			return nil, doErr
 		}
@@ -322,24 +411,24 @@ func (c *registryCache) GetOrFetch(ctx context.Context, key string, fetchFn func
 		}
 		c.entries[key] = registryCacheEntry{
 			insertedAt: time.Now(),
-			body:       b,
+			result:     r,
 		}
 		c.mu.Unlock()
-		return b, nil
+		return r, nil
 	})
 
 	select {
 	case res := <-ch:
 		if res.Err != nil {
-			return nil, false, res.Err
+			return RegistrySearchResult{}, false, res.Err
 		}
-		b, ok := res.Val.([]byte)
+		r, ok := res.Val.(RegistrySearchResult)
 		if !ok {
-			return nil, false, fmt.Errorf("registry_cache: fetcher returned %T, want []byte", res.Val)
+			return RegistrySearchResult{}, false, fmt.Errorf("registry_cache: fetcher returned %T, want RegistrySearchResult", res.Val)
 		}
-		return b, res.Shared, nil
+		return r, res.Shared, nil
 	case <-ctx.Done():
-		return nil, false, ctx.Err()
+		return RegistrySearchResult{}, false, ctx.Err()
 	}
 }
 
@@ -380,6 +469,19 @@ func (c *registryCache) evictLocked() {
 // metadata). We flatten to one compact shape so the UI doesn't repeat
 // the same field-plumbing logic.
 
+// RegistrySearchResult is the browser-facing reply to one search.
+type RegistrySearchResult struct {
+	Servers []RegistryEntry `json:"servers"`
+	// Filtered counts the rows the install-capability filter dropped from the
+	// ones the caller asked for, so an empty Servers beside Filtered > 0 means
+	// "matched, but nothing here is installable", not "no such server".
+	Filtered int `json:"filtered"`
+	// Truncated means upstream held more matches than Servers shows. This
+	// surface scans nothing, so it carries no scanned or matched count:
+	// upstream reports no total.
+	Truncated bool `json:"truncated"`
+}
+
 // RegistryEntry is the browser-facing shape of one search result.
 //
 // Status carries the upstream lifecycle verdict, and only when it is NOT
@@ -399,8 +501,9 @@ type RegistryEntry struct {
 }
 
 // RegistryPackage is one install option from a stdio-speaking server.
-// Only npm and oci are surfaced; everything else is hidden so the UI
-// doesn't offer install paths we can't fulfil on the container.
+// Only npm is surfaced (supportedPackageRegistries); everything else is
+// hidden so the UI doesn't offer install paths we can't fulfil on the
+// container.
 type RegistryPackage struct {
 	RegistryType string           `json:"registry_type"`
 	Identifier   string           `json:"identifier"`
@@ -463,8 +566,18 @@ var supportedRemoteTypes = map[string]Transport{
 // (vs an inline anonymous struct) so the per-package / per-remote
 // mapping can be factored into convertRegistryPackage / convertRegistryRemote.
 type registryWireResponse struct {
-	Servers []registryWireEntry `json:"servers"`
+	// A pointer so an absent key is told apart from an empty list: a body
+	// without one is not a registry reply (an upstream rename, a CDN error
+	// page in JSON), and reading it as zero matches would report a dead
+	// registry as working.
+	Servers  *[]registryWireEntry `json:"servers"`
+	Metadata struct {
+		NextCursor string `json:"nextCursor"`
+	} `json:"metadata"`
 }
+
+// errRegistryShape is a 200 whose JSON carries no servers list.
+var errRegistryShape = errors.New("registry reply has no servers list")
 
 // registryWireEntry is one row of the upstream list: the server document, plus
 // the `_meta` sibling that carries the registry's own bookkeeping.
@@ -538,18 +651,35 @@ type registryWireHeader struct {
 	IsSecret    bool   `json:"isSecret"`
 }
 
-func normaliseRegistryResponse(body []byte) []RegistryEntry {
+// normaliseRegistryResponse decodes one upstream body into the reply for a
+// caller who asked for limit rows (limit >= 1; doFetch asked for limit+1).
+// A body that is not JSON, or is JSON without a servers list, is an error:
+// the caller answers 5xx, never an empty 200, because on the wire an empty
+// list is indistinguishable from a real empty result.
+func normaliseRegistryResponse(body []byte, limit int) (RegistrySearchResult, error) {
 	var raw registryWireResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return []RegistryEntry{}
+		return RegistrySearchResult{}, fmt.Errorf("decode registry reply: %v", err)
 	}
-	out := make([]RegistryEntry, 0, len(raw.Servers))
-	for i := range raw.Servers {
-		if entry, ok := buildRegistryEntry(&raw.Servers[i]); ok {
-			out = append(out, entry)
+	if raw.Servers == nil {
+		return RegistrySearchResult{}, errRegistryShape
+	}
+	rows := *raw.Servers
+	out := RegistrySearchResult{Truncated: raw.Metadata.NextCursor != ""}
+	if len(rows) > limit {
+		out.Truncated = true
+		rows = rows[:limit]
+	}
+	out.Servers = make([]RegistryEntry, 0, len(rows))
+	for i := range rows {
+		entry, ok := buildRegistryEntry(&rows[i])
+		if !ok {
+			out.Filtered++
+			continue
 		}
+		out.Servers = append(out.Servers, entry)
 	}
-	return out
+	return out, nil
 }
 
 // buildRegistryEntry maps one upstream server record to a browser-facing

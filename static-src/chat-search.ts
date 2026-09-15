@@ -1,22 +1,28 @@
 // ---------------------------------------------------------------------------
 // Transcript search: the server pre-pass that makes the DOM search honest.
 //
-// The overlay in find-in-chat.ts highlights and navigates in the DOM, which is
-// the right place for those — marks, `aria-live` counts and scroll-into-view all
-// need real nodes. What the DOM cannot do is ENUMERATE, and it had three blind
-// spots doing it: non-resident pages, resident rows whose
-// `content-visibility: auto` reports invisible while rendering is skipped, and
-// hidden or collapsed subtrees. Progressive collapse would have added a fourth
-// and turned a search miss into silent data loss.
+// find-in-chat.ts highlights and lands in the DOM, which needs real nodes. What
+// the DOM cannot do is ENUMERATE: non-resident pages, rows `content-visibility`
+// has skipped, and hidden or collapsed subtrees are all invisible to a walker.
+// So enumeration asks the server (session-wide, no window), and a collapse hides
+// nothing because BOTH halves are the server's: the count, and the step list
+// Enter walks (find-in-chat.ts's `stepOrder`). The reveal below lifts a folded
+// turn so the walker can MARK its hit; it is a convenience for the landing.
 //
-// So enumeration asks the server (session-wide, no window), and the result is
-// used to make the DOM able to answer: reveal the turns that hold hits, then let
-// the existing walker highlight them.
+// The answer is the server's whole envelope (`SearchResult`, tally included),
+// handed to the caller as decoded. This module keeps only what other surfaces
+// read off it: the hit turns for the rail and the folded rows.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
+import { apiGetTyped } from "./api-client.js";
 import { openForSearch, clearSearchOpened } from "./fold-state.js";
 import { bumpMessages } from "./store.js";
+import { decodeSearchResult } from "./wire/decoders.gen.js";
+import type { Hit, SearchResult } from "./wire/types.gen.js";
+
+/** The answer to a question nobody asked (no chat, a blank query): nothing read,
+ *  nothing matched, nothing cut. */
+const EMPTY_ANSWER: SearchResult = { matches: [], scanned: 0, matched: 0, truncated: false };
 
 /** The on-demand body build for ONE hit's turn, injected by messages.ts at mount (a
  *  static import back would cycle: messages.ts imports this module for the folded rows'
@@ -46,53 +52,12 @@ export function initSearchRevealBuilder(
   endWalkReveal = endWalk;
 }
 
-/** Which span of a message a hit landed in. `message` is the filter-only kind:
- *  a query with filters and no free text locates the MESSAGE, not a span in it. */
-export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_output" | "message";
-
-/** One server-side match. Mirrors chat.SearchHit — HAND-MAINTAINED, not
- *  wiregen (the generated namespace's SearchHit name is taken by the tools
- *  type); chat-search.node.test.ts pins the two against one shared fixture.
- *
- *  Position is segment-relative: `offset` indexes runes inside the one segment
- *  named by `segment_kind` + `block_index`, never a concatenation of the
- *  message. */
-export interface SearchHit {
-  /** The matched segment's block position in the message's chronological
-   *  blocks array. Absent for messages persisted before blocks existed and for
-   *  `message`-kind hits. */
-  block_index?: number;
-  message_id: string;
-  /** The matched turn's opening message id — what the fold state keys on. */
-  turn_message_id: string;
-  excerpt: string;
-  role: string;
-  segment_kind: SegmentKind;
-  /** Subtask id of the agent that produced the matched segment; absent for the
-   *  top-level agent. What lets navigation open the right delegate's chain. */
-  agent_subtask_id?: string;
-  turn: number;
-  /** Rune offset of the match inside its segment. */
-  offset: number;
-  /** The segment's rune length: the denominator for a relative position,
-   *  carried so the client never re-derives the server's segmentation. Zero
-   *  for `message`-kind hits. */
-  segment_len: number;
-}
-
 /** The turn numbers holding hits for the current query, for the timeline rail
  *  and the folded rows' match counts. */
 let hitTurns = new Set<number>();
 /** Hits per turn number, so a folded row can advertise what is inside it rather
  *  than hiding it. */
 let countsByTurn = new Map<number, number>();
-/** Every hit the server reported for the current query, session-wide.
- *
- *  Kept as its own number rather than summed from `countsByTurn` on demand: the
- *  map's keys are turn numbers, so summing it would answer the same question by a
- *  longer route and would silently change meaning if a hit ever arrived without a
- *  resolvable turn. */
-let hitTotal = 0;
 /** The chat the standing search ran in, so its reveal is released where it was taken:
  *  the close path names whichever chat is ACTIVE, and a chat switch with the find box
  *  open closes against the new one. */
@@ -106,48 +71,41 @@ export function searchHitCount(turn: number): number {
   return countsByTurn.get(turn) ?? 0;
 }
 
-/** How many matches the server found in the WHOLE conversation for the current query,
- *  or 0 when no server search is standing. The DOM pass can only count what it marked,
- *  and three populations are unreachable to it: every `aria-hidden` subtree, every
- *  non-resident page, and every DELEGATED block, which the transcript drops outright. */
-export function searchHitTotal(): number {
-  return hitTotal;
-}
-
-/**
- * Run the server search and reveal every turn that holds a hit.
+/** Run the server search and reveal every turn holding a hit BEFORE the DOM
+ *  pass: the walker prunes hidden subtrees, so a folded turn's hit is invisible
+ *  to it until the fold is lifted.
  *
- * Returns the hits so a caller can report a count that is TRUE for the session,
- * not for the resident window. Revealing before the DOM pass is the whole point
- * of the ordering: the walker prunes hidden subtrees, so a folded turn's hit is
- * invisible to it until the fold is lifted.
- */
+ *  Three answers. An envelope is the server's; `EMPTY_ANSWER` answers an empty
+ *  question (no chat, blank query); `null` means the FETCH failed, so the caller
+ *  keeps what was standing rather than claiming "no matches". */
 export async function runServerSearch(
   chatID: string,
   query: string,
   caseSensitive = false,
-): Promise<SearchHit[]> {
+): Promise<SearchResult | null> {
   if (chatID === "" || query.trim() === "") {
     resetServerSearch();
-    return [];
+    return EMPTY_ANSWER;
   }
   // `case=1` only when asked. The server treats an absent parameter as
   // insensitive, so the default stays the behaviour it has always had.
   const flag = caseSensitive ? "&case=1" : "";
-  const d = await apiGet<{ hits?: SearchHit[] }>(
+  const d = await apiGetTyped(
     `/api/chats/${encodeURIComponent(chatID)}/search?q=${encodeURIComponent(query)}${flag}`,
+    decodeSearchResult,
   );
-  // A null is a failed fetch, already logged centrally. Leave the previous
-  // reveal in place rather than collapsing turns out from under a reader
-  // mid-search.
+  // A null is a failed fetch or a reply the decoder refused, already logged
+  // centrally. Leave the previous reveal in place rather than collapsing turns
+  // out from under a reader mid-search. `null` travels OUT for the same reason:
+  // the caller's own standing answer, cursor and ownership are what keep the
+  // reader's walk whole across the failure.
   if (d === null) {
-    return [];
+    return null;
   }
-  const hits = d.hits ?? [];
+  const hits = d.matches;
 
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
-  hitTotal = hits.length;
   searchedChatID = chatID;
   for (const h of hits) {
     hitTurns.add(h.turn);
@@ -178,7 +136,7 @@ export async function runServerSearch(
   // Nudge the renderer so the reveal takes effect before the DOM walker runs.
   // A reveal changes which turns are open and mounted: `shape`, stated.
   bumpMessages(chatID, "shape");
-  return hits;
+  return d;
 }
 
 /** Drop the reveal and the hit marks.
@@ -191,7 +149,6 @@ export async function runServerSearch(
 export function resetServerSearch(): void {
   hitTurns = new Set<number>();
   countsByTurn = new Map<number, number>();
-  hitTotal = 0;
   const searched = searchedChatID;
   searchedChatID = "";
   // Unconditional: the reveal is over whatever the fold set says. Inside the
@@ -214,7 +171,7 @@ export function resetServerSearch(): void {
  * the original reveal never saw), and a reader can re-fold a revealed turn and
  * then step onto its hit. Idempotent on an already-revealed turn.
  */
-export async function revealHitTurn(chatID: string, hit: SearchHit): Promise<void> {
+export async function revealHitTurn(chatID: string, hit: Hit): Promise<void> {
   if (chatID === "" || hit.turn_message_id === "") {
     return;
   }

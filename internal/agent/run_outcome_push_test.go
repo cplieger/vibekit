@@ -34,6 +34,7 @@ func (p *runOutcomePush) HasSubscribers() bool                     { return true
 func (p *runOutcomePush) SetPreferences(map[vibekit.PushKind]bool) {}
 func (p *runOutcomePush) ReloadPreferences(context.Context)        {}
 func (p *runOutcomePush) Close()                                   {}
+func (p *runOutcomePush) Retract(vibekit.PushSubject)              {}
 func (p *runOutcomePush) Send(
 	_ context.Context, _, body string, kind vibekit.PushKind, subject vibekit.PushSubject,
 ) {

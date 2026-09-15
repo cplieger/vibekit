@@ -34,7 +34,7 @@ import {
   setThinking,
   clearChunkWatermark,
   clearLiveTurnMessage,
-  clearTruncatedSnapshots,
+  clearAdoptedSnapshots,
   relatchTurnVerdict,
   get,
   tabStatusFor,
@@ -64,12 +64,13 @@ export function clearTurnState(chatID: string): void {
   // server copy of the turn declared, so it is per-turn state either way.
   clearChunkWatermark(chatID);
   clearLiveTurnMessage(chatID);
-  // The third fact from the same connect: a capped turn_state's withheld-output
-  // note. The turn is over, so `message_appended` has delivered the whole message
-  // (the outcome door) or the replay ring no longer covers what was missed (the
-  // gap door) — either way there is nothing left for the note to be true about,
-  // and left standing it claims output is still coming.
-  clearTruncatedSnapshots(chatID);
+  // The third fact from the same connect: the adopted snapshot, its withheld-output
+  // note and the block window it arrived in. The turn is over, so `message_appended`
+  // has delivered the whole message (the outcome door) or the replay ring no longer
+  // covers what was missed (the gap door) — either way there is nothing left for the
+  // note to be true about, and left standing it claims output is still coming while
+  // the base it sits beside describes a window nothing is streaming into.
+  clearAdoptedSnapshots(chatID);
   // A queued mid-turn model switch drains on the turn ending. On the gap door the
   // turn_ended that would have drained it may be among the dropped events, which
   // is what left the switch stranded behind a stuck `.pending` pill.

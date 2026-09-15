@@ -697,21 +697,26 @@ describe("accessible names", () => {
 describe("the footer", () => {
   it("does not exist until the summary has something worth a row", () => {
     const sa = buildSubagentCard("Subagent", "in_progress");
-    sa.setSummary({ commands: 0, reads: 0, changedFiles: {} });
+    sa.setSummary({ changedFiles: {} });
     expect(sa.root.querySelector(".subagent-footer")).toBeNull();
   });
 
   it("is turn-footer reused, updated in place, and the card's last region", () => {
+    // `kindCounts` BESIDE the aggregates, because that is the only shape a producer
+    // emits: `subagentSummary` fills the counter and the kind map in ONE walk over
+    // the same `tool_calls`. `earnsTurnFooter` reads the fact list, and `turnFacts`
+    // derives its counts from the kind map, so aggregates alone earn no footer —
+    // deliberately, since that combination cannot reach production.
+    const summary = { kindCounts: { execute: 3, read: 2 } } as const;
     const sa = buildSubagentCard("Subagent", "in_progress");
-    sa.setSummary({ commands: 3, reads: 2, changedFiles: {} });
+    sa.setSummary({ ...summary, changedFiles: {} });
     const footer = sa.root.querySelector<HTMLElement>(".subagent-footer");
     expect(footer).not.toBeNull();
     expect(footer?.classList.contains("turn-footer")).toBe(true);
     expect(sa.root.lastElementChild?.classList.contains("subagent-foot")).toBe(true);
 
     sa.setSummary({
-      commands: 3,
-      reads: 2,
+      ...summary,
       changedFiles: { "a.go": { lines_added: 4, lines_removed: 1 } },
       outcome: "completed",
       elapsedMs: 1200,
@@ -738,8 +743,6 @@ describe("the delegate footer's info panel", () => {
    *  model, no stop reason. */
   const DELEGATE = {
     outcome: "completed",
-    commands: 2,
-    reads: 3,
     changedFiles: { "a.go": { lines_added: 4, lines_removed: 1 } },
     elapsedMs: 92000,
     toolMs: 30000,

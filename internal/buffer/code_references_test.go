@@ -16,7 +16,7 @@ func TestAppendCodeReferences_Dedup(t *testing.T) {
 	gpl := vibekit.CodeReference{LicenseName: "GPL-2.0", Repository: "github.com/c/d", URL: "https://example.com/c"}
 
 	// First append: two distinct references.
-	got := buf.AppendCodeReferences([]vibekit.CodeReference{mit, gpl})
+	got, _ := buf.AppendCodeReferences([]vibekit.CodeReference{mit, gpl})
 	if len(got) != 2 {
 		t.Fatalf("after first append: len = %d, want 2", len(got))
 	}
@@ -24,7 +24,7 @@ func TestAppendCodeReferences_Dedup(t *testing.T) {
 	// Second append: the same MIT reference again (fan-out / re-emission) plus
 	// a third with the same license but a different repo.
 	same := vibekit.CodeReference{LicenseName: "MIT", Repository: "github.com/e/f", URL: "https://example.com/e"}
-	got = buf.AppendCodeReferences([]vibekit.CodeReference{mit, same})
+	got, _ = buf.AppendCodeReferences([]vibekit.CodeReference{mit, same})
 	if len(got) != 3 {
 		t.Fatalf("after second append: len = %d, want 3 (mit deduped, same-license/diff-repo kept)", len(got))
 	}
@@ -39,7 +39,7 @@ func TestAppendCodeReferences_Dedup(t *testing.T) {
 func TestAppendCodeReferences_ReturnsCopy(t *testing.T) {
 	buf := &Buffer{}
 	ref := vibekit.CodeReference{LicenseName: "MIT", Repository: "r", URL: "https://example.com"}
-	got := buf.AppendCodeReferences([]vibekit.CodeReference{ref})
+	got, _ := buf.AppendCodeReferences([]vibekit.CodeReference{ref})
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}

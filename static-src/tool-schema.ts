@@ -177,9 +177,10 @@ const KIND_FALLBACK: Readonly<Record<string, ToolProfile>> = {
   move: { kind: "move", writesFile: false },
   search: { kind: "search", writesFile: false },
   execute: { kind: "execute", writesFile: false },
-  // shell/hook aren't emitted by v3 (execute covers shell; hooks arrive as
-  // kind:"other"), but persisted PRE-v3 chats carry them — keep the mappings
-  // so a legacy tool card renders in its proper tier instead of falling to OTHER.
+  // v3 never emits shell (execute covers it), but persisted PRE-v3 chats carry
+  // it — keep the mapping so a legacy tool card renders in its proper tier
+  // instead of falling to OTHER. hook is minted server-side for the synthetic
+  // `Hook fired` card; KAS's own hook ASK still arrives as kind:"other".
   shell: { kind: "shell", writesFile: false },
   hook: { kind: "hook", writesFile: false },
   command: { kind: "command", writesFile: false },

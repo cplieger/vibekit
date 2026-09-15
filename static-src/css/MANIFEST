@@ -36,6 +36,12 @@
 #          that lets it beat their equal-specificity `:hover` rules. It
 #          therefore owns the selected hover and press too.
 00-header.css
+# The terminal's @font-face rules. Its own slice because a face is neither a
+# token nor a rule: nothing selects it and nothing overrides it, so it has no
+# place in the cascade order the rest of this list encodes. Unlayered like
+# everything below, which costs nothing — @font-face is not subject to the
+# cascade at all.
+00-fonts.css
 01-tokens.css
 # @cplieger/ui-primitives headless base (structure + motion), then vibekit's
 # skin. Both unlayered so the skin's .uip-* rules win by source order. The base

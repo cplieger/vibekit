@@ -138,6 +138,13 @@ var abandonableWriteSites = []durableSite{{
 	fn:      "HandleAgentNotFound",
 	calls:   []string{"Mutate"},
 	because: "the fallback mode, re-derived",
+}, {
+	file:  "internal/translate/user_message_id.go",
+	fn:    "handleUserMessageID",
+	calls: []string{"Mutate"},
+	because: "the agent's own id for a prompt row — no conversational record, and the " +
+		"replay projection re-derives it on the chat's next session/load; a row that " +
+		"lost it is the legacy population rewind's own fallback already answers for",
 }}
 
 // Sites that take the caller's context and must not wrap it, because the decision is

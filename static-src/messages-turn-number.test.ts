@@ -60,10 +60,10 @@ vi.mock("./api-client.js", { spy: true });
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 const store = await import("./store.js");
-const { noteLoaded, syncEpoch } = await import("./tab-freshness.js");
+const { observeStamp } = await import("./subject-versions.js");
 const messages = await import("./messages.js");
 const search = await import("./chat-search.js");
-const { apiGet } = await import("./api-client.js");
+const { apiGet, apiGetTyped } = await import("./api-client.js");
 
 messages.mountChatView();
 
@@ -100,7 +100,7 @@ function pairs(from: number, to: number): Message[] {
  *  `residency` is `loaded`, or an activation refetches and the mocked loader
  *  answers nothing. */
 function windowed(id: string, msgs: Message[], offset: number, total: number): Session {
-  noteLoaded("chat", id, syncEpoch());
+  observeStamp({ kind: "chat", ref: id, version: "1" });
   return {
     id,
     name: id,
@@ -243,7 +243,7 @@ describe("a paged transcript's rendered turn numbers", () => {
   });
 
   it("resolves a folded row's search-hit count against the server's absolute turn", async () => {
-    // `chat-search.ts` keys `countsByTurn` by `SearchHit.turn`, which the server
+    // `chat-search.ts` keys `countsByTurn` by `Hit.turn`, which the server
     // computes over the WHOLE message array. A window-local `n` looked that absolute
     // key up, so a folded row on any paged chat advertised the wrong count — 0 for a
     // turn holding matches, and another turn's total for one that did not.
@@ -260,7 +260,12 @@ describe("a paged transcript's rendered turn numbers", () => {
       offset,
       segment_len: 8,
     });
-    vi.mocked(apiGet).mockResolvedValue({ hits: [hit(0), hit(6)] });
+    // Through the caller's OWN decoder, so the staged envelope is held to the wire
+    // shape rather than passing on a cast.
+    vi.mocked(apiGetTyped).mockImplementation(((_path: string, decode: (v: unknown) => unknown) =>
+      Promise.resolve(
+        decode({ matches: [hit(0), hit(6)], scanned: 28, matched: 2, truncated: false }),
+      )) as typeof apiGetTyped);
     await search.runServerSearch(id, "reply");
     expect(search.searchHitCount(13)).toBe(2);
     // The rail's own index fetch runs during the paint below and must not answer

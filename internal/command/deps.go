@@ -106,7 +106,7 @@ type ChatStore interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast
 	// chat_created / chat_updated.
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	// SetDraft persists the chat's unsent composer text. Its own method rather than a
@@ -176,20 +176,30 @@ type TerminalAccess interface {
 	KillForTurn(chatID vibekit.ChatID)
 }
 
-// Workspace carries the two paths handlers resolve against: the working directory the
-// hook writer and the shell spawn need, and the config directory the prompt reads a
-// setting out of. An attachment path is confined to the workspace before it is read.
+// Workspace carries the paths handlers resolve against: the working directory the
+// hook writer and the shell spawn need, the config directory the prompt reads a
+// setting out of, and the uploads directory an attachment may also name. An
+// attachment path is confined to those roots before it is read.
 type Workspace struct {
 	// Dir is the workspace root every relative path resolves against.
 	Dir string
 	// ConfigDir is where settings and hook files live.
 	ConfigDir string
+	// UploadsDir is the second root an ATTACHMENT path may name — the directory a
+	// composer upload lands in, which sits beside the workspace rather than inside
+	// it. Nothing else resolves against it: it is not a second workspace root, and
+	// a relative path never reaches it.
+	//
+	// Empty is legal and inert (an empty root contains no path), so a caller with
+	// no upload surface leaves it unset and gets workspace-only confinement.
+	UploadsDir string
 }
 
-// ResolveInside confines rel to the workspace root, refusing anything that
-// escapes it.
+// ResolveInside confines rel to the roots an attachment path may name, refusing
+// anything that escapes all of them. The workspace leads, so a relative path
+// resolves there and an unresolvable path reports the workspace's own error.
 func (w Workspace) ResolveInside(rel string) (string, error) {
-	return workspace.ResolveInsideAbs(w.Dir, rel)
+	return workspace.ResolveInsideAnyAbs([]string{w.Dir, w.UploadsDir}, rel)
 }
 
 // LifecycleAccess is the process-lifetime seam: the context a turn runs under, and
@@ -299,11 +309,14 @@ type TurnOutcomeAccess interface {
 	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID, epoch vibekit.TurnEpoch, stop vibekit.StopReason, reason string)
 }
 
-// SteerRecorder is the one method CmdSteer needs of the steer ledger: record that
-// THIS server sent a steer, under the id KAS returned for it. Write-only on
-// purpose — the read is the translate layer's, on its own role.
+// SteerRecorder is what CmdSteer needs of the steer ledger: record that THIS
+// server sent a steer, and take that back when the send turns out to have been
+// refused. Write-only on purpose — the read is the translate layer's, on its own
+// role — and the pair is what lets the record be written BEFORE the RPC, which is
+// the only ordering that beats KAS's own notification (see CmdSteer).
 type SteerRecorder interface {
 	RecordUserSteer(chatID vibekit.ChatID, steerID string)
+	ForgetUserSteer(chatID vibekit.ChatID, steerID string)
 }
 
 // Roles is the wiring-time role set: the host names which of its interfaces answers

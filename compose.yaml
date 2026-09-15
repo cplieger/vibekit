@@ -9,7 +9,7 @@ services:
     # and the server waits only for the children it spawned itself; at PID 1 it collects them as
     # zombies instead, until the container runs out of process slots.
     init: true
-    user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the /config and /workspace host dirs
+    user: "${PUID:-1000}:${PGID:-1000}"  # from .env; must own the /config, /workspace and /uploads host dirs
 
     ports:
       - "9847:9847"
@@ -17,3 +17,4 @@ services:
     volumes:
       - "/opt/appdata/vibekit/config:/config"
       - "/opt/appdata/vibekit/workspace:/workspace"
+      - "/opt/appdata/vibekit/uploads:/uploads"

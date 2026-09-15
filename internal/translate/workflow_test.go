@@ -8,6 +8,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/cplieger/slogx/capture"
@@ -528,10 +529,10 @@ type usageStore struct {
 	chat vibekit.Chat
 }
 
-func (s *usageStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+func (s *usageStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
 	s.mutateCalls++
 	fn(&s.chat, true)
-	return nil
+	return strconv.Itoa(s.mutateCalls), nil
 }
 
 // TestSessionInfoUpdate_StepMeteringCountsCreditsOnly pins the scoped allowance.

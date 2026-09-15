@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // Router owns the HTTP handler surface for the chat package. It holds a

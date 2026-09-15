@@ -10,8 +10,11 @@
    speakers apart in a symmetric exchange of short lines; here the exchange is
    wildly asymmetric and the card already says who is speaking, so side and
    tail were spending a whole visual convention on information the layout
-   conveys. The distinction is carried by BACKGROUND and RULE instead, which
-   survives at any width, on mobile, and when the request is three paragraphs.
+   conveys. The distinction is carried by BACKGROUND instead, which survives at
+   any width, on mobile, and when the request is three paragraphs.
+
+   The bands are the transcript's ONLY band-rung fills and the card has no
+   internal rule: the fill step is each seam (vibekit-ui.md "Surfaces").
 
    ONE measure, and the card is it. Prose, evidence, the request band and the
    footer all end on the same x, at the body's own content edge. There used to be
@@ -86,7 +89,6 @@
      when the turn card replaced them. --c-bg-tertiary lands within a hair of
      the value it had. */
   background: var(--c-bg-tertiary);
-  border-bottom: 1px solid var(--c-border);
   /* -1px so the tint sits inside the card's own border rather than over it. */
   border-start-start-radius: calc(var(--r) - 1px);
   border-start-end-radius: calc(var(--r) - 1px);
@@ -123,18 +125,19 @@
   gap: var(--sp-2);
   font-size: var(--fs-xs);
   /* SECONDARY, not the hint ink: `.turn-header` above fills with
-     `--c-bg-tertiary`, and hint ink measures 3.601:1 dark / 3.900:1 light on
-     that rung — under the 4.5:1 this row's 11px timestamp needs. The two-rung
-     contract on `--c-text-tertiary` (01-tokens.css) is exactly this case, and it
-     was missed because the fill and the ink sit in two different blocks, which is
-     the shape the stylesheet gate cannot decide. `.turn-n` beside it is already
-     secondary and stays distinct on weight and the mono face. */
+     `--c-bg-tertiary` AND hovers (it folds the turn), and the HOVERED band is one
+     of the three surfaces the ink ramp declares two-level (01-tokens.css): hint
+     ink clears the band at rest since the ramp was re-cut, and still reads
+     3.44:1 dark / 3.78:1 light under the wash, against this row's 11px timestamp.
+     `.turn-n` beside it is already secondary and stays distinct on weight and
+     the mono face. */
   color: var(--c-text-secondary);
 
   /* The header FOLDS THE TURN, so this row inherits its pointer. `user-select:
      none` is scoped to this row on purpose: `.turn-req` below holds the user's
      own prompt and stays selectable (a drag there keeps its selection — the
      header's click forwarder skips a click that ends one). */
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -314,6 +317,21 @@
   transition:
     background var(--dur-micro) var(--ease-standard),
     border-color var(--dur-micro) var(--ease-standard);
+
+  /* The one footer child with a resting border, so on the hit floor it would weld
+     onto the card's border. Leaves the floor (physical `min-height`, to beat the
+     floor's physical property by specificity) and gets its target back below;
+     `min-width` stays floored so that expander need only grow the block axis. */
+  min-height: 0;
+  position: relative;
+
+  /* The `.tool-file-link` expander idiom, block axis only. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset-block: calc((var(--hit-floor) - 100%) / -2);
+    inset-inline: 0;
+  }
 }
 
 /* The word drops at the width the footer's own actions collapse behind their
@@ -399,7 +417,12 @@
    verbatim (`.attachment-pill` and friends, 15-input.css) so the two homes cannot
    drift apart; only the ROW's own padding is overridden, because the composer's
    row sits against the textarea while this one sits inside a header that already
-   has its own gutter. */
+   has its own gutter.
+   The composer's row pays for its chips' target expander out of that padding, and
+   dropping it here is deliberate rather than an oversight: the 6px a chip's target
+   reaches past its box on a coarse pointer lands in this header's own fold region,
+   where the chip is the more specific control and winning is the right answer.
+   There is no field or control of its own for that reach to steal from. */
 .turn-req-attachments {
   padding: 0;
   margin: 0;
@@ -407,8 +430,8 @@
 
 /* A turn the user did not ask for: a typed trigger line rather than a
  * fabricated user message. Subordinate PROSE, so it takes `--c-text-aside`
- * rather than the hint ink — it sat on hint ink over the header band's
- * `--c-bg-tertiary` at 3.601:1 dark, and it is running text at 14px. */
+ * rather than the hint ink — the header is a hovered band, a two-level surface
+ * (01-tokens.css), and this is running text at 14px. */
 .turn-header[data-trigger="system"] .turn-req-text {
   font-style: italic;
   color: var(--c-text-aside);
@@ -469,32 +492,13 @@
   flex-shrink: 0;
 }
 
-/* Collapsing that body puts the header's own bottom rule straight against the
- * next 1px line, so the reader sees a 2px rule at exactly the moment a turn is
- * waiting on its first token. Which line it doubles depends on whether a footer
- * exists yet: on a just-sent turn none does (`mountTurnFooter` builds one only
- * for a turn with a ledger or a rewind target, and the last turn has neither),
- * so the header abuts the CARD's border-bottom; once one exists it abuts the
- * FOOTER's border-top. Drop the redundant line in each case and let the header
- * round the corners the body was covering — the same adjacency `[data-folded]`
- * already resolves this way further down.
- *
- * `.is-bodyless` is renderer-set on the CARD (messages.ts syncTurnBodyless):
- * present exactly when the body is empty AND last child — `:last-child` on the
- * body IS the no-footer test, because a card holds exactly a header, a body and
- * an optional footer, and Rewind mounts inside that footer. A class rather than
- * `.turn-header:has(+ .turn-body:empty:last-child)` because a streaming turn's
- * card mutates every frame and `:has()` charges each recalc for relational
- * matching (design §B4). The footer case below keeps reading the adjacency:
- * `:empty` is cheap, and no `:has()` is needed to look backward. */
+/* A collapsed body makes the header the card's last painted band, so it rounds
+ * the corners the body covered. `.is-bodyless` is a renderer-set class
+ * (messages.ts syncTurnBodyless) rather than `:has(+ .turn-body:empty:last-child)`
+ * because a streaming card mutates every frame and `:has()` charges each recalc. */
 .turn.is-bodyless > .turn-header {
-  border-bottom: 0;
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
-}
-
-.turn-body:empty + .turn-footer {
-  border-top: 0;
 }
 
 /* A BREAK THAT ENDS THE BODY NEEDS NO TRAILING MARGIN. `.boundary`'s `--sp-4` is
@@ -508,6 +512,18 @@
   margin-block-end: 0;
 }
 
+/* A divider ending the body is the notice's frame top edge: no second rule, no
+   trailing air. A FOLDED card matches neither rule because `.turn-face` sits
+   between (syncTurnFace anchors on the notice) — re-anchor it on the footer and a
+   folded broken card loses its only line. */
+.turn-body:has(> .boundary:last-child) + .turn-notice {
+  border-block-start: 0;
+}
+
+.turn-body:has(> .boundary:last-child):has(+ .turn-notice) {
+  padding-block-end: 0;
+}
+
 /* --------------------------------------------------------------------------
    Footer — the outcome ledger
    -------------------------------------------------------------------------- */
@@ -516,19 +532,20 @@
  * bracketed. There is no separate status rail: the footer IS the rail. Moved
  * here from 61-mcp-tools.css, where it sat because the footer used to be a
  * per-message node rather than part of a card. */
-/* Four columns: the ledger on the left, the turn's own TIME right-aligned beside
-   it, then the turn actions (copy / source / export), then Rewind at the far edge.
-   The file list spans all columns beneath. Grid rather than a wrapper element so
-   every `:scope >` selector the footer's own JS uses keeps working. The row is
-   IDENTICAL open and folded — the footer is the one region that survives the fold.
+/* Four columns: the ledger button shrink-wrapped on the left, the turn's LEAD fact
+   beside it in the flexible track, then the turn actions (copy / source /
+   export), then Rewind at the far edge. The file list spans all columns beneath.
+   Grid rather than a wrapper element so every `:scope >` selector the footer's own
+   JS uses keeps working. The row is IDENTICAL open and folded — the footer is the
+   one region that survives the fold.
 
-   The time took a column of its own because it used to be the sixth of up to seven
-   `·`-separated parts inside the ledger string, buried in a line that otherwise
-   reports cost. The rest of that string went the other way, into the info panel
-   that now spans all columns beneath (`.turn-info-panel`). */
+   The fact takes the ONLY flexible track, so however long it runs it can never push
+   the trailing controls: it is clipped with an ellipsis instead (`.turn-fact`). The
+   rest of what the row used to say is in the info panel that spans all columns
+   beneath (`.turn-info-panel`). */
 .turn-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
 
   /* Fades in when it lands (the ledger is stamped at turn end, so the footer
@@ -544,36 +561,109 @@
   row-gap: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
-  padding: var(--sp-1) var(--sp-3);
+
+  /* NO BLOCK PADDING AND NO LEADING PADDING: the band IS the ledger button's hit box
+     and the leading gutter is that button's own (below). Only the trailing gutter is
+     the row's, because the child at that edge is text or a control that paints.
+
+     ONE VALUE ON BOTH INLINE EDGES, `--sp-3`: the `i`'s ink starts 12px from the
+     card and the trailing child's box ends 12px from it, which is what the run card
+     already did (`.run-foot` is `padding-inline: var(--sp-3)` with `.run-open`'s box
+     at its trailing edge). Reported as the left and right insets not matching.
+
+     Applies to the DELEGATE footer unchanged — `buildTurnFooter` mounts this same
+     row inside `.subagent-foot` — which is why 14-tools.css overrides no padding on
+     either edge any more. */
+  padding-inline-end: var(--sp-3);
   font-variant-numeric: tabular-nums;
   background: var(--c-bg-tertiary);
-  border-top: 1px solid var(--c-border);
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
+
+  /* NAMED, so no unnamed query can bind to it by accident. The fact slot's own width
+     is what decides whether it can hold a fact, and only this box knows it: the
+     sidebar and the column cap both sit between the viewport and this row. */
+  container: turn-footer / inline-size;
 }
 
-/* THE TRAILING RUNG IS THE TRAILING CONTROL'S OWN INSET, not the ink gutter, and
-   this is `.tab`'s rule (10-shell-app.css) applied to the other row in the app
-   whose last child is a box rather than text. `--sp-3` is authored for INK, and it
-   is still right at the leading edge where the ledger's words are; at the trailing
-   edge the child is `.turn-actions-more`'s `…` trigger or `.turn-rewind`, each
-   floored to `--hit-floor` and painting a real box on hover and on press, so its
-   distance from the card's edge is a visible relationship. Measured at 390x844 on
-   the coarse tier: the 44x44 `…` box sat 4px from the footer's top edge, 4px from
-   its bottom and 12px from its trailing edge — reported as more padding on the
-   right than on the top and bottom. `--sp-1` is the footer's own `padding-block`,
-   so the box is inset equally on all four sides.
+/* NO TRAILING EXCEPTION FOR A ROW ENDING IN A CONTROL, and the rule that used to be
+   here — `:has(> .turn-actions-buttons, > .turn-rewind) { padding-inline-end: --sp-1 }`
+   — was DERIVED FROM A TERM THIS FILE NO LONGER DECLARES. It was `.tab`'s rule
+   (10-shell-app.css): a trailing child that paints a box should be inset EQUALLY on
+   all four sides, so `.tab` matches its trailing rung to its own `padding-block`
+   (both `--sp-2`) and this row matched 4px to its own `padding: var(--sp-1) …`. With
+   the band carrying no block padding at all, that arithmetic yields ZERO — flush,
+   which is exactly the shape `.turn-rewind` below refuses because it welds its
+   resting border onto the card's corner. So the premise is gone rather than retuned,
+   and what survives is the ink gutter: measured, Rewind's box sat 4px from the card's
+   trailing edge against the `i`'s ink at 12px from its leading one.
 
-   Keyed on the row ENDING in such a control rather than applied unconditionally: a
-   footer with no actions and no Rewind ends in `.turn-elapsed`, which is TEXT and
-   keeps the ink gutter (`vibekit-ui.md`: a right-aligned readout ends on its
-   container's own gutter). */
-.turn-footer:has(> .turn-actions-buttons, > .turn-rewind) {
-  padding-inline-end: var(--sp-1);
-}
+   THE POSITIVE ARGUMENT IS THIS CARD'S OWN HEADER, which is what makes 12px the
+   consistent answer rather than merely the requested one. `.turn-header` is
+   `padding: var(--sp-2) var(--sp-3)` and `.turn-copy-req` is pushed to its far end,
+   so the header band's trailing action already sits on 12px — and that button is the
+   SAME class as the footer's (`.turn-action-btn` plus the universal hit floor), in a
+   band with more padding, so its insets are 8/8/12 where the footer's are 4/4/12 on
+   the mouse tier. The two ends of the card line up, which is the property the
+   `row-gap` comment above already claims for the leading edge. */
 
+/* THE BAND IS THIS BUTTON'S HIT BOX, which is why the row above carries no block
+   padding. That padding was authored for INK and it is right for every other child
+   of this row, but the ledger button paints NOTHING — no fill, no border, at rest or
+   on hover — so around it it was 4px of dead space above and below an invisible
+   target, and it was what put the band at 52px of content under a finger for a 44px
+   target. Reported as the button having gaps around it and the footer being too tall
+   on a phone.
+
+   `align-items: center` on the grid lands this box on both edges by itself, which is
+   why there is no `align-self: stretch` here — one was written and removed after a
+   red check left every case in `turn-footer-inset.test.ts` green. It earns its place
+   the day a footer child is taller than the band, and not before.
+
+   `--ctl-h-dense` because the footer IS a dense control row (`vibekit-ui.md` "One
+   control height per row"), floored by `--hit-floor` so a finger never gets less
+   than its target: 32 on a mouse, 44 on a coarse pointer. `max()` rather than two
+   tier arms, since 01-tokens.css already moves both tokens and the floor's third
+   state (`data-touched`) moves only `--hit-floor` — which is exactly the case this
+   has to answer, and it answers it with no rule of its own.
+
+   MEASURED, coarse tier: 44px of band with a 44px target reaching its edges, against
+   52px of band around the same target before, on the turn card and the delegate card
+   alike. The mouse tier is unchanged at 32, and its target grows from 24 to fill it.
+
+   THE COST, and it is the same one `.run-open` pays: inside the DELEGATE card a
+   button flush with the band has no room left for the outside focus ring
+   `40-a11y.css` floors every focusable at, because that card clips. So that one
+   joins the inset-ring rule there — a card whose HEAD already takes it, which is why
+   the foot doing the same is the consistent answer rather than a concession. The
+   turn card is `overflow: visible`, so its own ledger keeps the outside ring and is
+   not a member. */
 .turn-footer > .turn-ledger-summary {
   grid-column: 1;
+  min-height: max(var(--hit-floor), var(--ctl-h-dense));
+}
+
+/* ONE INK GUTTER FOR EVERY CARD THAT MOUNTS THIS FOOTER, and it is `--sp-3` on both
+   inline edges (the row declares the trailing half above). It sits on the box that
+   fills the band rather than on the band, so the `i` still starts 13px from the
+   card's edge — level with the header's `#N` and the body's prose, measured — while
+   the button's own box reaches the leading edge.
+
+   NOT scoped to `.turn >`, and this rule was: it read the delegate card's gutter as
+   8px and declared that one separately in 14-tools.css. That was WRONG about the
+   card. `.subagent-header` is `padding: var(--sp-2) var(--sp-3)`, so a delegate's
+   identity ink starts on the same 12px every other card's does — measured 12.0px for
+   the header glyph against 8.0px for the foot's `i`, i.e. the FOOT was the outlier
+   inside its own card, not a denser surface. The 8px was only the value the footer
+   row's old `padding-inline` happened to carry. Reported as the two cards' `i`
+   buttons not lining up with each other; they now share this declaration.
+
+   LOAD-BEARING ON THE DELEGATE CARD FOR A SECOND REASON: that card clips, so its
+   ledger takes the INSET focus ring (40-a11y.css) and the ring lands in the first
+   2px inside the button's border box. This padding is what keeps it off the `i`;
+   with the gutter on the ROW instead there was 0px between the two. */
+.turn-footer > .turn-ledger-summary {
+  padding-inline-start: var(--sp-3);
 }
 
 .turn-footer > .turn-actions-buttons {
@@ -585,13 +675,13 @@
   margin-inline-start: var(--sp-2);
 }
 
-/* THE NEWEST TURN HAS NO REWIND TARGET, so this track collapses and the duration
-   plus the five actions slide right by the button's width — measured 80px at 1440px
-   and ~52 CSS px on a phone, so one row in the transcript has its icons aligned with
-   nothing above it. RESERVING THE TRACK WAS TRIED AND DECLINED, both ways:
+/* THE NEWEST TURN HAS NO REWIND TARGET, so this track collapses and the five
+   actions slide right by the button's width — measured 80px at 1440px and ~52 CSS
+   px on a phone, so one row in the transcript has its icons aligned with nothing
+   above it. RESERVING THE TRACK WAS TRIED AND DECLINED, both ways:
    
-   A hidden element carrying the button's own children (the shape `.turn-elapsed`
-   and 26-dock.css's actions column both use) is a DOM mutation inside the card, and
+   A hidden element carrying the button's own children (the shape 26-dock.css's
+   actions column uses) is a DOM mutation inside the card, and
    it left the row above PERMANENTLY skipped by `content-visibility: auto` — every
    node under `.msg-row` reporting `checkVisibility() === false` while the row itself
    reported true, which prunes it from the find walker's scope
@@ -611,47 +701,46 @@
   margin-inline-start: var(--sp-2);
 }
 
-/* HOW LONG THE TURN TOOK, right-aligned in its own column, painted
-   unconditionally, in a box that RESERVES its space.
-
-   THE HOVER REVEAL THAT USED TO SIT BELOW THIS RULE IS DELETED. A hover cannot
-   carry a VALUE: it does not exist on a touch device, and on a pointer device a
-   reader who never crosses this card never learns the number at all.
-
-   THE RAIL KEEPS ITS OWN COPY (`.rail-marker-time` below, `turn-rail.ts`,
-   `rail-labels.ts`), and that is a decision rather than a duplicate left standing
-   (user ruling, 2026-09-10): the rail states EVERY turn's duration in one column,
-   which is a question no footer can answer, because a reader cannot see every
-   footer at once. So the two copies are the same number answering two different
-   reads — this one is "how long did THIS turn take", the rail's is "where did the
-   session's time go" — and the footer's is the one that had to stop depending on a
-   gesture, because a card the reader is already looking at has no excuse to hide
-   it. RESIDUAL, stated rather than hidden: the rail's copy is still revealed on
-   hover and still absent below 70rem of chat area, so the at-a-glance read the
-   ruling rests on is not what that rule currently delivers — see the note on
-   `.rail-marker-time`.
-
-   The reserved box outlives the reveal on its own terms, so the two prohibitions
-   below still hold: never `display: none` and never `visibility: hidden` on a slot
-   that HAS a duration. Both take the box with them, and a geometric change here
-   moves `#messages`' `scrollHeight`, which feeds `scrollableBy()` — the timeline
-   rail's own navigability gate at MIN_SCROLL_PX — so on a short chat sitting near
-   that threshold this element decides whether the rail exists. (A slot with NO
-   duration is hidden, by `syncElapsed`: an empty `<time>` makes no claim and has
-   no value whose box needs holding.)
-
-   The inline gap is this element's OWN margin, not a grid `column-gap`, for the
-   reason recorded on `.turn-actions-buttons` above and measured on this exact row:
-   a column gap is charged between tracks even when the next one is EMPTY, so every
-   footer without a Rewind held its readout 8px off the card's gutter. */
-.turn-footer > .turn-elapsed {
+/* THE TURN'S LEAD FACT beside the `i`, and exactly one: `turnFacts(d)[0]`, ranked files,
+   commands, delegates, the other tool kinds, the clock, the credits, each from the field
+   the info panel renders it from. The panel below is the full statement; this is the
+   glance. Do NOT rotate the slot through that list: a TIME-gated value is one the
+   reader cannot ask for, and it fails WCAG 2.2.2 with no pause, stop or hide anywhere.
+   No `color` of its own either — it inherits the row's secondary ink, because this is
+   the row's main readout rather than a hint beside it. */
+.turn-footer > .turn-fact {
   grid-column: 2;
   grid-row: 1;
-  justify-self: end;
+
+  /* It sits in the flexible track and CLIPS rather than wraps or pushes: the button,
+     the `…` trigger and Rewind take their `auto` widths and this takes what is left, so
+     a long fact ends in an ellipsis and the row stays one line. It STRETCHES across the
+     track (the grid default) rather than `justify-self: start`, because a start-aligned
+     item is fit-content sized and nowrap text would keep its full width and overflow
+     the track instead of clipping — measured. */
+  min-width: 0;
+
+  /* The row's inline gap, carried by the element it separates — see
+     `.turn-actions-buttons` above. */
   margin-inline-start: var(--sp-2);
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* WITHHELD WHERE THE TRACK CANNOT HOLD A WHOLE FACT, so the row shows its outcome word
+   rather than an ellipsis standing for a value. The narrowest fact `turnFacts` emits is
+   `0.1s` at 25.3px; a COARSE track reaches that at a container inline-size of 19.15rem,
+   the query measuring the CONTENT box and so 12px under the footer's `clientWidth`.
+   Re-measure in the production nesting, never a body-parented fixture, which over-states
+   every track by ~34px. The selector is the only shape that reaches the band: a clean
+   turn's track stays wide, and Rewind is never on a running turn. ONE threshold, so it
+   over-reaches the FINE tier by that same 34px — ACCEPTED, not open: reaching it needs a
+   desktop window deliberately narrowed past any phone, and the `i` holds the value. */
+@container turn-footer (inline-size < 19.15rem) {
+  .turn-footer:not([data-severity="clean"]):has(> .turn-rewind) > .turn-fact {
+    display: none;
+  }
 }
 
 .turn-footer > .turn-info-panel {
@@ -726,15 +815,9 @@
    read are not failures. Colour is never the only channel: the footer glyph, the
    rail marker and the tab dot all carry the same fact by shape.
 
-   THE COMPACTION BREAK'S FRAME, because without one this was a line of red prose
-   floating between the body and the ledger rather than a banner — reported as the
-   error sitting "with 0 padding vs the footing", and the instruction was to copy
-   what the compaction break does. Its TRAILING rule is the footer's own
-   `border-top`, or the card's border on a footerless turn, so declaring a second
-   one here would double a line this file already takes care not to double (see
-   `.turn-body:empty + .turn-footer`). No glyph either: the divider directly above
-   carries the ⚠, and the footer's own mark carries the shape channel, so a third
-   copy of one fact is what a break with an icon would be here. */
+   Framed like `.compaction`: a dashed opening rule only, because the closing edge
+   is the footer band (or the card border) and a rule there would double a seam
+   the fill step carries. No glyph: the divider above carries the ⚠. */
 .turn-notice {
   border-block-start: 1px dashed var(--c-border);
   padding-block: var(--sp-2);
@@ -745,9 +828,8 @@
   background: var(--c-turn-body);
 }
 
-/* A card with no body and no face at all (a tier-3 stub whose turn produced no
-   prose) puts the notice straight under the header, whose own `border-bottom` is
-   already a rule — and two rules 1px apart is the doubling above. */
+/* Straight under the header band (a stub with no body), the band's step is the
+   edge, so the frame rule withdraws. */
 .turn-header + .turn-notice {
   border-block-start: 0;
 }
@@ -801,13 +883,17 @@
  * `interrupted`, and the ledger's own words are what separate the two members
  * that DO belong together. */
 .turn-footer[data-severity="stopped"] {
-  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
+  /* A chroma-only tint at the band's own lightness (01-tokens.css "The band,
+     TINTED"), never a `color-mix()` of the status ink into the band: that moved
+     the footer to the elevated fill's depth and took the info panel's hint ink
+     under AA in both themes. */
+  background: var(--c-band-stopped);
   color: var(--c-text-secondary);
 }
 
 /* RED, `interrupted` included by ruling — see the header dot's broken arm. */
 .turn-footer[data-severity="broken"] {
-  background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
+  background: var(--c-band-broken);
   color: var(--c-text-secondary);
 }
 
@@ -845,14 +931,20 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
-/* `min-width: 0` so the track can shrink; NO truncation rule any more. There used
-   to be an ellipsis clamp at 40rem, because the line composed up to six clauses and
-   ran off a phone. The longest value it can hold now is `Outcome unknown` — fifteen
-   characters, well under the `minmax(0, 1fr)` track at any width this app renders
-   at — so there is nothing to truncate, and the footer test asserting the text is
-   EXACTLY the lead word is what keeps it that way. */
+/* NO truncation rule here: the longest value this span can hold is `Outcome
+   unknown`, and the footer test asserting the text is EXACTLY the lead word is what
+   keeps it that way. The ellipsis safety net lives on `.turn-fact`, in the flexible
+   track beside this button. `nowrap` because the button's `auto` track can shrink
+   below max-content under pressure and would wrap the word onto two lines; an EMPTY
+   span still charges the button's flex gap, which on a clean turn would sit between
+   the `i` and the fact, so it is removed from flow. */
 .turn-ledger-text {
   min-width: 0;
+  white-space: nowrap;
+}
+
+.turn-ledger-text:empty {
+  display: none;
 }
 
 /* The `i` that says the row is a door. Tertiary at rest and following the row's own
@@ -1055,11 +1147,11 @@
 }
 
 /* THE TIMINGS ROW THAT USED TO SIT HERE IS DELETED with its builder. It was a
-   `label + value` pair appended into the file list to carry the turn's duration and
-   the gap before it durably, and the info panel's own `Timings` section states both
-   (`.turn-info-section`, above): `Wall clock`, `Tool time`, `Model time`, `Started`,
-   `Ended` and `Gap before`, each a `.turn-info-row`. Two renderings of one fact, one
-   of them inside a list of FILES, and the panel's is the one with a heading. */
+   `label + value` pair appended into the file list to carry the turn's duration
+   durably, and the info panel's own `Timings` section states it (`.turn-info-section`,
+   above): `Wall clock`, `Tool time`, `Model time`, `Started` and `Ended`, each a
+   `.turn-info-row`. Two renderings of one fact, one of them inside a list of FILES,
+   and the panel's is the one with a heading. */
 
 /* Every row is a click target into that file's diff. Full-width so the hit
  * area is the row rather than the text — a path is a small target and WCAG
@@ -1087,9 +1179,27 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-.turn-file-row:hover {
-  background: var(--c-bg-tertiary);
-  color: var(--c-text-primary);
+/* THE ONE HOVER RECIPE (vibekit-ui.md "Color system"): the interaction ladder's
+   wash, gated on `any-hover`. It used to paint `--c-bg-tertiary`, which on the turn
+   footer — itself `--c-bg-tertiary` — was band on band, a hover that painted nothing,
+   and on the delegate card's box-toned foot was the rung jump the app migrated
+   away from.
+
+   THE WHOLE ROW LIGHTS AS ONE INK. The row is one door into one diff, so its hover
+   flips the row to primary, and the `+N −M` counts FOLLOW it rather than keeping
+   their status hues: a hovered band is one of the ink ramp's three two-level
+   surfaces (01-tokens.css), where `--c-red` reads 3.34:1 dark and every light
+   status ink about 3.5:1. Add against delete survives on the sign, which is the
+   non-colour channel WCAG 1.4.1 asks for and which the counts always carried. */
+@media (any-hover: hover) {
+  .turn-file-row:hover {
+    background: var(--c-hover);
+    color: var(--c-text-primary);
+  }
+
+  .turn-file-row:hover :is(.turn-file-add, .turn-file-del) {
+    color: inherit;
+  }
 }
 
 .turn-file-row:focus-visible {
@@ -1114,7 +1224,9 @@
   line-height: 1;
   padding: 1px var(--sp-1);
   border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--c-green) 18%, transparent);
+  /* Chroma at the band's lightness (01-tokens.css "The band, TINTED"), never a wash
+     of the ink it carries: 18% of --c-green under --c-green text read 3.98:1 in light. */
+  background: var(--c-band-added);
   color: var(--c-green);
 }
 
@@ -1249,11 +1361,15 @@
    * `translate` rather than a width: the box shrink-wraps its digits above the
    * tier's floor, so an inline-start of 50% plus a half-box translate centres it
    * on the axis at any digit count. It is a separate property from `transform`,
-   * so the app's universal press scale still applies. */
+   * so the app's universal press scale still applies.
+   *
+   * The travel is the TARGET's box, matching `markerPosition`, because it is the target
+   * that has to stay inside the track; the trailing term then centres the smaller paint
+   * inside the slot that travel reserves. */
   position: absolute;
   inset-inline-start: 50%;
   translate: -50%;
-  top: calc(var(--rail-at) * (100% - var(--hit-floor)));
+  top: calc(var(--rail-at) * (100% - var(--hit-floor)) + (var(--hit-floor) - var(--rail-mark)) / 2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1277,13 +1393,29 @@
     border-color var(--dur-micro) var(--ease-standard);
 }
 
-/* A marker is a hit target, so its box is the pointer TIER's own floor and not a
- * literal: WCAG 2.5.8 asks for 24px on a fine pointer and 44 on a coarse one, and
- * `--rail-w` is already 2.75rem, so the column holds a conforming marker at
- * either tier. turn-rail.ts reads the same token for its marker pitch. */
+/* The PAINTED box shrink-wraps its digits above `--rail-mark`, so a five-digit turn
+ * number widens it and a one-digit turn number is a square. */
 .rail-marker {
-  min-width: var(--hit-floor);
-  min-height: var(--hit-floor);
+  min-width: var(--rail-mark);
+  min-height: var(--rail-mark);
+}
+
+/* THE HIT TARGET: WCAG 2.5.8 asks 24px on a fine pointer, Apple's HIG 44x44pt under a
+ * finger, and `--rail-w` is 2.75rem so the column holds either. turn-rail.ts reads the
+ * same token for its pitch, so two targets keep `MARKER_CLEAR_PX` of clear.
+ *
+ * `::before` because `::after` is the search-hit dot below. Sized and centred rather
+ * than spelled as negative insets, so it needs no term for the marker's own width, which
+ * is content-dependent; `top`'s percentage resolves against the marker's padding box. It
+ * must paint nothing in every state, or the reader sees the 44px box again. */
+.rail-marker::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 50%;
+  top: calc((100% - var(--hit-floor)) / 2);
+  translate: -50%;
+  inline-size: var(--hit-floor);
+  block-size: var(--hit-floor);
 }
 
 .rail-marker:hover {
@@ -1381,59 +1513,14 @@
   animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
 }
 
-/* THE READER'S POSITION, an accent caret on the axis rather than a second marker:
- * it carries no attribute and no accessible name, so the one-position invariant
- * still has `markerNode` as its single writer. Its subject is the marked turn, so it
- * reads off the same `--rail-at` the marker does, and the extra half-box term is
- * what centres an 8px caret inside the 24px or 44px box that turn's marker occupies.
- *
- * `--dot-size` is the app's status-mark diameter, so the caret reads as a tab dot's
- * class of mark; `rail-select.ts` `HERE_PX` is the same number, and it is the value
- * the pure arithmetic centres against. It is `aria-hidden` and is not a hit target,
- * which is why it is under no pitch obligation and takes no `--hit-floor`. */
-.rail-here {
-  position: absolute;
-  inset-inline-start: 50%;
-  translate: -50%;
-  top: calc(var(--rail-at) * (100% - var(--hit-floor)) + (var(--hit-floor) - var(--dot-size)) / 2);
-  inline-size: var(--dot-size);
-  block-size: var(--dot-size);
-  border-radius: 50%;
-  background: var(--c-accent);
-  pointer-events: none;
-}
-
-/* Time as space: a pause over `GAP_THRESHOLD_MS` is a dashed band BETWEEN two
- * markers rather than a row of its own, which is what lets it charge nothing
- * against the marker count. It spans from the earlier marker's bottom to the
- * later's top — the separation pass keeps those tops at least one pitch apart, so
- * the band is never shorter than the clear between two hit targets.
- *
- * It paints NO TEXT: the elapsed time reaches the reader through the band's
- * accessible name (`rail-labels.ts` `seamLabel`) and nowhere else. */
-.rail-seam {
-  position: absolute;
-  inset-inline-start: calc(50% - 1.5px);
-  inline-size: 3px;
-  top: calc(var(--rail-from) * (100% - var(--hit-floor)) + var(--hit-floor));
-  block-size: calc(
-    (var(--rail-to) - var(--rail-from)) * (100% - var(--hit-floor)) - var(--hit-floor)
-  );
-
-  /* The page colour CUTS the solid axis and the dash is drawn back over it in a
-   * 1px strip: painting the dash alone would leave the solid line showing through
-   * every gap, which is a solid axis with a texture rather than a seam. */
-  background-color: var(--c-bg-primary);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    var(--c-border) 0 3px,
-    transparent 3px 6px
-  );
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 1px 100%;
-  pointer-events: none;
-}
+/* THE RAIL REPORTS NO PAUSE AT ALL, and that is a ruling rather than an omission
+ * (2026-09). It was `.rail-seam` first — a dashed band between the two markers it
+ * separated, positioned from `--rail-from` / `--rail-to` — deleted because a marker's
+ * dashed BORDER already means an agent-initiated turn, so one texture carried two
+ * unrelated facts a reader had to tell apart by which element wore it. The WORDS that
+ * replaced it went next, on the user's ruling that no pause text is wanted anywhere, and
+ * the computation with them: there is no seam, no threshold and no gap map in
+ * `turn-rail.ts`, so there is no selector here to rule on. */
 
 /* Shown only when the chat area is wide enough to hold the rail BESIDE the
  * content column, never inside it. The transcript and the composer share one
@@ -1487,12 +1574,6 @@
     block-size var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
     padding-block var(--fold-slide) var(--ease-standard) calc(var(--dur-exit) * 0.8),
     content-visibility 0s allow-discrete calc(var(--dur-exit) * 0.8 + var(--fold-slide));
-}
-
-/* The hidden body leaves the header's bottom rule directly against the face's
-   (or the footer's) top edge; one line belongs to the element below. */
-.turn[data-folded] > .turn-header {
-  border-bottom: 0;
 }
 
 /* The fold toggle: a bare hit target holding the shared `.disclosure-chevron`
@@ -1612,12 +1693,13 @@
  * OUTSIDE `any-hover: hover` the slot is not rendered, and that is a decision rather
  * than a fallback, unlike the footer's copy: there is no gesture to reveal it with,
  * thirty permanently expanded rows turn a navigator into a two-column table, and the
- * turn card's own footer shows this value unconditionally there.
+ * turn card's own info panel states this value unconditionally.
  *
  * THIS COPY SURVIVED THE FOOTER'S UNCONDITIONAL PAINT, deliberately (user ruling,
  * 2026-09-10): the rail answers "where did the session's time go" for every turn in
  * one column, which no footer can, because a reader cannot see every footer at once.
- * `.turn-elapsed`'s own note carries the other half of that ruling.
+ * The footer's own unconditional channel for it is the info PANEL; `.turn-fact` paints
+ * the turn's LEAD fact, so it names the clock only on a turn that did nothing else.
  *
  * OPEN, and it is the reason the ruling and this rule do not yet agree: the read the
  * ruling rests on is AT A GLANCE, and the two gates above mean the reader sees one

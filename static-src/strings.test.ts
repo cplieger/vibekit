@@ -386,8 +386,8 @@ describe("windowSpans", () => {
 // attribute is a machine-readable form of the element's CONTENTS — so a pair that
 // disagrees is not two views of one value, it is a wrong attribute.
 //
-// The pair is asserted here rather than at the footer that renders it because both
-// functions live here; the footer's own tests cover the ELEMENT.
+// The pair is asserted here rather than at the rail that renders it because both
+// functions live here; the rail's own tests cover the ELEMENT.
 // ---------------------------------------------------------------------------
 
 describe("a span's text and its machine-readable twin", () => {

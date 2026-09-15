@@ -1,0 +1,87 @@
+/* The terminal's two web faces. vibekit serves the embedded panel, so the
+   library's own page kit (@cplieger/web-terminal-ui css/page.css) never reaches
+   this document — its MANIFEST.touch bundle is component-only and its header
+   says the host page owns its reset and its fonts. This file is that half.
+
+   Paths match what the Dockerfile writes into static/vendor/fonts/ and what
+   internal/server/server_static.go caches for thirty days.
+
+   NO ascent-override / descent-override on any face. The terminal's cell
+   background is the run elements' `padding-block: 1px` in the library's
+   02-terminal.css; the overrides were the mechanism that replaced, and WebKit
+   treats both descriptors as preview, so on iOS they did nothing at all while
+   every row boundary showed an unpainted stripe.
+
+   NO unicode-range either. The glyph font's own file is the range: it carries
+   only the codepoints that have to tile, so a browser resolving a letter falls
+   through to Monaspace by ordinary family fallback. */
+
+@font-face {
+  font-family: "Monaspace Neon NF";
+  src: url("/vendor/fonts/MonaspaceNeonNF-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Monaspace Neon NF";
+  src: url("/vendor/fonts/MonaspaceNeonNF-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Monaspace Neon NF";
+  src: url("/vendor/fonts/MonaspaceNeonNF-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Monaspace Neon NF";
+  src: url("/vendor/fonts/MonaspaceNeonNF-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}
+
+/* All four descriptor sets point at ONE file, deliberately. The glyphs are
+   geometry — a box-drawing corner has no weight and no slope — so declaring
+   every set is what stops the browser synthesising a bold or an oblique variant
+   of one. `.term` also carries `font-synthesis: none`, and this is the other
+   half of that: nothing to synthesise from, and nothing asked for. */
+
+@font-face {
+  font-family: "Web Terminal Glyphs";
+  src: url("/vendor/fonts/WebTerminalGlyphs.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Web Terminal Glyphs";
+  src: url("/vendor/fonts/WebTerminalGlyphs.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Web Terminal Glyphs";
+  src: url("/vendor/fonts/WebTerminalGlyphs.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Web Terminal Glyphs";
+  src: url("/vendor/fonts/WebTerminalGlyphs.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: block;
+}

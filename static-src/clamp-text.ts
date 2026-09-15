@@ -1,10 +1,11 @@
 // The clamp: a text element capped to N lines, with a show-more that opens it.
 //
-// Serves the in-turn steer note, the dock's steer row, the run page's
-// instructions and results, and both of the dock's question cards. The turn
-// header is NOT among them: its clamp is CSS-only and fold-conditional, so it
-// carries no constant and attaches no observation. The two measured facts that
-// decide the shape are on `watchClamp` below.
+// Serves the in-turn steer note, the run page's instructions and results, and
+// both of the dock's question cards. Two clamps are NOT among them, because both
+// are CSS-only and so carry no constant and attach no observation: the turn
+// header's request, which is fold-conditional, and the dock's steer row, which
+// offers no opener. The two measured facts that decide the shape are on
+// `watchClamp` below.
 
 /** Above this many characters, assume the text overflows when layout cannot be
  *  measured — a first guess only, corrected by the observer. Deliberately

@@ -101,7 +101,7 @@ export function isDroppedBlock(block: Block, toolCalls: readonly ToolCall[]): bo
  *  dispatcher does not drop. Measured on 107 chat files: 11 body messages render nothing
  *  by this rule, each an assistant message whose every block is a workflow step, one of
  *  them 603 blocks long. */
-export function messageRendersContent(m: Message): boolean {
+function messageRendersContent(m: Message): boolean {
   if (m.role !== "assistant") {
     return true;
   }

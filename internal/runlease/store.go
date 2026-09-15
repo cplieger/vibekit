@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,7 +46,10 @@ type file struct {
 type Store struct {
 	leases map[string]Lease
 	path   string
-	mu     sync.Mutex
+	// version is the collection's version, bumped under mu by every mutation that
+	// changed the set; ListStamped pairs it with the set it describes.
+	version uint64
+	mu      sync.Mutex
 }
 
 // NewMemory returns an in-memory store that persists nothing.
@@ -95,6 +99,15 @@ func (s *Store) List() []Lease {
 	return s.sortedLocked()
 }
 
+// ListStamped is List plus the collection version the set is at, read in the same
+// critical section so the two cannot disagree. The version is decimal, starting at
+// "0" for a store nothing has mutated this process.
+func (s *Store) ListStamped() ([]Lease, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sortedLocked(), strconv.FormatUint(s.version, 10)
+}
+
 func (s *Store) sortedLocked() []Lease {
 	out := make([]Lease, 0, len(s.leases))
 	for _, id := range slices.Sorted(maps.Keys(s.leases)) {
@@ -127,6 +140,7 @@ func (s *Store) Put(ctx context.Context, l *Lease) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.leases[l.WorkflowID] = *l
+	s.version++
 	return s.persistLocked(ctx)
 }
 
@@ -139,6 +153,7 @@ func (s *Store) Release(ctx context.Context, workflowID string) error {
 		return nil
 	}
 	delete(s.leases, workflowID)
+	s.version++
 	return s.persistLocked(ctx)
 }
 
@@ -155,6 +170,7 @@ func (s *Store) SetFirstAbsentAt(ctx context.Context, workflowID string, at time
 	}
 	l.FirstAbsentAt = at
 	s.leases[workflowID] = l
+	s.version++
 	return s.persistLocked(ctx)
 }
 
@@ -178,6 +194,7 @@ func (s *Store) SetDeadline(ctx context.Context, workflowID string, deadline tim
 	}
 	l.Deadline = deadline
 	s.leases[workflowID] = l
+	s.version++
 	return s.persistLocked(ctx)
 }
 

@@ -32,7 +32,7 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 // carries a new model, so isSwitch=true.
 func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
@@ -59,7 +59,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 
 func TestSwitchModel_WithModelOverride(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "claude-opus"
 		c.ACPSessionID = "old-acp"
@@ -84,7 +84,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // A new model preserves the chat's context_size while resetting credit counters.
 func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-old"
@@ -112,7 +112,7 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 // emits no event and resets no Usage counters: those are for a real model change.
 func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-same"
@@ -159,7 +159,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 // without mutating chat state.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		return true
@@ -185,7 +185,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 // Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "old-model"
 		return true
@@ -242,7 +242,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 // before the id reaches the wire.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		c.ServedModelIDs = []string{"m-old", "m-other"}
@@ -281,7 +281,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.served
@@ -303,7 +303,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 // the gate prevents. The gate reads the unfiltered served set.
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// The display catalog omits it; the served set does not. That divergence is
@@ -348,7 +348,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, br := newTestHub()
-			if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.recorded
@@ -376,7 +376,7 @@ func TestSwitchModel_TheChatRecordOutranksTheLiveSession(t *testing.T) {
 // model keeps answering and the load's config_option_update races it back.
 func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testing.T) {
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
@@ -423,7 +423,7 @@ func TestSwitchModel_RestartFallback_AppliesThePickToTheResumedSession(t *testin
 // is a session/load, and a truly empty chat takes the pre-session persist instead.
 func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// Chosen under m-old, so the fresh spawn resolves against the TARGET:
@@ -460,7 +460,7 @@ func TestSwitchModel_RestartFallback_SendsNoRetryOnAFreshSession(t *testing.T) {
 // clobber it back.
 func TestSwitchModel_PreSessionPickPersistsWithoutABridge(t *testing.T) {
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// A tier chosen before the model pick was chosen under m-old; the pick

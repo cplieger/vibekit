@@ -18,8 +18,7 @@ interface Clients {
 interface Client {
   readonly url: string;
   // The worker's only channel to a live page. It carries a notification's
-  // target chat id so the PAGE builds the route (router.ts owns the route
-  // vocabulary, and it is DOM-bound — see sw.ts subjectPath).
+  // SUBJECT so the page reaches its own openers with it.
   postMessage(message: unknown): void;
 }
 

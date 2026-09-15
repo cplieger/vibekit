@@ -248,7 +248,7 @@ func (m *Membership) CreateChatAndOpen(ctx context.Context, req ChatCreate) (Cha
 	}
 
 	// The record leads.
-	err := m.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := m.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			return false
 		}

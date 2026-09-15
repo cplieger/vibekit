@@ -35,6 +35,7 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -103,7 +104,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	sweepStaleTemps(ctx, cfg.ConfigDir, cfg.WorkDir)
 
-	chatStore, err := chat.NewStore(filepath.Join(cfg.ConfigDir, "chats"))
+	// One registry for every digest subject: the chat store mints `chat` and
+	// `chats` into it, the agent runtime mints the workspace subjects and reads
+	// all of them for the digest and the REST envelopes.
+	versions := &subject.Versions{}
+	chatStore, err := chat.NewStore(filepath.Join(cfg.ConfigDir, "chats"), chat.WithVersions(versions))
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +128,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	scheduleStore := openScheduleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
-	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub)
+	// One presence table, two readers: the hub's connect/disconnect feed and the
+	// alive route write it through the runtime, the send filter reads it.
+	presence := push.NewPresence()
+	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub, push.WithPresence(presence))
 
 	// The second argument is WHO this reaper answers for, and only the workspace root
 	// is correct — see vibekit-runtime.md, "What the reaper may delete".
@@ -135,14 +143,19 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	authReadiness := new(command.AuthReadiness)
 	h := agent.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		agent.WithConfigDir(cfg.ConfigDir), agent.WithMCPConfig(mcpStore), agent.WithPush(pushSvc),
+		agent.WithPresence(presence),
 		agent.WithACPArgs(cfg.ACPArgs),
 		agent.WithAuthReadiness(authReadiness),
 		agent.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
 		agent.WithSessionSweepGate(listenerBound),
 		agent.WithSchedules(scheduleStore),
 		agent.WithRunLeases(leaseStore),
-		agent.WithTabs(tabStore))
+		agent.WithTabs(tabStore),
+		agent.WithVersions(versions))
 	chat.WithBroadcaster(h)(chatStore)
+	// The two chat GET envelopes stamp the hub's epoch beside their version, and
+	// the hub exists only once the runtime does.
+	chat.WithEpoch(h.Epoch)(chatStore)
 	pruneTabs(ctx, tabStore, chatStore)
 
 	// BEFORE anything can launch: relying on the scheduler's first tick would make
@@ -188,6 +201,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	gitHandler := git.NewHandler(cfg.WorkDir)
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
+	ensureUploadDir()
 	fileHandler, err := filebrowse.New(cfg.BrowseRoots...)
 	if err != nil {
 		return nil, err
@@ -232,12 +246,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Not a retention predicate: the chat store's HTTP surface reads it, and without it
 	// that surface's silence about a buffered turn reads as "nothing closed this turn".
 	// It states WHOSE turn as well, so a run's step turn does not read as the launching
-	// chat's own. Injected post-construction for WithLive's reason.
+	// chat's own. Injected post-construction for WithLive's reason — the store cannot
+	// import the agent.
 	chat.WithTurnOpen(h.TurnOpenState)(chatStore)
-	// The CONTENT half of the line above, and the second channel for an in-flight turn:
-	// the SSE connect replay is gated on a declaration the client makes before it knows
-	// which chat it will show, so without this a boot on a URL naming no chat renders the
-	// prompt over an empty body until the turn ends.
+	// The CONTENT half of the line above, and the ONE channel for an in-flight turn: the
+	// SSE connect carries `busy_chats` and no turn transcript, so without this a client
+	// that finds a chat busy at connect renders the prompt over an empty body until the
+	// turn ends.
 	chat.WithLiveTurn(h.LiveTurn)(chatStore)
 	chat.WithOnPurge(func(id vibekit.ChatID, sessionChain []string) {
 		// After the per-chat record lock is released: it keeps the lock order acyclic.
@@ -688,6 +703,27 @@ func openScheduleStore(dir string) *schedule.Store {
 		return nil
 	}
 	return st
+}
+
+// ensureUploadDir creates the composer's upload target so the file handler can
+// open a mount over it, and WARNS rather than failing when it cannot.
+//
+// It exists because the directory stopped being created on demand when it became
+// a mount rather than a path inside one: filebrowse's per-upload MkdirAll runs
+// INSIDE the matched mount's os.Root, and openMounts SKIPS a root it cannot open.
+// So an absent directory means the mount is silently missing and every composer
+// upload answers 403 for the container's life, with nothing on the upload path
+// able to repair it.
+//
+// Warn-and-continue, never fatal: this is a dev-box container whose /uploads may
+// be a bind mount the operator owns, and aborting boot over it would leave no way
+// IN to fix it (invariant 6). The image creates the directory at build time for
+// the non-root case, so this covers a local `go run` and a volume mounted empty.
+func ensureUploadDir() {
+	if err := os.MkdirAll(vibekit.DefaultUploadDir, 0o755); err != nil {
+		slog.Warn("composer uploads will be refused until this directory exists",
+			"path", vibekit.DefaultUploadDir, "error", err)
+	}
 }
 
 // openTabStore opens the open-tab set, ALWAYS returning a store: an arrangement is

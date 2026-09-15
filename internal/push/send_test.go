@@ -1,6 +1,6 @@
 package push
 
-// Tests for send.go: the endpoint log-attr bounding, the Send
+// Tests for send.go: the tag log-key contract, the Send
 // preflight/debounce/preference gates, status-driven pruning, and the
 // per-subscriber push() path (size guard, RFC 8291 body assembly, ctx
 // merge, result logging).
@@ -8,6 +8,7 @@ package push
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -23,11 +24,10 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TestSendFailureLogBoundsEndpoint pins the endpoint log-attr contract at
-// the send-failed site: the client-supplied subscription URL is untrusted,
-// so the logged attribute rides runesafe.SanitizeSingleLineBounded — a long
-// endpoint is capped at 60 bytes plus the "..." marker, and hostile control
-// runes never reach the log stream raw.
+// TestSendFailureLogCarriesTheTagNotTheEndpoint pins the log-key contract on the
+// send-failed warn: the subscription is named by its 22-character tag, and no
+// byte of the endpoint — a capability URL — reaches the log stream, hostile
+// control bytes included.
 //
 // Runs in a synctest bubble, at the PRODUCTION retry ladder. The invalid URL
 // fails in http.NewRequestWithContext before any dial, so deliver() treats it as
@@ -38,7 +38,7 @@ import (
 // alternative, collapsing pushRetryBase/pushRetryBudget the way the ladder tests
 // do, would have this test assert against a fixture rather than the shipped
 // budget.
-func TestSendFailureLogBoundsEndpoint(t *testing.T) {
+func TestSendFailureLogCarriesTheTagNotTheEndpoint(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rec := capture.Default(t)
 		dir := t.TempDir()
@@ -46,26 +46,31 @@ func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 		defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 
 		// The control bytes make the endpoint an invalid request URL, so the
-		// send fails deterministically without any network I/O and logs the
-		// bounded endpoint attribute on the send-failed warn line. No live
-		// socket, which is what keeps the bubble's clock able to advance.
+		// send fails deterministically without any network I/O. No live socket,
+		// which is what keeps the bubble's clock able to advance.
 		hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 		s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
 		s.Send(t.Context(), "t", "b", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
-		got, ok := rec.AttrValue("push: send failed", "endpoint")
+		got, ok := rec.AttrValue("push: send failed", "tag")
 		if !ok {
-			t.Fatalf("no endpoint attr on the send-failed warn; logs = %q", rec.Messages())
+			t.Fatalf("no tag attr on the send-failed warn; logs = %q", rec.Messages())
 		}
-		if len(got) > 60+len("...") {
-			t.Errorf("endpoint attr = %d bytes, want <= 63 (cap + marker)", len(got))
+		if got != TagOf(hostile) {
+			t.Errorf("tag attr = %q, want TagOf(endpoint) %q", got, TagOf(hostile))
 		}
-		if !strings.HasSuffix(got, "...") {
-			t.Errorf("endpoint attr %q does not end in the truncation marker", got)
+		if _, leaked := rec.AttrValue("push: send failed", "endpoint"); leaked {
+			t.Error("the send-failed warn carries an endpoint attr; the tag is the only key")
 		}
-		if strings.ContainsAny(got, "\x1b\x07") {
-			t.Errorf("endpoint attr %q carries raw control bytes; sanitization missing", got)
+		for _, r := range rec.Records() {
+			r.Attrs(func(a slog.Attr) bool {
+				v := a.Value.String()
+				if strings.Contains(v, "evil.example") || strings.ContainsAny(v, "\x1b\x07") {
+					t.Errorf("log attr %s=%q carries endpoint bytes", a.Key, v)
+				}
+				return true
+			})
 		}
 		// The whole ladder ran in synthetic time, so the attempt count is now an
 		// equality against the shipped cap rather than something the test had to
@@ -404,11 +409,16 @@ func (u *perKindHeaderRecorder) snapshot() []deliveryHeaders {
 
 // sendOneAndRecordHeaders delivers one notification of kind and returns the
 // headers the push service saw, failing the test unless exactly one arrived.
+//
+// The kind is switched ON explicitly because these tests are about the HEADERS a
+// kind travels with rather than its default, and pr_status defaults OFF:
+// SetPreferences is a maps.Copy merge, so it patches the one kind under test.
 func sendOneAndRecordHeaders(t *testing.T, kind vibekit.PushKind) deliveryHeaders {
 	t.Helper()
 	rec := &perKindHeaderRecorder{}
 	s, _ := newServiceOnTestServer(t, rec)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/headers"))
+	s.SetPreferences(map[vibekit.PushKind]bool{kind: true})
 
 	s.Send(t.Context(), "title", "body", kind, vibekit.PushSubject{})
 
@@ -752,8 +762,8 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		if got := attempts.Load(); got != 2 {
 			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
 		}
-		if capLog.CountExact("push: delivered after retry") == 0 {
-			t.Error("a delivery that needed a retry was not reported as one")
+		if got, _ := capLog.AttrValue("push: delivered", "attempts"); got != "2" {
+			t.Errorf("the delivered line reports attempts=%q, want \"2\" (one 429 then one success)", got)
 		}
 	})
 

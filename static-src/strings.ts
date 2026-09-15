@@ -170,7 +170,7 @@ export function formatElapsed(ms: number): string {
 
 /** The same span as an ISO 8601 duration, for a `<time datetime>`.
  *
- *  Beside `formatElapsed` rather than in the footer that renders it, because the two
+ *  Beside `formatElapsed` rather than in the rail that renders it, because the two
  *  are the machine and human spellings of ONE value and a `<time>` element is wrong
  *  unless they agree: `datetime` must be a machine-readable form of the element's
  *  own CONTENTS, not of some more precise value behind them.

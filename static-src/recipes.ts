@@ -30,7 +30,7 @@ import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openRunView } from "./run-view.js";
 import { loadSettings } from "./persist.js";
-import { toggleSettingsView } from "./tabs.js";
+import { openSettingsView } from "./tabs.js";
 import type { Recipe, WorkflowRun } from "./types.js";
 import { classifyRunStatus, runStatusTerminal } from "./run-status.js";
 
@@ -242,7 +242,7 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
         autoApprove,
         onOpenPermissions: () => {
           close();
-          void toggleSettingsView("permissions");
+          void openSettingsView("permissions");
         },
         // The picker's flag is carried through rather than re-decided here: it
         // was hardcoded true at both ends, so a paused schedule was unreachable
@@ -494,7 +494,7 @@ function launch(r: Recipe, inputs: Record<string, string>): void {
         // corrects a failed launch the server accepted but KAS then refused.
         liveRuns.set(r.name, { workflow_id: d.workflow_id, name: d.name, updated_at: Date.now() });
         paint();
-        openRunView(d.workflow_id, d.name);
+        void openRunView(d.workflow_id, d.name);
       },
     },
   );

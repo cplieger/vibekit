@@ -35,12 +35,10 @@ vi.mock("../api-client.js", () => ({
 // while resolving the real module, which kills the page instead of naming the
 // export it could not find. Listing is duller and it fails legibly.
 //
-// Only `send` needs to be inert; the four id minters are real because a test that
-// asserts on a request wants a real id in it, and `init` is never called here.
+// Only `send` needs to be inert; the three id minters are real because a test that
+// asserts on a request wants a real id in it.
 vi.mock("../transport.js", () => ({
   send: vi.fn(),
-  init: vi.fn(),
-  markHydrated: vi.fn(),
   newMessageID: () => "m-test",
   newRequestID: () => "r-test",
   newOpID: () => "op-test",

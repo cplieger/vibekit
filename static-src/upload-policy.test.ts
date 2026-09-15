@@ -19,12 +19,13 @@ function sized(name: string, size: number): File {
 
 describe("UPLOADS_DIR", () => {
   it("is container-absolute, which is what both consumers need", () => {
-    // As an upload target the server resolves it against its granted mounts, so
-    // a bare "uploads" would clean to /uploads and be refused. As an attachment
-    // path prefix the prompt builder joins a relative path onto the workspace,
-    // so the absolute spelling satisfies both without a second transformation.
+    // As an upload target the server resolves it against its granted mounts, and
+    // this directory is one of them. As an attachment path prefix the prompt
+    // builder tries an absolute path against the workspace root and the uploads
+    // root in turn, so a relative "uploads" would be refused by the first
+    // consumer and resolved under the workspace by the second.
     expect(UPLOADS_DIR.startsWith("/")).toBe(true);
-    expect(UPLOADS_DIR).toBe("/workspace/uploads");
+    expect(UPLOADS_DIR).toBe("/uploads");
   });
 });
 

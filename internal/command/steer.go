@@ -100,6 +100,24 @@ func CmdSteer(
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerNoTurn)
 	}
 
+	// RECORDED BEFORE THE CALL, and the ordering is the whole point: KAS emits
+	// `steering_queued` BEFORE it answers this RPC, and that notification is folded
+	// on the bridge's own Forward goroutine with nothing serializing the two — so a
+	// ledger written after the response RACES the fold, and SteerOrigin answers
+	// `agent` for the user's own words whenever the fold wins. Measured on the live
+	// store before this moved: 9 of 18 steers whose queued-time origin is
+	// observable were labelled the agent's.
+	//
+	// The id is derivable (vibekit.SteerIDFor) because KAS prefixes the messageId we
+	// send and stamps that on both the reply and the notification. The two shapes
+	// that would make it wrong are already refused above: an empty id by
+	// ValidMessageID, and a notification-prefixed text — which KAS would file under
+	// `notify-` instead — by errSteerLooksLikeNotification.
+	//
+	// A refused steer leaves a stale entry, deliberately unswept: nothing else can
+	// carry a `steer-` id, so it can mislabel nothing, and the TTL reclaims it.
+	steers.RecordUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
+
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{
 		"message":   text,
 		"messageId": p.MessageID,
@@ -108,6 +126,7 @@ func CmdSteer(
 		// KAS throws (rather than answering) for an unknown session and
 		// an empty message, both already ruled out — so an error here is
 		// a transport or session-liveness failure.
+		steers.ForgetUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
 		slog.Warn("steer: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		return nil, StatusError(http.StatusBadGateway, err)
 	}
@@ -125,13 +144,26 @@ func CmdSteer(
 		// KAS was persisting: the message never reached the model. 409
 		// rather than 502 — the client's answer is to send it as an
 		// ordinary prompt.
+		steers.ForgetUserSteer(cmd.ChatID, vibekit.SteerIDFor(p.MessageID))
 		slog.Info("steer dropped", "chat", cmd.ChatID, "reason", result.Dropped)
 		return nil, StatusErrorReason(http.StatusConflict, reasonNoTurn, errSteerDropped)
 	}
 
-	// The id KAS RETURNED, which is what every later frame carries, and the
-	// ONLY evidence anywhere that these words are the user's.
+	// The id KAS RETURNED. Normally identical to the pre-call record above, so this
+	// is an idempotent second write; it is kept so a KAS that ever returns an id we
+	// did not derive still gets that steer labelled as the user's.
 	steers.RecordUserSteer(cmd.ChatID, result.MessageID)
+	if result.MessageID != vibekit.SteerIDFor(p.MessageID) {
+		// The derivation above is what lets the ledger be written before the call,
+		// so a disagreement retires that reasoning rather than merely logging an
+		// oddity. An empty id is the sharper case: RecordUserSteer no-ops on it, so
+		// only the pre-call entry stands and a later frame carrying some other id
+		// resolves as the agent's.
+		slog.Warn("steer id is not the derived one; the pre-call ledger entry may not match later frames",
+			"chat", cmd.ChatID,
+			"returned", result.MessageID,
+			"derived", vibekit.SteerIDFor(p.MessageID))
+	}
 
 	// No event is broadcast here: KAS answers a successful steer with its
 	// own `steering_queued` frame, which the translate layer turns into

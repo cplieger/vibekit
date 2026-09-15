@@ -16,19 +16,22 @@
 //     gate), so what the wiring buys is the offending file's name up front.
 // ---------------------------------------------------------------------------
 
-/** Where a composer upload lands: one folder at the workspace root, modelled
- *  on an OS Downloads folder. The server creates it on the first upload.
+/** Where a composer upload lands: one folder at the container root, modelled on
+ *  an OS Downloads folder. The server creates it at boot, not on the first
+ *  upload — it is a granted browse mount now, and an unopenable mount is skipped
+ *  rather than created by the upload that needed it.
  *
  *  Container-absolute, matching the paths the file browser and picker already
  *  produce, because this string is used twice with two different consumers: as
- *  the upload target (the server resolves it against its granted mounts) and,
- *  prefixed onto each filename, as the attachment path (the prompt builder
- *  resolves it against the workspace). A workspace-relative "uploads" would
- *  satisfy the second and be refused by the first.
+ *  the upload target, which the server resolves against its granted mounts, and,
+ *  prefixed onto each filename, as the attachment path, which the server resolves
+ *  against the workspace-plus-uploads roots. Both are absolute-path questions, so
+ *  a relative "uploads" would be refused by the first and resolved under the
+ *  workspace by the second — two different directories for one string.
  *
- *  Mirrors defaultUploadDir in internal/filebrowse/filebrowse.go;
+ *  Mirrors DefaultUploadDir in internal/vibekit/domain_paths.go;
  *  TestUploadPolicyMatchesClient pins the two together. */
-export const UPLOADS_DIR = "/workspace/uploads";
+export const UPLOADS_DIR = "/uploads";
 
 /** The server's upload ceiling in bytes. Mirrors maxUploadSize in
  *  internal/filebrowse/filebrowse.go, which applies it to the WHOLE

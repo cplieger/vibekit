@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,26 +20,66 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// forkHost answers TWO opens, because a tangent has two bridges: the parent's,
+// resumed to issue the fork, and the tangent's own, resumed to load the forked
+// session. Which one a call is for is the chat id, so every call is recorded rather
+// than only the last.
 type forkHost struct {
 	*bridgeDeps
-	openChatID vibekit.ChatID
-	openModel  string
-	openCalls  int
+	// tangentBridge answers an open for any chat that is not the parent. It reports the
+	// session the tangent is bound to, which is what production's does.
+	tangentBridge Bridge
+	// onOpenTangent stands in for the replay swap: in production the transcript lands
+	// in the chat record inside OpenBridge, through the projection.
+	onOpenTangent func(vibekit.ChatID)
+	// parent is the chat whose open gets bridgeDeps' bridge; every other chat gets
+	// tangentBridge. Named by the caller so a test forking a differently-named parent
+	// cannot silently route the parent's own resume to the tangent's bridge.
+	parent       vibekit.ChatID
+	openChatIDs  []vibekit.ChatID
+	openModels   []string
+	awaitChatIDs []vibekit.ChatID
 }
 
 func (d *forkHost) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error) {
-	d.openCalls++
-	d.openChatID = chatID
-	d.openModel = model
+	d.openChatIDs = append(d.openChatIDs, chatID)
+	d.openModels = append(d.openModels, model)
+	if chatID != d.parent {
+		if d.onOpenTangent != nil {
+			d.onOpenTangent(chatID)
+		}
+		return d.tangentBridge, nil
+	}
 	return d.bridgeDeps.OpenBridge(ctx, chatID, model)
 }
 
-func newForkHost(store ChatStore, bridge Bridge) *forkHost {
-	return &forkHost{bridgeDeps: &bridgeDeps{
-		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
-		bridge:    bridge,
-		opened:    bridge,
-	}}
+func (d *forkHost) AwaitReplayAdopted(ctx context.Context, chatID vibekit.ChatID) error {
+	d.awaitChatIDs = append(d.awaitChatIDs, chatID)
+	return d.bridgeDeps.AwaitReplayAdopted(ctx, chatID)
+}
+
+// opensFor counts the opens recorded for one chat, so a test asserting on the
+// parent's resume is not counting the tangent's.
+func (d *forkHost) opensFor(chatID vibekit.ChatID) int {
+	n := 0
+	for _, got := range d.openChatIDs {
+		if got == chatID {
+			n++
+		}
+	}
+	return n
+}
+
+func newForkHost(store ChatStore, bridge Bridge, parent vibekit.ChatID) *forkHost {
+	return &forkHost{
+		bridgeDeps: &bridgeDeps{
+			storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
+			bridge:    bridge,
+			opened:    bridge,
+		},
+		parent:        parent,
+		tangentBridge: &recordingBridge{sessionID: "sess_tangent"},
+	}
 }
 
 func forkReq(t *testing.T, newChat, parent vibekit.ChatID, title string) *vibekit.ClientCommand {
@@ -76,7 +117,7 @@ func (b *deletingForkBridge) Call(ctx context.Context, method string, params any
 // session id — everything the tangent inherits.
 func seedParent(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Parent conversation"
 		c.Model = "parent-model"
 		c.CurrentModeID = "plan"
@@ -103,7 +144,7 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 		sessionID: "sess_parent",
 		result:    map[string]any{"sessionId": "sess_tangent"},
 	}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
@@ -147,7 +188,7 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
@@ -180,7 +221,7 @@ func TestCmdForkChat_OmitsAnEmptyTitle(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 
@@ -199,7 +240,7 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 
@@ -240,7 +281,7 @@ func TestCmdForkChat_StartsFreshOnForkRefusal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			host := newForkHost(store, br)
+			host := newForkHost(store, br, "c-parent")
 
 			body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 
@@ -292,7 +333,7 @@ func TestCmdForkChat_RefusesWhenTheParentWasDeletedDuringTheFork(t *testing.T) {
 				store:     store,
 				parent:    "c-parent",
 			}
-			host := newForkHost(store, br)
+			host := newForkHost(store, br, "c-parent")
 			mem, st, _ := newTabbedMembership(t, store)
 
 			body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem, forkReq(t, "c-tangent", "c-parent", ""))
@@ -314,7 +355,7 @@ func TestCmdForkChat_ReplayStillResolvesWithoutTheParent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 	mem, st, _ := newTabbedMembership(t, store)
 	req := forkReqWithOp(t, "", "c-parent", "", "op-replay")
 
@@ -373,7 +414,7 @@ func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 				sessionID: "sess_parent",
 				result:    map[string]any{"sessionId": "sess_tangent"},
 			}
-			host := newForkHost(store, live)
+			host := newForkHost(store, live, "c-parent")
 			host.opened = resumed
 
 			_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
@@ -381,14 +422,16 @@ func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 			if statusOf(err) != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
 			}
-			if host.openCalls != 1 {
-				t.Errorf("OpenBridge calls = %d, want 1", host.openCalls)
+			if got := host.opensFor("c-parent"); got != 1 {
+				t.Errorf("OpenBridge calls for the parent = %d, want 1", got)
 			}
-			if host.openChatID != "c-parent" {
-				t.Errorf("OpenBridge chat = %q, want c-parent", host.openChatID)
+			if len(host.openChatIDs) == 0 || host.openChatIDs[0] != "c-parent" {
+				t.Errorf("first OpenBridge chat = %v, want c-parent", host.openChatIDs)
 			}
-			if host.openModel != "" {
-				t.Errorf("OpenBridge model = %q, want empty so the parent keeps its own", host.openModel)
+			for i, model := range host.openModels {
+				if model != "" {
+					t.Errorf("OpenBridge %d model = %q, want empty so the chat keeps its own", i, model)
+				}
 			}
 			if resumed.gotMethod != vibekit.MethodSessionFork {
 				t.Errorf("opened bridge called %q, want %q", resumed.gotMethod, vibekit.MethodSessionFork)
@@ -404,6 +447,247 @@ func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 	}
 }
 
+// replayInto writes the messages a session/load replay projects, standing in for the
+// swap that lands them in the record inside OpenBridge.
+func replayInto(t *testing.T, store ChatStore, chatID vibekit.ChatID) {
+	t.Helper()
+	if _, err := store.Mutate(t.Context(), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		c.Messages = []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "how does the reaper work", Ts: 100},
+			{ID: "a1", Role: vibekit.RoleAssistant, Content: "it keeps the session chain", Ts: 200},
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("replay into %q: %v", chatID, err)
+	}
+}
+
+// TestCmdForkChat_LoadsTheForkedHistoryIntoTheNewChat is the whole defect: the forked
+// session holds the parent's conversation, so vibekit's own surface must show it rather
+// than an empty transcript attached to a session that secretly knows everything.
+func TestCmdForkChat_LoadsTheForkedHistoryIntoTheNewChat(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+	host.onOpenTangent = func(id vibekit.ChatID) { replayInto(t, store, id) }
+
+	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
+		t.Fatal("the tangent chat was not created")
+	}
+	if len(c.Messages) != 2 {
+		t.Errorf("the tangent's record holds %d messages, want the parent's 2", len(c.Messages))
+	}
+	// The HEADER half is load-bearing too: the client's isEmptyChat reads that count, so
+	// a header captured before the swap makes it skip its own fetch and render exactly
+	// the empty transcript this closes.
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", body)
+	}
+	header, ok := reply["chat"].(vibekit.ChatHeader)
+	if !ok {
+		t.Fatalf("chat = %T, want vibekit.ChatHeader", reply["chat"])
+	}
+	if header.MessageCount != 2 {
+		t.Errorf("the response header reports message_count = %d, want 2", header.MessageCount)
+	}
+}
+
+// The load runs on the TANGENT's own bridge, not the parent's: the replay projection is
+// keyed by chat, so a load on the parent's bridge would rewrite the PARENT's transcript
+// and seat the live untagged frames a load also emits in the parent's turn.
+func TestCmdForkChat_OpensTheTangentsOwnBridgeAndAwaitsItsReplay(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+
+	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got := host.opensFor("c-tangent"); got != 1 {
+		t.Errorf("OpenBridge calls for the tangent = %d, want 1 (all opens: %v)", got, host.openChatIDs)
+	}
+	if !slices.Contains(host.awaitChatIDs, vibekit.ChatID("c-tangent")) {
+		t.Errorf("AwaitReplayAdopted chats = %v, want the tangent's", host.awaitChatIDs)
+	}
+	if slices.Contains(host.awaitChatIDs, vibekit.ChatID("c-parent")) {
+		t.Errorf("AwaitReplayAdopted chats = %v; the parent's replay is not this command's to wait on",
+			host.awaitChatIDs)
+	}
+}
+
+// A replay that has not landed inside the barrier's budget must not dead-end the
+// gesture: the chat and its tab exist, and the session stays bound.
+func TestCmdForkChat_ReplayBarrierExpiryStillOpensTheTangent(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+	host.awaitErr = errors.New("session/load replay not adopted within the barrier budget")
+
+	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a slow replay must not refuse the tangent (body %s)",
+			statusOf(err), errText(err))
+	}
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", body)
+	}
+	if reply["outcome"] != vibekit.ForkOutcomeForked {
+		t.Errorf("outcome = %v, want %q: the fork itself succeeded", reply["outcome"], vibekit.ForkOutcomeForked)
+	}
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
+		t.Fatal("the tangent chat was not created")
+	}
+	if c.ACPSessionID != "sess_tangent" {
+		t.Errorf("acp_session_id = %q, want sess_tangent: an unadopted replay must not detach the session",
+			c.ACPSessionID)
+	}
+	if len(c.Messages) != 0 {
+		t.Errorf("the tangent holds %d messages, want 0: nothing was adopted", len(c.Messages))
+	}
+}
+
+// rebindSession detaches the chat's session and records another over it, which is what
+// tryLoadSession's failure branch plus persistNewSessionMetadata do when a load is
+// refused and session/new mints a fresh session.
+func rebindSession(t *testing.T, store ChatStore, chatID vibekit.ChatID, sessionID string) {
+	t.Helper()
+	if _, err := store.Mutate(t.Context(), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		c.RecordSession("")
+		c.RecordSession(sessionID)
+		return true
+	}); err != nil {
+		t.Fatalf("rebind %q to %q: %v", chatID, sessionID, err)
+	}
+}
+
+// A resume that fell through to session/new leaves the tangent bound to a session
+// carrying none of the parent's conversation, so the outcome must report `fresh`. The
+// record alone cannot say it: it holds a non-empty session id either way.
+func TestCmdForkChat_AFellThroughResumeReportsFresh(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+	host.tangentBridge = &recordingBridge{sessionID: "sess_fresh"}
+	host.onOpenTangent = func(id vibekit.ChatID) { rebindSession(t, store, id, "sess_fresh") }
+
+	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a lost context is not a refusal (body %s)", statusOf(err), errText(err))
+	}
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", body)
+	}
+	if reply["outcome"] != vibekit.ForkOutcomeFresh {
+		t.Errorf("outcome = %v, want %q: the resume fell through, so the tangent inherited nothing",
+			reply["outcome"], vibekit.ForkOutcomeFresh)
+	}
+	if reply["session_id"] != "sess_fresh" {
+		t.Errorf("session_id = %v, want the sess_fresh the record now holds", reply["session_id"])
+	}
+	c, ok := store.Get(t.Context(), "c-tangent")
+	if !ok {
+		t.Fatal("the tangent chat was not created")
+	}
+	if len(c.Messages) != 0 {
+		t.Errorf("the tangent holds %d messages, want 0: a fresh session carries no transcript", len(c.Messages))
+	}
+}
+
+// A repeat of the same op after a fell-through load must answer `fresh` and spend no
+// bridge: the record already says the fork's session was retired, so there is nothing
+// left to inherit. Two POSTs of one op_id with no Idempotency-Key both run the handler,
+// which is what routes the second call through the ledger's replay branch.
+func TestCmdForkChat_RepeatOpAfterAFellThroughLoadReportsFreshAndLoadsNothing(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
+	host := newForkHost(store, br, "c-parent")
+	host.tangentBridge = &recordingBridge{sessionID: "sess_fresh"}
+	host.onOpenTangent = func(id vibekit.ChatID) { rebindSession(t, store, id, "sess_fresh") }
+	ops := newTestMembership(t, host)
+	req := forkReqOp(t, "c-parent", "", "op-same")
+
+	first, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops, req)
+	if err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	tangent := chatIDOfResponse(t, first)
+	opensAfterFirst := host.opensFor(tangent)
+
+	second, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops, req)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	reply, ok := second.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", second)
+	}
+	if reply["outcome"] != vibekit.ForkOutcomeFresh {
+		t.Errorf("outcome = %v, want %q: the first attempt's load fell through, so the tangent inherited nothing",
+			reply["outcome"], vibekit.ForkOutcomeFresh)
+	}
+	if reply["session_id"] != "sess_fresh" {
+		t.Errorf("session_id = %v, want the sess_fresh the record now holds", reply["session_id"])
+	}
+	if got := host.opensFor(tangent); got != opensAfterFirst {
+		t.Errorf("OpenBridge calls for the tangent = %d, want the %d the first attempt made: "+
+			"a session KAS minted empty is not worth a process tree", got, opensAfterFirst)
+	}
+}
+
+// A tangent whose fork was refused has no session, so there is nothing to load and no
+// reason to spend a process tree finding that out.
+func TestCmdForkChat_AFreshTangentLoadsNothing(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedParent(t, store, "c-parent")
+	// No bridge can be opened for the parent, so the fork is refused.
+	host := newForkHost(store, nil, "c-parent")
+
+	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	reply, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body = %T, want map[string]any", body)
+	}
+	if reply["outcome"] != vibekit.ForkOutcomeFresh {
+		t.Errorf("outcome = %v, want %q", reply["outcome"], vibekit.ForkOutcomeFresh)
+	}
+	if got := host.opensFor("c-tangent"); got != 0 {
+		t.Errorf("OpenBridge calls for the tangent = %d, want 0: a fresh tangent has nothing to load", got)
+	}
+	if len(host.awaitChatIDs) != 0 {
+		t.Errorf("AwaitReplayAdopted chats = %v, want none", host.awaitChatIDs)
+	}
+}
+
 // TestCmdForkChat_RefusesToReshapeAnExistingChat pins the guard, for
 // CmdResumeSession's reason: binding a live chat to another session strands its
 // own (the transcript stays on disk unreferenced, so the reaper sweeps it) and
@@ -411,7 +695,7 @@ func TestCmdForkChat_OpensTheParentBridgeBeforeForking(t *testing.T) {
 func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
-	if err := store.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Existing work"
 		c.RecordSession("sess_existing")
 		return true
@@ -419,7 +703,7 @@ func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_new"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 
@@ -459,7 +743,7 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 				seedParent(t, store, "c-parent")
 			}
 			br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-			host := newForkHost(store, br)
+			host := newForkHost(store, br, "c-parent")
 
 			_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, tc.newChat, tc.parent, tc.title))
 
@@ -481,7 +765,7 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 // TestCmdForkChat_RejectsAMalformedPayload: the envelope's own failure mode.
 func TestCmdForkChat_RejectsAMalformedPayload(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	host := newForkHost(store, nil)
+	host := newForkHost(store, nil, "c-parent")
 
 	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), &vibekit.ClientCommand{
 		Type:    vibekit.CmdForkChat,
@@ -505,7 +789,7 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, _ = CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", ""))
 	closeChatTeardown(t.Context(), host, host, host, "c-tangent")
@@ -536,7 +820,7 @@ func TestCmdForkChat_AcceptsATitleAtTheCap(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	_, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host), forkReq(t, "c-tangent", "c-parent", atCap))
 	if err != nil {

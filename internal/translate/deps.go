@@ -80,7 +80,7 @@ type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	// UpsertTurnPlan overwrites the turn's plan row, or appends msg when it has none.

@@ -15,7 +15,7 @@ import (
 	"io/fs"
 	"net/http"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // cspTemplate is the CSP applied to every response, with a single %s

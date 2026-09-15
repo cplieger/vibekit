@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -603,7 +604,7 @@ func TestHandleStepTranscript_APercentEncodedSegmentDecodes(t *testing.T) {
 // that result on the wire and the notification channel is buffered.
 func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a") {
+	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	if closedNow(sr.barrier("sess_a")) {
@@ -637,7 +638,7 @@ func TestStepReplays_TheSettleSpansTheDrain(t *testing.T) {
 // transcript that existed and was fully projected.
 func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a") {
+	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	// The drain loop folded every replayed frame while the RPC was still in flight.
@@ -662,7 +663,7 @@ func TestStepReplays_ADrainedReplaySettlesWhenTheLoadReturns(t *testing.T) {
 // session's, because each read loop restarts its sequence at zero.
 func TestStepReplays_AStragglerFromAPreviousAttachmentSettlesNothing(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a") {
+	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Fatal("open reported a duplicate on an empty registry")
 	}
 	const live = testFwdGen + 1
@@ -714,10 +715,10 @@ func TestStepReplays_NoReplayOpenAnswersImmediately(t *testing.T) {
 // joined — and the refusal must not disturb the first.
 func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	var sr stepReplays
-	if !sr.open("sess_a") {
+	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Fatal("the first open was refused")
 	}
-	if sr.open("sess_a") {
+	if sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Error("a second open of the same session was accepted")
 	}
 	sr.markLoadedAt("sess_a", atLoad())
@@ -727,7 +728,7 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 	}
 	// Once taken, the session is open for a new read again.
 	_ = sr.take("sess_a")
-	if !sr.open("sess_a") {
+	if !sr.open("sess_a", translate.NewProjection(newMessageID, "")) {
 		t.Error("a session cannot be read again after its replay was taken")
 	}
 }
@@ -737,7 +738,7 @@ func TestStepReplays_ASecondReadOfOneStepIsRefused(t *testing.T) {
 // else will and survive being called twice.
 func TestStepReplays_TakeIsIdempotentAndClosesTheBarrier(t *testing.T) {
 	var sr stepReplays
-	sr.open("sess_a")
+	sr.open("sess_a", translate.NewProjection(newMessageID, ""))
 	b := sr.barrier("sess_a")
 	_ = sr.take("sess_a") // the abandoned path: never settled
 	if !closedNow(b) {
@@ -759,7 +760,7 @@ func TestStepReplays_IngestReportsWhetherItConsumed(t *testing.T) {
 	if sr.ingest("sess_a", vibekit.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest claimed a frame with no replay open")
 	}
-	sr.open("sess_a")
+	sr.open("sess_a", translate.NewProjection(newMessageID, ""))
 	if !sr.ingest("sess_a", vibekit.ACPUpdateAgentChunk, raw) {
 		t.Error("ingest dropped a frame for an open replay")
 	}

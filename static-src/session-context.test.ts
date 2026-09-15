@@ -10,7 +10,6 @@ import {
   setLastModel,
   getLastModel,
   restoreLastModel,
-  setLastEffort,
   getLastEffortFor,
   restoreLastEffort,
 } from "./session-context.js";
@@ -68,68 +67,60 @@ describe("setLastModel — redundant-write guard", () => {
   });
 });
 
-describe("setLastEffort — the level a new chat opens on, scoped to its model", () => {
+describe("the effort seed — the level a new chat opens on, per model", () => {
+  // The seed is WRITTEN by the server, inside the set_effort command that
+  // justifies it, so this module only ever adopts and reads it. There is no
+  // setter to test: a level the session refused must not be remembered, and only
+  // the command knows whether it took.
   beforeEach(() => {
     vi.clearAllMocks();
-    restoreLastEffort("__reset__", "__reset__");
+    restoreLastEffort({});
   });
 
-  it("patches once when the pair changes from the cache", () => {
-    setLastEffort("max", "claude-opus-5");
-    expect(patchSettings).toHaveBeenCalledTimes(1);
-    expect(patchSettings).toHaveBeenCalledWith({
-      last_effort: "max",
-      last_effort_model: "claude-opus-5",
-    });
+  it("answers the level adopted for that model", () => {
+    restoreLastEffort({ "claude-opus-5": "max" });
     expect(getLastEffortFor("claude-opus-5")).toBe("max");
   });
 
-  it("the seed answers ONLY for the model it was picked under", () => {
+  it("keeps one level per model, so a pick on one retracts none of the others", () => {
+    // The whole reason the seed is a map: one level for the app meant the only
+    // level remembered anywhere was the one chosen most recently, so every other
+    // model silently reopened on its own default tier.
+    restoreLastEffort({ m1: "max", m2: "low" });
+
+    expect(getLastEffortFor("m1")).toBe("max");
+    expect(getLastEffortFor("m2")).toBe("low");
+  });
+
+  it("answers only for a model that has an entry", () => {
     // A tier is a judgement about one model; carried onto another it overrode
     // that model's own default (user report, 2026-08-31).
-    setLastEffort("max", "claude-opus-5");
+    restoreLastEffort({ "claude-opus-5": "max" });
     expect(getLastEffortFor("gpt-luna")).toBe("");
     expect(getLastEffortFor("")).toBe("");
-    expect(getLastEffortFor("claude-opus-5")).toBe("max");
   });
 
-  it("does NOT patch when called again with the cached pair", () => {
-    // Same loop the model guard exists for: the settings_updated handler must not
-    // be able to push a server-confirmed value back through the setter. It uses
-    // restoreLastEffort for that, and this guard stops any other caller
-    // reintroducing it. It also makes a repeat pick of the level already in force
-    // free instead of waking the save indicator.
-    setLastEffort("max", "m1");
-    vi.clearAllMocks();
-
-    setLastEffort("max", "m1");
-    setLastEffort("max", "m1");
-
-    expect(patchSettings).not.toHaveBeenCalled();
+  it("an inherited member answers like a model with no entry", () => {
+    // A model id is arbitrary text, and a bare record read hands back Object's
+    // own member for `constructor` — which would reach the picker as a level.
+    expect(getLastEffortFor("constructor")).toBe("");
+    expect(getLastEffortFor("toString")).toBe("");
   });
 
-  it("the same level under a DIFFERENT model is a real change and patches", () => {
-    setLastEffort("max", "m1");
-    vi.clearAllMocks();
+  it("adopting a payload patches nothing", () => {
+    // The write side is the server's. A patch from here would push a
+    // server-confirmed value straight back and loop at debounce speed.
+    restoreLastEffort({ m1: "xhigh" });
 
-    setLastEffort("max", "m2");
-
-    expect(patchSettings).toHaveBeenCalledWith({ last_effort: "max", last_effort_model: "m2" });
-  });
-
-  it("restoreLastEffort updates the cache without patching", () => {
-    restoreLastEffort("xhigh", "m1");
     expect(patchSettings).not.toHaveBeenCalled();
     expect(getLastEffortFor("m1")).toBe("xhigh");
-
-    setLastEffort("xhigh", "m1");
-    expect(patchSettings).not.toHaveBeenCalled();
   });
 
-  it("starts empty, so a user who never picked gets the model's own default", () => {
-    // The seed is absent rather than guessed: marking a tier nobody chose would
-    // make the picker claim a level the session is not running at.
-    restoreLastEffort(undefined, undefined);
-    expect(getLastEffortFor("__reset__")).toBe("__reset__");
+  it("an absent payload leaves the cache alone", () => {
+    // A settings document that says nothing about the seed is not a document
+    // saying nobody has picked: nothing is remembered, so nothing is retracted.
+    restoreLastEffort({ m1: "high" });
+    restoreLastEffort(undefined);
+    expect(getLastEffortFor("m1")).toBe("high");
   });
 });

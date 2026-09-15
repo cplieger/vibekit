@@ -106,7 +106,7 @@ func TestStartTurn_ADisplacedTurnIsPersistedAheadOfThePromptThatEndedIt(t *testi
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	// An engine-opened turn mid-reply: a workflow step's frames on the launching chat.
-	if err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

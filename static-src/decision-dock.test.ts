@@ -992,6 +992,25 @@ describe("a decision another surface answered", () => {
     expect(liveCard()).not.toBeNull();
   });
 
+  it("answers the settled ask's run attribution, and nothing for an ask it never held", () => {
+    // The settle frame names the chat the ask travelled on and not the run it was
+    // about, while the banner it raised was tagged by the run; the dock is the one
+    // place on the client that still knows which.
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_1",
+      requestID: 7,
+      payload: perm({ request_id: 7 }),
+      submit: vi.fn(),
+    });
+    pushPerm("c1", 8);
+
+    expect(collapseSettledDecision("c1", "permission", 7, "user")).toBe("wf_1");
+    expect(collapseSettledDecision("c1", "permission", 8, "user")).toBe("");
+    expect(collapseSettledDecision("c1", "permission", 8, "user")).toBeUndefined();
+  });
+
   it("matches on kind as well as request id", () => {
     // Request ids are per-bridge JSON-RPC ids, so one id can name a permission
     // and an elicitation. Retiring the wrong card would drop an ask nobody

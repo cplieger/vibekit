@@ -84,6 +84,22 @@
  * clearance that thins to under the reach fails there rather than silently clipping a
  * ring.
  *
+ * THE TWO CARD FEET JOINED IN 2026-09, when the card feet stopped padding their own
+ * band: `.run-foot` and the delegate card's reused turn footer each held a control
+ * whose target the app-wide floor grows to 44px under a finger, inside 4px of block
+ * padding whose only other job was clearing this ring — so the band was 52px for a
+ * 44px target, which is what a phone reader reported as the footer being too tall.
+ * With the padding gone the control is flush on the block edges its card clips, so it
+ * is here on the same criterion as every other member. Each card's HEAD was already a
+ * member (`a.subagent-header`, `.run-head`), so this is the card's two ends agreeing
+ * rather than a new concession. The TURN card's own ledger is deliberately NOT here:
+ * `.turn` is `overflow: visible`, so nothing clips its ring.
+ *
+ * `.run-open`'s inline clearance is 4px, which makes it the tightest member — under
+ * `.code-act-btn`'s 5px — and it still clears the 2px band by 2px. The delegate
+ * ledger's is 8px, and it is 8px because the gutter MOVED onto that button for this
+ * reason (14-tools.css); with the gutter on the row it was 0px.
+ *
  * `.git-repo-section` holds TWO members, because its tabs build the header
  * differently: the Changes tab's `.git-repo-section-header` is itself the button,
  * while the PRs tab makes that class a `padding: 0` row hosting a nested
@@ -115,8 +131,18 @@
  * round an outline the cards already clip identically at rest and on hover. */
 a.subagent-header:focus-visible,
 .subagent-container.has-disclosure > .subagent-header:focus-visible,
+.subagent-foot > .subagent-footer > .turn-ledger-summary:focus-visible,
+/* The status card's account link, which is the card's one LINK and is deliberately
+   flush with its clipper's padding box on both inline edges to buy the concentric
+   `--card-radius` corner. `.pill-expand-content` is `overflow: auto`
+   (15-input.css), so it clips at that box and the floor's OUTSIDE ring lands
+   entirely inside the clip. The row's own `padding-inline: var(--card-inset)` (8px)
+   and `padding-block: var(--sp-1)` (4px) clear the band's [0, 2px] reach on all
+   four edges. */
+.pill-account:focus-visible,
 .run-head:focus-visible,
 a.run-step-head:focus-visible,
+.run-open:focus-visible,
 .tool-group-header:focus-visible,
 .code-act-btn:focus-visible,
 .git-repo-section-header:focus-visible,

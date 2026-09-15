@@ -665,37 +665,27 @@
 
 /* --- Message column ----------------------------------------------------- */
 
-.steer-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
+/* FOUR lines at the full width of the bar, because the bar grows UPWARD into the
+   transcript and an unbounded row here costs the reader the conversation. Clipped
+   by overflow rather than cut with an ellipsis, so the whole message stays in the
+   DOM and stays reachable through the row's tooltip, its accessible name and
+   Edit. `min-width: 0` because this is the grid's middle track. */
 .steer-text {
-  color: var(--c-text-primary);
-  line-height: 1.35;
-  transition: color var(--dur-micro) var(--ease-standard);
-}
-
-/* FOUR lines at the full width of the bar, behind the attribute the opener
-   toggles — the turn header's own mechanism (29-turns.css, clamp-text.ts). Not an
-   ellipsis that cuts: the text is clipped by overflow, so the whole message stays
-   in the DOM, and `.steer-more` below is what opens it. Four rather than
-   unbounded because the bar grows UPWARD into the transcript. */
-.steer-text[data-clamped] {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   line-clamp: 4;
   -webkit-box-orient: vertical;
+  min-width: 0;
   overflow: hidden;
+  color: var(--c-text-primary);
+  line-height: 1.35;
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 /* Skinned on `.steer-note-more` (13-messages.css) and the exec view's
    `.ev-in-more`/`.ev-r-more` (31-exec-view.css), because every one is the same
    control: a text button that opens a clamp. Aligned left with the message rather than stretched across the
    row. */
-.steer-more,
 .run-input-more,
 .user-input-more {
   align-self: flex-start;
@@ -709,13 +699,11 @@
   text-underline-offset: 2px;
 }
 
-.steer-more:hover,
 .run-input-more:hover,
 .user-input-more:hover {
   color: var(--c-accent);
 }
 
-.steer-more:focus-visible,
 .run-input-more:focus-visible,
 .user-input-more:focus-visible {
   outline: var(--focus-ring);
@@ -808,10 +796,12 @@
    top of this file — the bar GROWS upward and the transcript's flex row shrinks
    by exactly this region's height, so nothing is covered.
 
-   State is carried by a GLYPH plus a WORD, never by tint alone (WCAG 1.4.1). The
-   glyph column is a copy of `.ev-state`'s (31-exec-view.css), deliberately rather
-   than of `.run-step-glyph`'s: the exec view's reads `--dot-size` where the run
-   card's hard-codes a length, and this is the third surface that has to agree.
+   State is carried by a GLYPH plus a WORD, never by tint alone (WCAG 1.4.1), and
+   the glyph is the WORKFLOW MARK itself rather than a copy of any state column:
+   this row's subject is a RUN, the same subject the tab strip's two marks report,
+   so it shares their rule (12-tabs.css, and the note at the glyph below). The exec
+   view's `.ev-state` and the run card's `.run-step-glyph` stay as they are, because
+   their subject is a STEP — that is the line between the two vocabularies.
    ========================================================================== */
 
 .run-bar {
@@ -874,70 +864,26 @@
   outline-offset: var(--focus-offset);
 }
 
-/* A RESERVED box, so a row whose state is not known yet does not shift its name
-   when the first fetch lands. */
-.run-bar-glyph {
-  display: grid;
-  place-items: center;
-  inline-size: 1rem;
-  block-size: 1rem;
-  font-size: var(--fs-xs);
-  line-height: 1;
-  color: var(--c-text-tertiary);
-}
+/* THE GLYPH IS THE WORKFLOW MARK, and its whole look lives in 12-tabs.css ("The
+   workflow mark"), which lists this class beside `.tab-run-dot` rather than being
+   copied here: the mark on the launching chat's tab row, the dot on that run's own
+   row and this glyph all report ONE run, so a reader may not be shown three
+   answers. `run-bar.ts` writes the state as `data-status` in that mark's own
+   vocabulary (working | waiting | input) and the rules over there do the rest —
+   silhouette, band, halo, ink, and the breathing beat with its mask.
 
-/* FOUR states reach a row and no more, so there is no ink here for a settled one:
-   `rows()` keeps a run only while its state is unfetched or `runIsLive`, which
-   admits running and paused alone. An unanswered ask is the one of the four a
-   reader must ACT on, so its `?` carries weight as well as hue. */
-.run-bar-row[data-state="input"] .run-bar-glyph {
-  font-weight: var(--fw-semibold);
-  color: var(--c-yellow);
-}
+   WHAT THAT REPLACED, because it is the divergence the share exists to end: a
+   CIRCULAR ring in `--c-accent`, a spinning conic arc for `running`, `--c-blue` for
+   `waiting`, and a yellow `?` character for `input`. Every one of those was a
+   channel this row answered differently from the strip while naming the same run.
+   The `?` is the one real loss — it carried "act on me" as a shape — and what
+   stands in for it is the mark's own wants-you halo plus the WORD beside it, which
+   this row has and a tab row does not.
 
-/* Running and waiting carry no character, so the RING is the glyph and the two
-   differ by MOTION — the axis the tab dot, the tool card, the run card and the
-   exec tree all use. A still ring is a run stopped with nothing moving. */
-/* `box-sizing` so `--dot-size` IS the painted diameter, which is what puts this
-   ring at the size of the settled mark that shares the slot: the reset's `*` does
-   not reach a pseudo-element, so without it the 2px border landed outside the token
-   and the ring rendered 12px against the disc's 8. Pinned by
-   `state-column-size.test.ts`, which measures both rather than reading either. */
-.run-bar-row[data-state="running"] .run-bar-glyph::before,
-.run-bar-row[data-state="waiting"] .run-bar-glyph::before {
-  content: "";
-  display: block;
-  box-sizing: border-box;
-  inline-size: var(--dot-size);
-  block-size: var(--dot-size);
-  border: 0.125rem solid var(--c-accent);
-  border-radius: 50%;
-}
-
-/* The ARC is painted and the box never turns (`--vk-spin-arc`, 00-header.css) —
-   rotating a ring this small resamples it at every angle off a right angle, and
-   that was the wobble. The border above is neutralised rather than dropped: the
-   still `waiting` ring shares that rule and DRAWS with it, and it also reserves
-   this ring's band inside `--dot-size` for the mask to paint over. */
-.run-bar-row[data-state="running"] .run-bar-glyph::before {
-  border-color: transparent;
-  background: conic-gradient(
-      from var(--vk-spin-arc),
-      transparent 0deg 90deg,
-      var(--c-accent) 90deg 360deg
-    )
-    border-box;
-  mask: radial-gradient(
-    closest-side,
-    transparent calc(100% - 0.125rem),
-    #000 calc(100% - 0.125rem)
-  );
-  animation: vk-spin var(--spin-dur) linear infinite;
-}
-
-.run-bar-row[data-state="waiting"] .run-bar-glyph::before {
-  border-color: var(--c-blue);
-}
+   The mark sizes itself off `--dot-size`, so the reserved box IS the mark: no state
+   changes the box, which is what keeps the name from stepping sideways when the
+   first fetch lands. A run with no state yet writes no `data-status` at all and the
+   shared rule then paints nothing, so the column holds its width empty. */
 
 .run-bar-name {
   min-width: 0;

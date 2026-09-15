@@ -51,7 +51,9 @@ vi.mock("./scroll.js", async (importOriginal) => {
 });
 // The session-wide index is the rail's own fetch, and the pagination door is a
 // network read. Both are staged; the sequencing around them is what is under test.
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
+// `apiGetTyped` is the in-chat search's fetch, linked through the rail's hit-turn
+// reader and never asked here.
+vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 // The DOM the scroll controller resolves at import, nested the way the page nests

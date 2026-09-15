@@ -20,6 +20,8 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { openMergeMethodDialog } from "./merge-dialog.js";
 import { FORGE_ICONS, ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
+import { flashTarget } from "./flash-target.js";
+import { prIdentity } from "./push-subject.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
 import {
   mergePR,
@@ -36,12 +38,15 @@ import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { ensureForges } from "./forge-store.js";
 import { reconcile } from "./reconcile.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
 import { el } from "@cplieger/reactive";
 import { chevronEl } from "./chevron.js";
 import { createSearchPopup } from "./search-popup.js";
 import type { SearchPopup } from "./search-popup.js";
+import { classify, emptyNote, scanNote } from "./textsearch/copy.js";
+import type { Nouns } from "./textsearch/copy.js";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { gitRepoSkeleton, paintPlaceholder } from "./skeleton.js";
 import { iconEl } from "./icon-el.js";
@@ -63,6 +68,22 @@ let filterText = "";
 /** Whether the fan-out has ANSWERED. A repo set with no open PRs is an answer, and
  *  the container cannot tell it from a set this client has never read. */
 let prsAnswered = false;
+/** Each section's disclosure, so a later paint can re-decide its open state:
+ *  reconcile keeps the section ELEMENT across paints, so the mount's decision was
+ *  the only one ever made and a filter typed afterwards could select a row inside
+ *  a region the reader had collapsed. */
+const disclosures = new WeakMap<HTMLElement, DisclosureController>();
+/** The reader's own toggles, by repo: the resting arrangement a repaint respects
+ *  and a filter outranks (`wantOpen`). Only a USER toggle is recorded, or the
+ *  opens this module performs would be read back as the reader's wish. */
+const readerToggled = new Map<string, boolean>();
+/** The pull request a notification asked to be focused, as `prIdentity` spells it.
+ *  A ONE-SHOT slot consumed on success, modelled on run-view.ts's `focusRequest`:
+ *  a notification click is a single event with no later render that legitimately
+ *  re-asserts it, so RECORDING it would re-scroll the reader on every later paint. */
+let pendingFocus = "";
+/** Whether this request has already spent its one healing refresh. */
+let focusRefreshed = false;
 let refreshGen = 0;
 let refreshController: AbortController | null = null;
 registerCleanup(() => refreshController?.abort());
@@ -81,15 +102,182 @@ export const prsFind: SearchPopup = createSearchPopup<null>({
   kind: "filter",
   label: "Filter pull requests",
   placeholder: "Filter pull requests\u2026",
+  note: true,
   host: () => document.getElementById("git-view"),
   query: (q) => {
-    filterText = q.trim().toLowerCase();
+    filterText = q.toLowerCase();
     return null;
   },
   render: () => {
     paint();
   },
 });
+
+/** The filter's unit is the pull request on both axes: a match IS a row, and the
+ *  scan reads every row in memory. */
+const NOUNS: Nouns = {
+  match: { one: "pull request", many: "pull requests" },
+  scanned: { one: "pull request", many: "pull requests" },
+};
+
+/** The note under the box: `total` rows in memory, `shown` surviving the filter.
+ *  Silent with no filter, because a count restating the list is noise and this
+ *  surface has no cut of its own to report. */
+function noteFor(total: number, shown: number): string {
+  if (filterText === "") {
+    return "";
+  }
+  if (shown > 0) {
+    return scanNote({ scanned: total, matched: shown, truncated: false }, shown, NOUNS);
+  }
+  return emptyNote(classify({ matched: 0, shown: 0, scanned: total, truncated: false }), NOUNS);
+}
+
+// The labels a row renders AND the filter reaches, spelled once so the two
+// cannot drift.
+const DRAFT_LABEL = "draft";
+const AUTO_MERGE_LABEL = "auto-merge";
+const MERGE_LABEL = "Merge";
+const ARM_LABEL = "Merge when green";
+const RERUN_LABEL = "Re-run";
+const REOPEN_LABEL = "Reopen";
+const CLOSE_LABEL = "Close";
+
+function numberLabel(pr: PR): string {
+  return `#${String(pr.number)}`;
+}
+
+/** The authorship read-out under the title, as one string: the row renders the
+ *  parts joined, so the joined form is what a reader sees and types back. */
+function subText(pr: PR): string {
+  const parts: string[] = [];
+  if (pr.author !== undefined && pr.author !== "") {
+    parts.push(`by @${pr.author}`);
+  }
+  if (pr.updated_at !== undefined && pr.updated_at > 0) {
+    parts.push(relativeTime(pr.updated_at));
+  }
+  if (pr.source_branch !== "" && pr.target_branch !== "") {
+    parts.push(`${pr.source_branch} → ${pr.target_branch}`);
+  }
+  return parts.join(" · ");
+}
+
+/** Every string a PR row shows a reader, in ONE list: the number, the title, the
+ *  draft and auto-merge tags, the check chip, the authorship line and the action
+ *  labels the row offers, plus the state the forge reports. `renderPRRow` reads
+ *  the same pieces and the census in git-prs-tab.test.ts types every rendered
+ *  string back into the box, so a string on the row is never one the filter
+ *  cannot reach. */
+function rowText(g: RepoGroup, pr: PR): string[] {
+  return [
+    numberLabel(pr),
+    pr.title,
+    pr.draft === true ? DRAFT_LABEL : "",
+    checkChip(pr)?.text ?? "",
+    pr.auto_merge_armed === true ? AUTO_MERGE_LABEL : "",
+    subText(pr),
+    MERGE_LABEL,
+    canArmAutoMerge(pr) ? ARM_LABEL : "",
+    pr.check_status === "failing" && supportsRerun(g.forge_kind) ? RERUN_LABEL : "",
+    pr.state !== "open" ? REOPEN_LABEL : "",
+    CLOSE_LABEL,
+    pr.state,
+  ];
+}
+
+function prMatches(g: RepoGroup, pr: PR): boolean {
+  return rowText(g, pr).join("\n").toLowerCase().includes(filterText);
+}
+
+/** A repo NAME match admits every PR in it: naming a repo is a request to see
+ *  that repo, the rule the Changes tab already follows. */
+function groupMatches(g: RepoGroup): boolean {
+  return filterText !== "" && g.full_name.toLowerCase().includes(filterText);
+}
+
+/** The rows of `g` the current filter admits. */
+function filteredPRs(g: RepoGroup): PR[] {
+  if (filterText === "" || groupMatches(g)) {
+    return g.prs;
+  }
+  return g.prs.filter((pr) => prMatches(g, pr));
+}
+
+/** Whether a section shows its body. A filter outranks everything: every section
+ *  it admits holds a row it selected, and a selected row inside a collapsed region
+ *  is one the reader cannot see and nothing on screen says exists. Otherwise the
+ *  reader's own toggle stands, and a repo nobody has touched opens iff it has PRs. */
+function wantOpen(g: RepoGroup): boolean {
+  if (filterText !== "") {
+    return true;
+  }
+  // A standing focus request force-opens ITS group and writes no `readerToggled`
+  // entry, so the reader's own collapse survives the visit.
+  if (holdsPendingFocus(g)) {
+    return true;
+  }
+  return readerToggled.get(g.full_name) ?? g.prs.length > 0;
+}
+
+/** Does the arriving identity name a row of `g`?
+ *
+ *  CASE-INSENSITIVE, because the two sides come from different sources: the
+ *  subject's repo slug is parsed from the LOCAL origin URL while the tab's
+ *  `full_name` is the forge's own listing field. The identity is COMPARED and
+ *  never parsed — a forge id is itself `<kind>:<host>`, so the key is not
+ *  self-delimiting. */
+function holdsPendingFocus(g: RepoGroup): boolean {
+  if (pendingFocus === "") {
+    return false;
+  }
+  const want = pendingFocus.toLowerCase();
+  return g.prs.some((pr) => prIdentity(g.forge_id, g.full_name, pr.number).toLowerCase() === want);
+}
+
+/** Focus the pull request `identity` names, once. */
+export function requestPRFocus(identity: string): void {
+  pendingFocus = identity;
+  focusRefreshed = false;
+  // A PAINT, not just a frame: the per-request force-open reaches the disclosure only
+  // through `paintGroupBody`, and a row inside a closed section has no box to scroll
+  // to. Safe before the tab is materialized too — `paintInner` early-returns with no
+  // mount, so the request stands and the activation's own paint consumes it.
+  paint();
+}
+
+/** Spend a standing request against the painted DOM. Idempotent: the slot is cleared
+ *  BEFORE the scroll, so a request both repainted directly and picked up by a later
+ *  paint cannot double-scroll. */
+function attemptFocus(): void {
+  if (pendingFocus === "") {
+    return;
+  }
+  const root = document.getElementById("git-prs-mount");
+  if (root === null) {
+    return;
+  }
+  // One lookup, against the row attribute `renderPRRow` writes. The `i` flag is what
+  // makes the selector agree with `holdsPendingFocus` about case.
+  const row = root.querySelector<HTMLElement>(`[data-pr="${CSS.escape(pendingFocus)}" i]`);
+  if (row === null) {
+    // A list stale by one merge heals once; a wrong identity costs one fetch and then
+    // lands the reader on the PRs tab with no selection, never an error and never a
+    // wrong row. The slot stands, so the refresh's own paint retries.
+    if (focusRefreshed) {
+      pendingFocus = "";
+      return;
+    }
+    focusRefreshed = true;
+    void refreshPRs().catch(() => {
+      /* the error state is already painted by loadPRGroups */
+    });
+    return;
+  }
+  pendingFocus = "";
+  focusRefreshed = false;
+  flashTarget(() => row);
+}
 
 export function initPRsTab(): void {
   if (prsInited) {
@@ -347,6 +535,13 @@ function paintLoadError(root: HTMLElement, err: unknown): void {
 
 function paint(): void {
   preserveGitScroll(paintInner);
+  // Registered AFTER preserveGitScroll returns, because its own scroll restore is a
+  // requestAnimationFrame (git-scroll.ts, its last statement): second in that frame's
+  // list is what lets the scroll into view win. Guarded, so a settled tab schedules
+  // nothing.
+  if (pendingFocus !== "") {
+    requestAnimationFrame(attemptFocus);
+  }
 }
 
 function paintInner(): void {
@@ -357,7 +552,16 @@ function paintInner(): void {
 
   const groups = getPRGroups();
 
+  // A toggle for a repo the fan-out no longer lists describes nothing.
+  const active = new Set(groups.map((g) => g.full_name));
+  for (const k of readerToggled.keys()) {
+    if (!active.has(k)) {
+      readerToggled.delete(k);
+    }
+  }
+
   if (groups.length === 0) {
+    prsFind.shell?.setNote("");
     root.innerHTML = renderEmptyState({
       icon: ICON_PR_EMPTY,
       title: "No connected forges",
@@ -366,16 +570,21 @@ function paintInner(): void {
     return;
   }
 
+  // Which groups survive the filter, and how many rows do. ONE predicate, read
+  // here for the note and the section list and again in paintGroupBody for the
+  // rows: a repo NAME match admits every PR in it.
   const visible: RepoGroup[] = [];
+  let total = 0;
+  let shown = 0;
   for (const g of groups) {
-    const matchesFilter =
-      filterText === "" ||
-      g.full_name.toLowerCase().includes(filterText) ||
-      g.prs.some((pr) => pr.title.toLowerCase().includes(filterText));
-    if (matchesFilter) {
+    total += g.prs.length;
+    const rows = filteredPRs(g);
+    shown += rows.length;
+    if (filterText === "" || rows.length > 0 || groupMatches(g)) {
       visible.push(g);
     }
   }
+  prsFind.shell?.setNote(noteFor(total, shown));
 
   // Aggregate: any open PRs at all? If not, show a centered empty
   // state instead of N collapsed sections.
@@ -409,10 +618,10 @@ function paintInner(): void {
         child.remove();
       }
     }
+    // No hint: the note above the pane already says what the filter found.
     root.innerHTML = renderEmptyState({
       icon: ICON_FILTER,
       title: "No matching pull requests",
-      hint: "Adjust your filter to see more.",
     });
     return;
   }
@@ -444,14 +653,24 @@ function paintInner(): void {
   });
 }
 
-/** Refresh a kept group section's count + body content. Header
- *  identity (and expansion state) is preserved across paints. */
+/** Refresh a kept group section's count, body content and open state. Header
+ *  identity is preserved across paints; the open state is decided again, because
+ *  the mount's decision is the only one a kept element would otherwise ever get. */
 function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
   const meta = section.querySelector(".git-repo-section-meta");
   if (meta !== null) {
     meta.textContent = countText;
+  }
+
+  const ctl = disclosures.get(section);
+  if (ctl !== undefined) {
+    if (wantOpen(g)) {
+      ctl.open();
+    } else {
+      ctl.close();
+    }
   }
 
   const body = section.querySelector<HTMLElement>(":scope > .git-repo-section-body");
@@ -484,11 +703,7 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
     return;
   }
 
-  const groupMatchesFilter = filterText !== "" && g.full_name.toLowerCase().includes(filterText);
-  const filtered =
-    filterText === "" || groupMatchesFilter
-      ? g.prs
-      : g.prs.filter((pr) => pr.title.toLowerCase().includes(filterText));
+  const filtered = filteredPRs(g);
 
   if (filtered.length === 0) {
     inner.replaceChildren();
@@ -514,9 +729,14 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
     // forever: merge_blocked is per-fetch (`checks_running` and `unknown`
     // while the forge computes mergeability), so a PR whose checks went
     // green would hold a disabled Merge button until its section remounted.
-    // The <li> carries no per-PR attributes, so replacing its children is
-    // the whole row — the same shape as the Changes tab's section update.
+    // The <li>'s own `data-pr` is derived from fields a repaint cannot move, so
+    // replacing its children is the whole row — the same shape as the Changes
+    // tab's section update.
+    // Guarded, because it is polled and the row holds four buttons and two anchors.
     update: (row: HTMLElement, pr: PR) => {
+      if (!sigChanged(row, [wireSignature(pr), g.forge_kind, g.forge_id])) {
+        return;
+      }
       row.replaceChildren(...Array.from(renderPRRow(g, pr).childNodes));
     },
   });
@@ -524,19 +744,19 @@ function paintGroupBody(section: HTMLElement, g: RepoGroup): void {
 
 // --- Empty-state markup helpers ---
 
-function renderEmptyState(opts: { icon: string; title: string; hint: string }): string {
+function renderEmptyState(opts: { icon: string; title: string; hint?: string }): string {
+  const hint =
+    opts.hint === undefined ? "" : `<div class="git-multirepo-empty-hint">${opts.hint}</div>`;
   return `
     <div class="git-multirepo-empty">
       <div class="git-multirepo-empty-icon">${opts.icon}</div>
       <div class="git-multirepo-empty-title">${opts.title}</div>
-      <div class="git-multirepo-empty-hint">${opts.hint}</div>
+      ${hint}
     </div>
   `;
 }
 
 function renderGroup(g: RepoGroup): HTMLElement {
-  const expandedDefault = g.prs.length > 0 || filterText !== "";
-
   const section = el("section", { className: "git-repo-section", "data-repo": g.full_name });
 
   // Header is a flex container that hosts: chevron + forge icon +
@@ -588,14 +808,30 @@ function renderGroup(g: RepoGroup): HTMLElement {
   const body = el("div", { className: "git-repo-section-body" });
   const inner = el("div", { className: "git-repo-section-body-inner" });
   body.appendChild(inner);
-  createDisclosure(toggle, body, { open: expandedDefault });
+  disclosures.set(
+    section,
+    createDisclosure(toggle, body, {
+      open: wantOpen(g),
+      onToggle: (open, source) => {
+        if (source === "user") {
+          readerToggled.set(g.full_name, open);
+        }
+      },
+    }),
+  );
 
   section.appendChild(body);
   return section;
 }
 
 function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
-  const li = el("li", { className: "git-pr-row" });
+  // `data-pr` is the tab's ONE DOM row identity and the only thing a focus request
+  // can find a row by. Built with push-subject.ts's own `prIdentity`, the same
+  // function the Go twin is pinned against, so the tab compares and never parses.
+  const li = el("li", {
+    className: "git-pr-row",
+    "data-pr": prIdentity(g.forge_id, g.full_name, pr.number),
+  });
 
   // ONE identity element for the whole title line: the number and the title
   // resolved to the same href, so two anchors meant two tab stops, two hover
@@ -603,7 +839,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   // the link as a span, which keeps its mono/accent treatment without being a
   // second control.
   const hasURL = pr.url !== undefined && pr.url !== "";
-  const num = el("span", { className: "git-pr-row-number" }, `#${pr.number}`);
+  const num = el("span", { className: "git-pr-row-number" }, numberLabel(pr));
   // The text needs its own span because the ellipsis clip cannot sit on the link:
   // it would cut away the expander carrying the link's hit region
   // (22-git-multirepo.css states the trade).
@@ -626,7 +862,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const sub = el("div", { className: "git-pr-row-sub" });
 
   if (pr.draft === true) {
-    sub.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
+    sub.appendChild(el("span", { className: "git-pr-row-tag" }, DRAFT_LABEL));
   }
 
   // Check status rides the row because it arrives in the list call that
@@ -640,23 +876,18 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   }
 
   if (pr.auto_merge_armed === true) {
-    const armed = el("span", { className: "git-pr-row-tag git-pr-check-pending" }, "auto-merge");
+    const armed = el(
+      "span",
+      { className: "git-pr-row-tag git-pr-check-pending" },
+      AUTO_MERGE_LABEL,
+    );
     armed.setAttribute("data-tooltip", "The forge will merge this once its requirements are met.");
     sub.appendChild(armed);
   }
 
-  const parts: string[] = [];
-  if (pr.author !== undefined && pr.author !== "") {
-    parts.push(`by @${pr.author}`);
-  }
-  if (pr.updated_at !== undefined && pr.updated_at > 0) {
-    parts.push(relativeTime(pr.updated_at));
-  }
-  if (pr.source_branch !== "" && pr.target_branch !== "") {
-    parts.push(`${pr.source_branch} → ${pr.target_branch}`);
-  }
-  if (parts.length > 0) {
-    sub.appendChild(el("span", { className: "git-pr-row-sub-text" }, parts.join(" · ")));
+  const subLine = subText(pr);
+  if (subLine !== "") {
+    sub.appendChild(el("span", { className: "git-pr-row-sub-text" }, subLine));
   }
   li.appendChild(sub);
 
@@ -675,7 +906,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const merge = el(
     "button",
     { type: "button", className: "btn-small" },
-    "Merge",
+    MERGE_LABEL,
   ) as HTMLButtonElement;
   const mergeReason = mergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
@@ -713,7 +944,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     const arm = el(
       "button",
       { type: "button", className: "btn-small" },
-      "Merge when green",
+      ARM_LABEL,
     ) as HTMLButtonElement;
     arm.setAttribute("data-tooltip", "Let the forge merge this once its checks pass");
     arm.addEventListener("click", () => {
@@ -748,7 +979,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     const rerun = el(
       "button",
       { type: "button", className: "btn-small" },
-      "Re-run",
+      RERUN_LABEL,
     ) as HTMLButtonElement;
     rerun.setAttribute("data-tooltip", "Re-run the failed CI jobs");
     rerun.addEventListener("click", () => {
@@ -783,7 +1014,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     const reopen = el(
       "button",
       { type: "button", className: "btn-small" },
-      "Reopen",
+      REOPEN_LABEL,
     ) as HTMLButtonElement;
     reopen.setAttribute("data-tooltip", "Reopen this pull request");
     reopen.addEventListener("click", () => {
@@ -807,7 +1038,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   const close = el(
     "button",
     { type: "button", className: "btn-small btn-danger" },
-    "Close",
+    CLOSE_LABEL,
   ) as HTMLButtonElement;
   close.addEventListener("click", () => {
     void (async () => {

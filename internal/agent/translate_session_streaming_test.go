@@ -32,7 +32,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -54,7 +54,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 // lets the client merge by id instead of mounting a second card.
 func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	pending := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
 	h.translator.HandlePlan(t.Context(), "c1", pending)
@@ -90,7 +90,7 @@ func TestHandlePlan_OneRowPerTurnCarryingTheNewestEntries(t *testing.T) {
 // every plan in a chat would fold onto the first one ever recorded.
 func TestHandlePlan_AUserMessageStartsANewTurnsPlan(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	first := json.RawMessage(`{"entries":[{"content":"turn one","priority":"high","status":"pending"}]}`)
 	h.translator.HandlePlan(t.Context(), "c1", first)
@@ -116,27 +116,27 @@ func TestHandlePlan_AUserMessageStartsANewTurnsPlan(t *testing.T) {
 
 func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.CurrentModeID = "code"
 		return true
 	})
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 
 	// Same mode → no broadcast. KAS's current_mode_update keys the new
 	// mode on currentModeId (not modeId — that is the outbound set_mode
 	// request's field).
 	raw := json.RawMessage(`{"currentModeId":"code"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw)
-	if _, head := h.bus.fanout.Bounds(); head != before {
+	if head := h.bus.fanout.Position().Head; head != before {
 		t.Errorf("expected no broadcast for same mode")
 	}
 
 	// Different mode → broadcast.
 	raw2 := json.RawMessage(`{"currentModeId":"chat"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw2)
-	if _, head := h.bus.fanout.Bounds(); head == before {
+	if head := h.bus.fanout.Position().Head; head == before {
 		t.Error("expected broadcast for mode change, got none")
 	}
 

@@ -101,10 +101,11 @@ func maximalTurn(tb testing.TB) *buffer.Buffer {
 func TestLiveTurnGETCaps_CutNothingAtTheMeasuredMaxima(t *testing.T) {
 	buf := maximalTurn(t)
 
-	msg, _, truncated, ok := buf.SnapshotCapped(liveTurnGETCaps)
+	snap, ok := buf.SnapshotCapped(liveTurnGETCaps)
 	if !ok {
 		t.Fatal("snapshot reported no content for a maximal turn")
 	}
+	msg, truncated := snap.Message, snap.Truncated
 
 	// The fixture's own preconditions, asserted so a shrunken fixture cannot make the
 	// truncation check below pass vacuously.
@@ -149,33 +150,6 @@ func TestLiveTurnGETCaps_CutNothingAtTheMeasuredMaxima(t *testing.T) {
 	}
 }
 
-// TestLiveTurnGETCaps_AreNotTheConnectCaps fails on the shape being overturned: the two
-// cap sets were once one alias, on the premise that both channels want the reply's TAIL.
-// They do not — the GET wants the whole turn — so re-aliasing them has to fail here.
-//
-// The connect caps' own ceiling is asserted beside it, because the per-connect budget's
-// arithmetic depends on it and the two must move independently.
-func TestLiveTurnGETCaps_AreNotTheConnectCaps(t *testing.T) {
-	if liveTurnGETCaps == connectSnapshotCaps {
-		t.Error("liveTurnGETCaps == connectSnapshotCaps: the GET carries the newest turn WHOLE " +
-			"while a connect frame carries a tail across up to eight chats inside one budget, so " +
-			"one literal cannot answer both")
-	}
-	if got, want := connectSnapshotCaps.MaxTextBytes(), 52<<10; got != want {
-		t.Errorf("connectSnapshotCaps.MaxTextBytes() = %d, want %d: the per-connect budget divides "+
-			"this number across the chats that fit, so it may not drift with the GET's caps", got, want)
-	}
-	// The GET's CEILING is above the connect caps', which is the direction the whole-turn
-	// need implies. Stated over the ceiling rather than per dimension on purpose: on
-	// ToolOutputTotalBytes the connect caps hold 0, this field's unbounded sentinel, so a
-	// per-dimension reading would call the GET's 8 MiB the wider of the two when as a BOUND
-	// it is the stricter one.
-	if liveTurnGETCaps.MaxTextBytes() <= connectSnapshotCaps.MaxTextBytes() {
-		t.Errorf("liveTurnGETCaps.MaxTextBytes() = %d, want more than the connect caps' %d",
-			liveTurnGETCaps.MaxTextBytes(), connectSnapshotCaps.MaxTextBytes())
-	}
-}
-
 // TestLiveTurnGETCaps_StateTheirRunawayCeiling pins the number the caps' doc comment
 // publishes, plus the two dimensions that number cannot speak for.
 //
@@ -206,16 +180,88 @@ func TestLiveTurnGETCaps_StateTheirRunawayCeiling(t *testing.T) {
 	}
 }
 
-// TestNarrowedConnectCaps_LeavesTheAggregateUnbounded pins the scale trap. `scale` floors
-// at 1, so scaling an unbounded 0 would set a 1-BYTE aggregate on the connect path and
-// drop every tool output from every snapshot.
-func TestNarrowedConnectCaps_LeavesTheAggregateUnbounded(t *testing.T) {
-	for _, remaining := range []int{1, 1 << 10, connectSnapshotBudget} {
-		caps := narrowedConnectCaps(remaining)
-		if caps.ToolOutputTotalBytes != 0 {
-			t.Errorf("narrowedConnectCaps(%d).ToolOutputTotalBytes = %d, want 0 (unbounded): the "+
-				"connect caps leave it unset, and scaling it would floor at 1 byte and cut every "+
-				"tool output", remaining, caps.ToolOutputTotalBytes)
-		}
+// The GET channel's OWN cutting fixture, sized so its block array is cut on
+// BlockTextBytes (1 MiB) and never on Blocks: that dimension is 8192, so cutting it would
+// need an 8,193-block fixture built for no other property.
+//
+// The arithmetic, walked the way capBlocks walks it: blocks 3 and 2 fit whole (remaining
+// 638,976 then 229,376), block 1 does not and is KEPT tail-truncated because the remainder
+// is non-zero, block 0 is dropped — a base of 1. Four EQUAL deltas summing to exactly the
+// cap would fit and cut nothing, which is why the size is not the cap over the count.
+const (
+	cuttingStreams     = 4
+	cuttingStreamBytes = 409_600
+)
+
+// fillCuttingTurn writes that fixture into an already-started buffer, so the caps test and
+// the payload-copy test in sse_reconnect_replay_test.go share ONE sizing rather than two
+// that can drift apart.
+//
+// Four DISTINCT subtask ids, because a same-subtask delta EXTENDS that subtask's newest
+// block: one id would build one block and the cut would have nothing to walk. Text only,
+// so the boundary block's Thinking is empty and tailBytes' unbounded-at-n<=0 behaviour
+// cannot smuggle a second field past the budget.
+//
+// One property of the fixture stated so it is not mistaken for a defect: 1.6 MB of block
+// text is also 1.6 MB of flat Content, so ContentBytes (128 KiB) cuts too. Harmless — the
+// base is a function of the BLOCK array alone, and what is asserted is the base and the
+// identity rather than `truncated`.
+func fillCuttingTurn(tb testing.TB, buf *buffer.Buffer) {
+	tb.Helper()
+	for i := range cuttingStreams {
+		buf.AppendTextDelta(fill('c', cuttingStreamBytes), "sub-"+strconv.Itoa(i))
+	}
+	if len(buf.Blocks) != cuttingStreams {
+		tb.Fatalf("fixture built %d blocks, want %d: a same-subtask delta extends a block, so the "+
+			"cut would have nothing to walk", len(buf.Blocks), cuttingStreams)
+	}
+	if got := cuttingStreams * cuttingStreamBytes; got <= liveTurnGETCaps.BlockTextBytes {
+		tb.Fatalf("fixture block text = %d bytes against a %d-byte cap, so it cuts nothing",
+			got, liveTurnGETCaps.BlockTextBytes)
+	}
+}
+
+// cuttingTurn is neither existing fixture, deliberately. newCapFixture lives in package
+// buffer and is unreachable from here; maximalTurn is built for the OPPOSITE property —
+// its block text sums to 846,058 bytes, UNDER this cap, so it cuts nothing on this
+// dimension.
+func cuttingTurn(tb testing.TB) *buffer.Buffer {
+	tb.Helper()
+	buf := buffer.New()
+	buf.StartTurn("m-cut")
+	fillCuttingTurn(tb, buf)
+	return buf
+}
+
+// TestLiveTurnGETCaps_ReportsABaseWhenItCuts is the arithmetic on THIS channel's own
+// caps. It is the third fact about the GET channel and it is nobody else's: the base's
+// VALUE here comes from liveTurnGETCaps, the one capped snapshot left on the wire, so a base
+// computed only under the narrower set would pass every other test and answer 0 here.
+//
+// Asserted as "> 0 plus the identity leg" rather than as a literal, because a literal
+// would be a second copy of the cap arithmetic and would agree with a wrong
+// implementation of it; the identity is what pins the value against the ARRAY.
+func TestLiveTurnGETCaps_ReportsABaseWhenItCuts(t *testing.T) {
+	buf := cuttingTurn(t)
+
+	snap, ok := buf.SnapshotCapped(liveTurnGETCaps)
+	if !ok {
+		t.Fatal("snapshot reported no content for a cutting turn")
+	}
+	if !snap.Truncated {
+		t.Fatal("truncated = false over a fixture built to exceed the block-text cap, so nothing " +
+			"below is measuring a cut")
+	}
+	if snap.BlockBase <= 0 {
+		t.Fatalf("BlockBase = %d over a cut front, want > 0: the transcript GET's cap keeps the "+
+			"TAIL of the block array, so a zero base tells the client the window starts where the "+
+			"array does and every later message_chunk lands short", snap.BlockBase)
+	}
+	if len(snap.Message.Blocks) == 0 {
+		t.Fatal("the snapshot carried no blocks")
+	}
+	if got, want := snap.Message.Blocks[0].AgentSubtaskID, buf.Blocks[snap.BlockBase].AgentSubtaskID; got != want {
+		t.Errorf("Blocks[0].AgentSubtaskID = %q, want %q (buf.Blocks[%d]): the base does not name "+
+			"the block this window starts at", got, want, snap.BlockBase)
 	}
 }

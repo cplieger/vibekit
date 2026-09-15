@@ -27,7 +27,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
 	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
@@ -41,7 +41,7 @@ func TestSettle_WaitsForQueuedFramesAndTakesTheWireOutcome(t *testing.T) {
 		{Msg: newTurnEndMsg("refusal"), Seq: 3},
 	}
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	settled := make(chan struct{})
 	go func() {
 		defer close(settled)
@@ -88,7 +88,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
 	epoch := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
@@ -101,7 +101,7 @@ func TestSettle_ClosesWhenTheLastDeliveredFrameFoldsNothing(t *testing.T) {
 		{Msg: newTurnCompletionMsg(), Seq: 2},
 	}
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	settled := make(chan struct{})
 	go func() {
 		defer close(settled)
@@ -138,7 +138,7 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	first := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, first)
@@ -148,7 +148,7 @@ func TestSettle_ArmedForAnEarlierTurnClosesNothing(t *testing.T) {
 	second := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)
 	defer h.ReleaseTurn(chatID, second)
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	h.SettleTurnOnResponse(ctx, chatID, first, 0,
 		&vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})})
 
@@ -269,7 +269,7 @@ func TestSettle_ReturnsOnlyAfterTheFolderHasCaughtUp(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	gen := h.coord.turns.attachForward(chatID)
 	preOpen := h.StartTurn(ctx, chatID, vibekit.TurnSourcePrompt)

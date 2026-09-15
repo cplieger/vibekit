@@ -36,10 +36,6 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 			writeRepoEntry(b, workDir, r, forgeKinds)
 		}
 		b.WriteString("\n")
-		b.WriteString("The Git panel in the UI presents these repositories as collapsible ")
-		b.WriteString("sections under the **Changes** tab (uncommitted work + commit + push), ")
-		b.WriteString("the **Pull requests** tab (open PRs per repo + create new), and the ")
-		b.WriteString("**Sources** tab (forge accounts + cloneable remote repos).\n\n")
 		// Add a top-level instruction so the agent has unambiguous
 		// guidance about how to consume the per-repo steering it just
 		// saw above. Without this, kiro-cli would only auto-load
@@ -398,26 +394,42 @@ func findNotableFiles(workDir string) []string {
 	return found
 }
 
-// readFirstLine returns the first non-blank non-heading line of the README at
-// path, capped and sanitised so hostile repo content cannot inject agent
-// instructions into environment.md (kiro-cli's authoritative agent context).
-//
-// Order: cap the read, strip CR/LF/tab before truncation (so a smuggled
-// newline can't produce a second "line"), strip hidden Unicode, then drop any
-// line containing markdown link syntax, HTML tags, backticks, or a bare URL —
-// a README description line has no legitimate need for any of those.
+const firstLineWindow = 10
+
+// readFirstLine returns the first non-heading paragraph of the README at path,
+// wrapped lines joined and a leading blockquote marker stripped, capped and
+// sanitised so hostile repo content cannot inject agent instructions into
+// environment.md. One line carrying link syntax, an HTML tag, a backtick or a
+// bare URL drops its WHOLE paragraph: the continuation of a wrapped sentence is
+// a fragment, not a description. Cost: an opening sentence that quotes a
+// `symbol` yields no description.
 func readFirstLine(path string) string {
 	data, err := readCappedFile(path, firstLineReadCap)
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.SplitN(string(data), "\n", 10) {
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > firstLineWindow {
+		lines = lines[:firstLineWindow]
+	}
+	var para []string
+	clean := true
+	flush := func() string {
+		if !clean || len(para) == 0 {
+			return ""
+		}
+		return capDescription(strings.TrimSpace(strings.Join(para, " ")))
+	}
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || isMarkdownHeading(line) {
+			if desc := flush(); desc != "" {
+				return desc
+			}
+			para, clean = nil, true
 			continue
 		}
-		// Replace CR/LF/tab with space before truncation; the
-		// 100-char cap then can't straddle an injected newline.
+		line = strings.TrimSpace(strings.TrimPrefix(line, ">"))
 		line = strings.Map(func(r rune) rune {
 			switch r {
 			case '\n', '\r', '\t':
@@ -425,29 +437,22 @@ func readFirstLine(path string) string {
 			}
 			return r
 		}, line)
-		// Strip hidden Unicode (TAG chars, zero-width joiners,
-		// bidi controls). Same helper we apply to tool output.
 		line = sanitize.Unicode(line)
-		// Drop lines that contain markdown link syntax (inline
-		// `](`, reference `[`/`]`, image `![`), HTML tags,
-		// backticks, or bare URLs. Safer to show no description
-		// than an injected one. A README's first description
-		// line has no legitimate need for any of these.
 		if strings.ContainsAny(line, "[]<`") ||
 			strings.Contains(line, "http://") ||
 			strings.Contains(line, "https://") {
-			continue
+			clean = false
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if len(line) > 100 {
-			return truncateUTF8(line, 100) + "..."
-		}
-		return line
+		para = append(para, line)
 	}
-	return ""
+	return flush()
+}
+
+func capDescription(s string) string {
+	if len(s) > 100 {
+		return truncateUTF8(s, 100) + "..."
+	}
+	return s
 }
 
 // isMarkdownHeading reports whether line is a true CommonMark ATX

@@ -70,7 +70,7 @@ func TestAgentScanDoorsAgreeWithTheSharedRule(t *testing.T) {
 	t.Run("document scan (kiro_docs)", func(t *testing.T) {
 		// A nil guard admits everything, which is what the MapFS tests want: this
 		// asserts the dedupe, not the provenance rules.
-		docs := scanDocsAgents(t.Context(), root, "ws/.kiro", nil)
+		docs := scanDocsAgents(t.Context(), root, "ws/.kiro", nil).docs
 		if len(docs) != len(want) {
 			t.Fatalf("scanDocsAgents = %+v (len %d), want the rule's %+v (len %d)", docs, len(docs), want, len(want))
 		}
@@ -94,7 +94,7 @@ func TestAgentScanDoorsSkipTheSameNonAgents(t *testing.T) {
 	refused := []string{".hidden", "", "README", "nested", "reviewer.json"}
 
 	items := scanAgents(t.Context(), root, "ws/.kiro")
-	docs := scanDocsAgents(t.Context(), root, "ws/.kiro", nil)
+	docs := scanDocsAgents(t.Context(), root, "ws/.kiro", nil).docs
 
 	for _, name := range refused {
 		for i, it := range items {

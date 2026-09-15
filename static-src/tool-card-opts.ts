@@ -51,14 +51,22 @@ export interface BuildToolCardOpts {
    *  them is at `GET /api/chats/{id}/tools/{id}`. Set only by the transcript read
    *  path — a card built from the stream holds every byte already. */
   hasFull?: boolean;
-  /** The full output's byte length and the full diff count, present only
-   *  alongside `hasFull`: what the reader cannot see, so a control can offer it
-   *  without first fetching it. */
+  /** The full output's byte length, present only alongside `hasFull`: what says
+   *  the bulk holds output the reader cannot see, which is the `reveals` half of
+   *  the deferred output piece. */
   outputBytes?: number;
-  diffCount?: number;
   /** Which chat to fetch the bulk from. Absent for a card with no chat behind it
    *  — a workflow step's, which streams and is never previewed. */
   chatID?: string;
+  /** Build the details region ALREADY OPEN, for a card whose region the reader had
+   *  open before this render: a window drop and re-mount in the transcript, a step
+   *  card the run tab rebuilds on every frame. The reader's state is its ONLY input —
+   *  a failed call is born closed like any other, because the expand-on-fail courtesy
+   *  is an event rather than a resting state. Never set by `toolCardOptsFor` — it is a
+   *  fact about the render rather than about the call — and never a substitute for
+   *  `expandToolDetails`, which stays the path for a region opened by an EVENT (a call
+   *  that fails or is refused mid-stream) and must keep animating. */
+  detailsOpen?: boolean;
 }
 
 /** The `BuildToolCardOpts` a domain tool call describes.
@@ -86,9 +94,6 @@ export function toolCardOptsFor(tc: ToolCall, live: boolean, chatID = ""): Build
     opts.hasFull = true;
     if (tc.output_bytes !== undefined) {
       opts.outputBytes = tc.output_bytes;
-    }
-    if (tc.diff_count !== undefined) {
-      opts.diffCount = tc.diff_count;
     }
   }
   const rawInput = tc.input as Record<string, unknown> | undefined;

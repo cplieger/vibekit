@@ -157,11 +157,13 @@ describe("the outcome mark and the tab dot are one vocabulary", () => {
 describe("the mark reads one ink and one size wherever it renders", () => {
   const tools = loadCSS("14-tools.css");
   const exec = loadCSS("31-exec-view.css");
-  // The THIRD surface reading the shared vocabulary: the composer band's run bar,
-  // one line per live run. It copied `.ev-state`'s column deliberately rather than
-  // `.run-step-glyph`'s, which hard-codes a length where this one reads the token,
-  // so it belongs in both sweeps below or the copy can drift silently.
+  // The composer band's run bar USED to be the third surface reading this
+  // vocabulary, and it is not one any more: its subject is a RUN rather than a step,
+  // so its glyph shares the workflow mark's rules (12-tabs.css) and carries no ink,
+  // no size and no ring of its own. Its stylesheet is still read here, to hold that
+  // withdrawal — a re-added local ring or ink would be the copy coming back.
   const dock = loadCSS("26-dock.css");
+  const tabs = loadCSS("12-tabs.css");
 
   /** The single `color:` token a state's rule names. */
   function inkOf(css: string, selector: string): string {
@@ -188,10 +190,13 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     expect(inkOf(exec, evState("warn"))).toBe("--c-yellow");
     expect(inkOf(exec, evState("input"))).toBe("--c-yellow");
 
-    // The run bar renders FOUR states and no more (`rows()` keeps a run only while
-    // its state is unfetched or live), so an unanswered ask is the one state there
-    // that carries an ink at all, and a settled trio would be unreachable CSS.
-    expect(inkOf(dock, '.run-bar-row[data-state="input"] .run-bar-glyph')).toBe("--c-yellow");
+    // The run bar names none of the trio, and that is the point rather than a gap:
+    // it renders FOUR states and no more (`rows()` keeps a run only while its state
+    // is unfetched or live), so a settled ink would be unreachable CSS there — and
+    // its one wants-you state takes the workflow mark's `--c-dot-input` through the
+    // shared rule rather than this vocabulary's `--c-yellow`.
+    expect(inkOf(tabs, '.tab-run-dot[data-status="input"]')).toBe("--c-dot-input");
+    expect(dock).not.toContain(".run-bar-glyph {");
   });
 
   it("keeps the three amber states on ONE declaration", () => {
@@ -227,16 +232,21 @@ describe("the mark reads one ink and one size wherever it renders", () => {
     }
   });
 
-  it("sizes the run bar's own rings off the same token", () => {
-    const rings = allRules(dock).filter(
-      (r) => r.selector.includes(".run-bar-glyph::before") && r.body.includes("inline-size"),
+  it("draws the run bar's mark from the workflow mark's rule, not its own", () => {
+    // The bar sizes NOTHING locally now: no rule in its stylesheet may draw that
+    // glyph, or the copy this share removed is back. What the shared rule sizes it
+    // off is the same token every other state column reads.
+    const local = allRules(dock).filter((r) => r.selector.includes(".run-bar-glyph"));
+    expect(local, "the bar draws no mark of its own").toEqual([]);
+
+    const shared = allRules(tabs).filter(
+      (r) => r.selector.includes(".run-bar-glyph") && r.body.includes("inline-size"),
     );
-    // running + waiting share the sizing rule; the two per-state rules that follow
-    // it only set a border, so one sizing rule is the whole population.
-    expect(rings.length, "the run bar's ring rules that size themselves").toBeGreaterThanOrEqual(1);
-    for (const ring of rings) {
-      expect(ring.body, ring.selector).toContain("inline-size: var(--dot-size)");
-      expect(ring.body, ring.selector).toContain("block-size: var(--dot-size)");
+    expect(shared.length, "the shared look rule").toBe(1);
+    for (const rule of shared) {
+      expect(rule.selector, "shared with the tab row's own mark").toContain(".tab-run-dot");
+      expect(rule.body).toContain("inline-size: var(--dot-size)");
+      expect(rule.body).toContain("block-size: var(--dot-size)");
     }
   });
 });

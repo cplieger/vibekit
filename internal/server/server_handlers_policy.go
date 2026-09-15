@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/policyfile"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // Native Cedar policy endpoints (v3 / KAS).

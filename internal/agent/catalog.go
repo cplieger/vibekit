@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -17,7 +18,18 @@ import (
 type Catalog struct {
 	modes  []vibekit.SessionMode
 	models []vibekit.SessionModel
-	mu     sync.Mutex
+	// versions holds the `catalog` counter, bumped under mu when either list
+	// changes; nil defaults to a private registry on first use.
+	versions *subject.Versions
+	mu       sync.Mutex
+}
+
+// registry returns the versions the catalog mints into. Callers hold mu.
+func (c *Catalog) registry() *subject.Versions {
+	if c.versions == nil {
+		c.versions = &subject.Versions{}
+	}
+	return c.versions
 }
 
 // SetModes replaces the mode vocabulary, reporting whether it changed. An EMPTY
@@ -34,6 +46,7 @@ func (c *Catalog) SetModes(modes []vibekit.SessionMode) bool {
 		return false
 	}
 	c.modes = slices.Clone(modes)
+	c.registry().BumpCounter(subject.KindCatalog, "")
 	return true
 }
 
@@ -49,24 +62,17 @@ func (c *Catalog) SetModels(models []vibekit.SessionModel) bool {
 		return false
 	}
 	c.models = slices.Clone(models)
+	c.registry().BumpCounter(subject.KindCatalog, "")
 	return true
 }
 
-// Modes returns a clone of the mode vocabulary, or nil before anything has
-// reported one. SessionMode holds only strings, so one level of copy is the
-// whole value.
-func (c *Catalog) Modes() []vibekit.SessionMode {
+// ModesModelsStamped returns both lists with the `catalog` stamp, counter first
+// and lists second under one lock, for the REST envelope and the resolver.
+func (c *Catalog) ModesModelsStamped() (modes []vibekit.SessionMode, models []vibekit.SessionModel, stamp *vibekit.SubjectStamp) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return slices.Clone(c.modes)
-}
-
-// Models returns the model catalog, or nil before anything has reported one.
-// A clone, for Modes's reason.
-func (c *Catalog) Models() []vibekit.SessionModel {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return slices.Clone(c.models)
+	version, _ := c.registry().Current(subject.KindCatalog, "")
+	return slices.Clone(c.modes), slices.Clone(c.models), vibekit.NewSubjectStamp(string(subject.KindCatalog), "", version)
 }
 
 // DefaultEffortFor returns the model's own default reasoning tier, or "" when

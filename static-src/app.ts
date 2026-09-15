@@ -16,10 +16,9 @@
 // ---------------------------------------------------------------------------
 
 import type { ServerEvent } from "./types.js";
-import { getActiveId, get, getSessions, isThinking } from "./store.js";
-import { admitLocation, settleDeepLinkedChat } from "./deep-link.js";
+import { getActiveId, getSessions, isThinking } from "./store.js";
 import { effect } from "@cplieger/reactive";
-import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_TRANSPORT_GAP } from "./bus.js";
+import { dispatch, onBus, onSSE, BUS_TAB_CHANGED, BUS_RECONCILE } from "./bus.js";
 import { findGlyph } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
@@ -28,37 +27,35 @@ import { initPointerTier } from "./pointer-tier.js";
 import { initPointerModeToggle, revealPointerModeToggle } from "./pointer-mode.js";
 import { initPageTitleFit } from "./page-title.js";
 import { initRolePicker } from "./role-picker.js";
-import * as transport from "./transport.js";
+import * as sse from "./sse-adapter.js";
 import { initUI, renderIdentity } from "./settings.js";
 import { initPostAuth, onTransportStatus, startBoot } from "./boot.js";
-import { snapshotDeclaration } from "./snapshot-declaration.js";
 import { resolveIdentity } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
 import {
   setOnEmpty,
-  openTab,
-  setSettingsTab,
-  setGitTab,
-  setDocsTab,
   activeChatRef,
   setChatSettledProbe,
+  toggleDocsView,
+  toggleHistoryView,
 } from "./tabs.js";
+import { applyRoute } from "./route-apply.js";
 import { markBootDone } from "./view-swap.js";
 import { ingestTabsChanged, listTabs } from "./tabs-sync.js";
-import { replaceRoute, onPopState } from "./router.js";
-import type { Route, RouteOrigin } from "./router.js";
+import { onPopState } from "./router.js";
+import type { Route } from "./route-path.js";
 import { initModelPicker } from "./picker.js";
 import { refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
-import { openFile, activateFile, closeEditorFile, refreshFile } from "./editor-openers.js";
+import { activateFile, closeEditorFile, refreshFile } from "./editor-openers.js";
 import { registerTabOpeners } from "./tab-materialize.js";
 import { showRun, refreshRun } from "./run-view.js";
 import { showSubagent, refreshSubagent } from "./subagent-view.js";
 import { openAtLine } from "./navigate.js";
 import { initAttachmentPillCallbacks } from "./attachment-pill.js";
-import { initFileBrowser, restoreFileBrowser } from "./files.js";
+import { initFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
@@ -74,12 +71,9 @@ import {
   toggleFindForActiveTab,
   findAffordanceForActiveTab,
 } from "./find-dispatch.js";
-import { forceSettingsTab } from "./settings-tabs.js";
-import { flushURLHighlight } from "./settings-highlight.js";
-import { forceGitTab } from "./git-tabs.js";
+import { handleFilesTypeAhead } from "./files-search.js";
 import {
   createSession,
-  switchSession,
   sendPrompt,
   installStoreSubscribers,
   activateChatView,
@@ -113,6 +107,7 @@ import { installNotifyAskGesture } from "./notify.js";
 import { chatSettled } from "./chat-settled.js";
 import "./handlers/steer.js";
 import { initPushMessages } from "./handlers/push-message.js";
+import { registerNotificationOpener } from "./notification-open.js";
 import { initLaunchQueue } from "./share-target.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
@@ -186,32 +181,22 @@ function init(): void {
   // The tab projection's SYNC half, fed here rather than binding itself, so its three
   // version rules can be exercised against a Set with no transport. Two inputs: every
   // `tabs_changed` frame, applied in ARRIVAL order (the handler must not fan out — the
-  // version rules are only well-defined against a sequential applier), and a transport
-  // GAP, where the delta stream cannot be trusted and the answer is the whole set.
+  // version rules are only well-defined against a sequential applier), and a whole
+  // RECONCILE, where the delta stream cannot be trusted and the answer is the whole
+  // set. The everyday wake reaches `listTabs` through the digest's `tabs` subject.
   onSSE("tabs_changed", (_chatID, p) => {
     ingestTabsChanged(p);
   });
-  onBus(BUS_TRANSPORT_GAP, () => {
-    void listTabs();
+  onBus(BUS_RECONCILE, ({ signal }) => {
+    void listTabs(signal);
   });
 
-  // Before the transport opens: decoders run in transport.ts ahead of dispatch(), and an
+  // Before the stream opens: decoders run in the adapter ahead of dispatch(), and an
   // event whose payload fails validation is dropped rather than handed on partial. The
   // set is generated from Go structs by cmd/wire-codegen.
   registerAllSSEDecoders();
 
-  // The chat whose transcript is on screen, injected rather than imported: the
-  // transport holds no store state and importing store.ts from it risks a cycle. It
-  // is what the connect replay reads to decide which busy chats need their in-flight
-  // transcript, and the server cannot derive it — the active chat is per-DEVICE.
-  //
-  // The resolver is a leaf of its own (`snapshot-declaration.ts`), because the answer
-  // has four states and one of them cannot be reached from here: this runs before
-  // `startBoot`, so the active chat is still "" and only the URL names the chat the
-  // reader is on.
-  transport.setSnapshotChatProvider(snapshotDeclaration);
-
-  transport.init((evt: ServerEvent) => {
+  sse.init((evt: ServerEvent) => {
     dispatch(evt);
   }, onTransportStatus);
 
@@ -302,22 +287,10 @@ function init(): void {
   });
   onBus(BUS_TAB_CHANGED, syncFindAffordance);
   $.docsBtn.addEventListener("click", () => {
-    void import("./docs.js")
-      .then(({ showDocsView }) => {
-        showDocsView();
-      })
-      .catch(() => {
-        /* noop */
-      });
+    void toggleDocsView();
   });
   $.historyBtn.addEventListener("click", () => {
-    void import("./history.js")
-      .then(({ showHistoryView }) => {
-        showHistoryView();
-      })
-      .catch(() => {
-        /* noop */
-      });
+    void toggleHistoryView();
   });
   // Retention = 0 is "no retention" (ephemeral chats, nothing survives a close) → hide
   // History; anything else keeps closed chats → show it.
@@ -361,6 +334,7 @@ function init(): void {
   // capture-phase keydown on the same chord is a third meaning nobody can predict.
   document.addEventListener("keydown", handleFindKey, true);
   document.addEventListener("keydown", focusComposerOnTyping);
+  document.addEventListener("keydown", handleFilesTypeAhead);
 
   // Live-log every action error to the console regardless of toast policy, so a
   // suppressed-toast action is still visible in DevTools.
@@ -395,9 +369,20 @@ function init(): void {
       console.warn("sw: registration failed", err);
     });
   }
+  // A notification click is an OPEN INTENT, so the default origin (`deeplink`) is
+  // correct: it may open a tab that is not open, unlike a history entry. Registered
+  // BEFORE initPushMessages, which installs the message listener — a click arriving
+  // between the two would throw and lose the navigation.
+  registerNotificationOpener((route) => {
+    void applyRoute(route);
+  });
   // The other half of the push channel: the worker posts here to route a notification
   // click and to toast a push that arrived while this page was focused.
-  initPushMessages();
+  initPushMessages(adoptPushTag);
+  // The presence tag is derived from the push subscription's endpoint, which resolves
+  // only once the registration is ready, so the stream opened above presents the tag
+  // a previous boot persisted (or a random one) and reconnects once if this differs.
+  adoptPushTag();
   // A relaunch FOCUSES this window rather than navigating it (manifest
   // launch_handler), so a shortcut's or a share's URL arrives in the launch queue
   // and nowhere else. Registered before the boot, because the queue delivers what
@@ -405,6 +390,21 @@ function init(): void {
   initLaunchQueue();
 
   void startBoot({ applyRoute });
+}
+
+/** Hand the profile's push subscription to the stream, so the tag it presents is the
+ *  one the server derives from that subscription's endpoint. Best-effort: a profile
+ *  with no service worker or no subscription keeps the tag it has. */
+function adoptPushTag(): void {
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+  navigator.serviceWorker.ready
+    .then((reg) => reg.pushManager.getSubscription())
+    .then((sub) => sse.adoptPushSubscription(sub))
+    .catch((err: unknown) => {
+      console.debug("sse: push subscription not adopted for the presence tag", err);
+    });
 }
 
 function onLoginSuccess(): void {
@@ -506,7 +506,12 @@ function setupInput(): void {
   // Lazily on open, because usage changes slowly and may be rate-limited;
   // loadAccountUsage throttles. The agent-runtime line re-probes /api/health on the same
   // trigger.
-  makeExpandable($.statusDot, $.statusCard, {
+  // `haspopup: "dialog"` rather than pill-expand's own `"true"` default, which a
+  // screen reader reads as "menu": this card is a status/account panel with one
+  // link, not a menu of commands. `chat-options.ts` passes the same value for the
+  // same shape; the primitive's default is an app-wide property and is untouched.
+  makeExpandable($.accountBtn, $.statusCard, {
+    haspopup: "dialog",
     onExpand: () => {
       loadAccountUsage();
       void refreshRuntimeLine();
@@ -515,119 +520,6 @@ function setupInput(): void {
 }
 
 // URL routing
-
-/** Apply a route. RESOLVES when the view it names is open, which is what lets the
- *  router hold its claim on the location for the whole application: the `run` and
- *  `subagent` arms reach their opener through a dynamic `import()`, and while that
- *  import is in flight the active row is still whatever the boot restored.
- *
- *  The arms whose opener is `openTab` deliberately do NOT return its chain: that is a
- *  server mutation bounded only by the API timeout, and awaiting it would hold
- *  `markBootDone` and the identity region for that long on every deep-linked boot.
- *  They keep a narrower version of the same exposure — see the report. */
-function applyRoute(route: Route, origin: RouteOrigin = "deeplink"): Promise<void> {
-  // Asked FIRST, because every branch below is an opener and from a Route alone they
-  // cannot be told apart. `deep-link.ts` owns what a location is allowed to mean.
-  if (admitLocation(route, origin) === "canonicalized") {
-    return Promise.resolve();
-  }
-  switch (route.kind) {
-    case "chat":
-      if (route.id !== "" && get(route.id) !== undefined) {
-        // The chat EXISTS, so `switchSession` either activates its tab or OPENS one.
-        // Voided: a refusal has already raised its own notice through `openTabCommand`.
-        void switchSession(route.id);
-      } else if (route.id !== "") {
-        // The id names NO ROW. Everything that decision needs — whether asking the server
-        // can be answered at all, what its answer licenses, whether a verdict that arrived
-        // a round trip late still describes the screen — lives in `deep-link.ts`. None of
-        // it is routing. Voided: every outcome is returned rather than thrown, and the
-        // module raises whatever notice its own evidence licenses.
-        void settleDeepLinkedChat(route.id);
-      } else if (getActiveId() !== "") {
-        replaceRoute({ kind: "chat", id: getActiveId() });
-      }
-      break;
-    // The FIVE singleton routes each open their tab and then CORRECT its sub-tab: a
-    // singleton's `ref` is empty, so a subject cannot carry one and the factory builds the
-    // canonical one. `setSettingsTab` / `setGitTab` / `setDocsTab` are that channel and stay
-    // synchronous, because the panel swap is local state the router owns.
-    //
-    // Every one goes through `openTab` and NONE through the matching `toggle*View` helper:
-    // a toggle CLOSES the tab when it is already active, so a router that toggled would
-    // DESTROY the tab the URL names. `openTab` is idempotent by subject, which is what a
-    // route means. None of them passes an onShow — the factory reaches each page's own
-    // loader through a lazy import, so every door loads the same way.
-    case "settings":
-      forceSettingsTab(route.tab);
-      void openTab({ kind: "settings" }).then(() => {
-        setSettingsTab(route.tab);
-        // A `?highlight=` fires after the panel's loader, so the control it names exists by
-        // the time we look for it. One-shot, so a later popstate does not re-flash it.
-        flushURLHighlight();
-      });
-      break;
-    case "git":
-      forceGitTab(route.tab);
-      void openTab({ kind: "git" }).then(() => {
-        setGitTab(route.tab);
-      });
-      break;
-    case "files":
-      restoreFileBrowser(route.path);
-      void openTab({ kind: "files" });
-      break;
-    case "file":
-      openFile(route.path, route.line);
-      break;
-    case "docs":
-      // The sub-tab is forced BEFORE the open, matching its settings and git siblings:
-      // this tab's refresh loads the ACTIVE panel, so forcing afterwards fetched
-      // Steering and then painted Hooks. Reached through the lazy import the factory
-      // already uses, which is what keeps the page out of the boot bundle.
-      return import("./docs.js")
-        .then(({ forceDocsTab }) => {
-          forceDocsTab(route.tab);
-          void openTab({ kind: "docs" }).then(() => {
-            setDocsTab(route.tab);
-          });
-        })
-        .catch(() => {
-          /* noop */
-        });
-    case "history":
-      void openTab({ kind: "history" });
-      break;
-    case "run":
-      // RETURNED rather than voided: the router's claim on this location stands until it
-      // resolves, so no unrelated projection emit can write the URL while the chunk loads.
-      return import("./run-view.js")
-        .then(({ openRunView }) => {
-          // Deep link: the run's name is not in the URL, so the tab is titled by id until
-          // the fetch supplies the real name. It still nests under the launching chat when
-          // this client knows which one it was.
-          //
-          // The fourth argument is what makes a COPIED STEP LINK land on the step: the run
-          // card's row href carries the node as `#node=<path>`. `""` means "the run" and
-          // lets the page auto-follow.
-          openRunView(route.id, route.id, "", route.node ?? "");
-        })
-        .catch(() => {
-          /* noop */
-        });
-    case "subagent":
-      // A delegate's page has nothing to fetch — its blocks are already in the chat store,
-      // or they are not resident and the page says so — so this is just the tab.
-      return import("./subagent-view.js")
-        .then(({ openSubagentView }) => {
-          openSubagentView(route.chat, route.id);
-        })
-        .catch(() => {
-          /* noop */
-        });
-  }
-  return Promise.resolve();
-}
 
 onPopState((route: Route) => {
   void applyRoute(route, "history");

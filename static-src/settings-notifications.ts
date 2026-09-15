@@ -15,7 +15,8 @@
 //   - Switching a sub-toggle off no longer implies switching notifications off.
 //     It did when there was one, because there was no second channel left for the
 //     master to keep alive. Now the master goes off only when EVERY keyed kind is.
-//   - Switching the master on enables every keyed kind, not just the one.
+//   - Switching the master on enables the DEFAULT-ON kinds, not just the one and
+//     not all of them: the polarities in KEYED_PUSH_DEFAULTS are not uniform.
 // ---------------------------------------------------------------------------
 
 import {
@@ -28,6 +29,7 @@ import {
   setNotifyUICallback,
   spendNotifyAsk,
   KEYED_PUSH_KINDS,
+  KEYED_PUSH_DEFAULTS,
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
@@ -169,11 +171,13 @@ function syncRowInputs(rows: readonly KindRow[]): void {
   }
 }
 
-/** Master ON: enable every keyed kind, not just one.
+/** Master ON: enable the DEFAULT-ON kinds, not just one and not all of them.
  *
- *  With a single sub-option the old code force-enabled that one; with several,
- *  leaving the others off would turn notifications "on" and deliver nothing, which
- *  is the state the master switch exists to prevent. */
+ *  Leaving every kind off would turn notifications "on" and deliver nothing, which
+ *  is the state the master switch exists to prevent — and two kinds plus the
+ *  unsilenceable permission floor is not nothing. `pr_status` is excluded because
+ *  a fresh reader switching push on would otherwise immediately receive the PR
+ *  notices its OFF default exists to withhold. */
 async function enableEverything(
   rows: readonly KindRow[],
   notifyToggle: HTMLInputElement,
@@ -185,9 +189,13 @@ async function enableEverything(
   const mutated: HTMLInputElement[] = [notifyToggle];
   const patch: Record<string, boolean> = { notifications_enabled: true };
   for (const row of rows) {
-    patch[row.settingsKey] = true;
-    if (!row.input.checked) {
-      row.input.checked = true;
+    const want = KEYED_PUSH_DEFAULTS[row.kind] ?? true;
+    patch[row.settingsKey] = want;
+    // `!==` rather than `!`: the rollback set must hold exactly the inputs this call
+    // MOVED, in either direction, or the action framework restores a value the
+    // reader never saw.
+    if (row.input.checked !== want) {
+      row.input.checked = want;
       mutated.push(row.input);
     }
   }
@@ -206,7 +214,7 @@ async function enableEverything(
   }
   setNotificationsEnabled(true);
   for (const row of rows) {
-    setKindEnabled(row.kind, true);
+    setKindEnabled(row.kind, KEYED_PUSH_DEFAULTS[row.kind] ?? true);
   }
   updateSub();
   // Only prompt for browser permission after the server confirms the enable.

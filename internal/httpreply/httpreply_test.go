@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // Tests for httpreply.go: vibekit's bare {"error":…} taxonomy, WriteRawJSON, and

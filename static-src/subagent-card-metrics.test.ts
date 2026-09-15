@@ -1,81 +1,11 @@
-// ---------------------------------------------------------------------------
 // `.subagent-block`'s intrinsic-size estimate has to cover the RESTING shape both
-// delegate boxes share, on every pointer tier.
-//
-// Why this can only be a layout measurement. With `content-visibility: auto` plus
-// `contain-intrinsic-size: auto <len>`, a box that has never been rendered
-// contributes `<len>` PLUS its own padding, border and `min-height` to layout, while
-// one that HAS been rendered contributes its remembered real size. So a wrong
+// delegate boxes share, on every pointer tier, and only a layout measurement can check
+// it: with `content-visibility: auto` plus `contain-intrinsic-size: auto <len>`, a box
+// that has never rendered contributes `<len>` PLUS its own padding, border and
+// `min-height`, while one that HAS contributes its remembered real size -- so a wrong
 // `<len>` moves the transcript's `scrollHeight` by `(real - skipped) x (boxes not yet
-// rendered)`. No source read can see that: the resting height is a sum over three
-// regions, two of which resolve a control-height token, and the questions are which
-// of them BINDS and whether the value states the content box or the border box.
-// Both are used-value questions.
-//
-// MEASURED over this suite's own 200-box list, against the unfixed
-// `contain-intrinsic-size: auto 4rem` and then against the fix (Chromium 151). The
-// PER-BOX figures are the durable ones, since a list total is also a function of how
-// many boxes the scrollport had already rendered:
-//
-//   tier / shape        real box   a skipped box was   is now
-//   fine, settled       71px       66px                71px
-//   fine, container     71px       66px                71px
-//   fine, running       38px       66px                71px
-//   coarse, settled     99px       66px                99px
-//   coarse, container   99px       66px                99px
-//   coarse, running     46px       66px                99px
-//
-// So `auto 4rem` UNDER-stated the resting shape by 5px on the fine tier and 33px on
-// the coarse one, and the corrected value over-states a RUNNING card by 33 / 53px --
-// the trade below. The list DRIFTS the FIVE resting cases failed at, exactly, are
-// -895px (fine) and -5,808px (coarse), against 0 now; the two running cases moved
-// from +24 to +29 px per card (fine) and stayed positive on the coarse tier. Five
-// cases over four tier-and-shape combinations: the two coarse SETTLED viewports are
-// one combination measured twice, which is the width-independence control below.
-//
-// The two coarse viewports read identically -- narrow (768px) and wide (1024px) --
-// which is the finding rather than a redundancy: nothing on this box keys on width,
-// only on the pointer tier, so ONE expression is exact on both.
-//
-// THREE ARMS, and the arms are swapped relative to `run-card-metrics.test.ts`. A
-// delegate box has two RESTING shapes -- a settled card with its ledger foot, and a
-// COLLAPSED pipeline container, which measure identically because
-// `.subagent-block.collapsed > .subagent-body` is driven to zero -- so the reserve is
-// exact for both and those two arms assert a drift of exactly 0. The RUNNING card is
-// the shape one reserve cannot also be exact for, and its arm asserts the SIGN with
-// the per-card figure in the message: the reserve OVER-states a running card, which
-// is the inverse of the trade `--run-card-content` makes.
-//
-// THE TRADE IS DELIBERATE AND THE POPULATION IS WHY. A run card's two states are
-// DISCLOSURE states, both of which persist throughout history in unknowable
-// proportions, so that reserve takes the floor and never over-states. A delegate's
-// two states are LIFECYCLE states and only one of them persists: census over the 107
-// chat files on one live volume, applying `earnsTurnFooter`'s own conditions to each
-// invocation's persisted `duration_ms` and member tool calls, found 372 settled cards
-// with a footer (96.6%), 8 settled without one (2.1%) and 5 running (1.3%), plus 195
-// pipeline drivers, all settled. The fallback is consulted only before a box has
-// rendered once (`auto` remembers the real size afterwards), so its population is the
-// boxes the reader has not reached -- history, which is settled -- while a RUNNING
-// card is by construction the newest delegated work, at the live edge where the
-// reader already is, so it renders on arrival and its fallback is never consulted at
-// all. The reachable residual is a delegate still running in a chat the reader has
-// scrolled away from within the same view: one card, 33px, for the length of its turn.
-//
-// THE RUNNING ARM IS NOT A LOOSER ASSERTION, it is the guard that catches the running
-// shape itself changing: a tail that gained resting padding, or a foot that stopped
-// hiding while `:empty`, would take that drift to zero or below and fail here.
-//
-// RED CHECK, observed before any of this was trusted: restoring `auto 4rem` (66px
-// rendered) turns the five SETTLED and CONTAINER cases red at the drifts tabled above
-// and leaves the two RUNNING cases green -- correctly, since a value below a running
-// card's real height cannot stop over-stating one. So the running arm needs the
-// opposite probe, and `--subagent-content: 30px` (32px rendered, under the running
-// card's 38px) is what reddens it.
-//
-// Follows `run-card-metrics.test.ts` for the harness and `files-row-metrics.test.ts`
-// for the three-reading shape and its two instrument facts, and `css-rules.ts` for
-// reading the shipped stylesheet through `?raw` rather than the gitignored bundle.
-// ---------------------------------------------------------------------------
+// rendered)`. No source read answers which of the three regions BINDS, or whether the
+// value states the content box or the border box; both are used-value questions.
 
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 // The viewport control. Both terms of the reserve move on the POINTER tier, which the
@@ -157,17 +87,15 @@ afterEach(() => {
   host.replaceChildren();
 });
 
-/** The ledger the settled shapes rest with. `commands` and `elapsedMs` are what
- *  `earnsTurnFooter` admits, and the row's tallest child is the
- *  `.turn-ledger-summary` BUTTON -- which is the term `--hit-floor` is in the
- *  expression for.
- *
- *  THE RESERVE DID NOT MOVE when the trigger gained the info `i` and its `.sr-only`
- *  name, and that is measured rather than inferred from a green run: the button is
- *  24px with those two children and 24px with both removed, and the footer 33px
- *  either way, because an `--icon-ui` glyph is shorter than the `--hit-floor` the
- *  button is already floored at and a visually-hidden span has no box. */
-const LEDGER = { commands: 2, elapsedMs: 3_000 } as const;
+/** The ledger the settled shapes rest with. `elapsedMs` is what earns the footer here:
+ *  an aggregate `commands` with no `kindCounts` behind it earns nothing, and nothing
+ *  renders it either. The row's tallest child is the `.turn-ledger-summary` BUTTON,
+ *  the term `--hit-floor` is in the expression for -- and the reserve does NOT move with
+ *  that trigger's info `i` or its `.sr-only` name: measured, the button is 24px with
+ *  those two children and 24px with both removed, and the footer 33px either way,
+ *  because an `--icon-ui` glyph is shorter than the `--hit-floor` the button is already
+ *  floored at and a visually-hidden span has no box. */
+const LEDGER = { elapsedMs: 3_000 } as const;
 
 /** What the transcript builds for a LEAF delegate: an identity row that is itself
  *  the anchor to the delegate's own page, and nothing under it. A settled card's tail
@@ -316,38 +244,42 @@ function expectPremise(m: Metrics): void {
 
 /** THE PROPERTY for a RESTING box -- a settled card or a collapsed container: the
  *  reserve IS that shape, so the container reports one height whether its boxes are
- *  skipped or rendered. Stated as the DRIFT so a failure names the px rather than two
- *  five-figure totals, with the real box height beside it so the message says which
- *  tier it was measuring. */
+ *  skipped or rendered. The two resting shapes measure identically, so both arms assert
+ *  a drift of exactly 0. Stated as the DRIFT so a failure names the px rather than two
+ *  five-figure totals. The per-box height rides the MESSAGE rather than the compared
+ *  object: it says which tier failed, and asserting it would pin a font-dependent
+ *  number (Chromium 152 measures 82.94px fine and 102.94px coarse). */
 function expectNoDrift(m: Metrics): void {
   expectPremise(m);
-  expect({
-    drift: m.listSkipped - m.listRendered,
-    realBoxHeight: m.listRendered / CARDS,
-  }).toEqual({ drift: 0, realBoxHeight: m.listRendered / CARDS });
+  expect(
+    m.listSkipped - m.listRendered,
+    `drift at ${String(m.listRendered / CARDS)}px per box`,
+  ).toBe(0);
 }
 
-/** THE PROPERTY for a RUNNING card: one estimate cannot be exact for both lifecycle
- *  states, and this is the state the reserve deliberately over-states -- see the trade
- *  in the header. Pinned as the SIGN plus the per-card figure, so the case fails if
- *  the running shape itself grows into the reserve. */
+/** THE PROPERTY for a RUNNING card (49.94px fine, 57.94px coarse): one estimate cannot be
+ *  exact for both lifecycle states, and this is the one the reserve deliberately
+ *  over-states, because the POPULATION is settled. Census over the chat files on one
+ *  live volume, applying `earnsTurnFooter`'s conditions to each invocation: of 527 leaf
+ *  cards, 521 are settled with a footer, 1 settled without one and 5 running, and all
+ *  298 pipeline drivers are settled. The fallback is consulted only before a box has
+ *  rendered once, and a running card is the newest work at the live edge. The SIGN is
+ *  what is pinned, and it is what fails if the running shape grows into the reserve;
+ *  the magnitude rides the message, for `expectNoDrift`'s reason. */
 function expectOverStates(m: Metrics): void {
   expectPremise(m);
   const drift = m.listSkipped - m.listRendered;
   expect(
-    {
-      overStates: drift > 0,
-      perCard: Math.round(drift / CARDS),
-      realBoxHeight: m.listRendered / CARDS,
-    },
-    "the reserve is the SETTLED shape, so a running card is over-stated",
-  ).toEqual({
-    overStates: true,
-    perCard: Math.round(drift / CARDS),
-    realBoxHeight: m.listRendered / CARDS,
-  });
+    drift > 0,
+    `the reserve is the SETTLED shape, so a running card is over-stated: ${String(Math.round(drift / CARDS))}px per card at ${String(m.listRendered / CARDS)}px per box`,
+  ).toBe(true);
 }
 
+// RED CHECK, observed before any of this was trusted: restoring `contain-intrinsic-size:
+// auto 4rem` (66px rendered) turns the five SETTLED and CONTAINER cases red and leaves
+// the two RUNNING cases green -- correctly, since a value below a running card's real
+// height cannot stop over-stating one. The running arm needs the opposite probe, and
+// `--subagent-content: 30px` (32px rendered, under the running card's 38px) reddens it.
 describe("the fine-pointer tier", () => {
   it(
     "reports one height whether its settled cards are skipped or rendered",

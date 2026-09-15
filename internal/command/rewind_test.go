@@ -25,11 +25,16 @@ type recordingBridge struct {
 	result  any
 	// order, when set, records each Call in a slice the host double shares, so a test
 	// can assert a host-side step ran BEFORE the wire call.
-	order     *[]string
-	gotMethod string
-	gotParams map[string]any
-	callCount int
-	sessionID vibekit.SessionID
+	order *[]string
+	// duringCall, when set, runs while the wire call is IN FLIGHT. It is the seam for
+	// a property about state a notification would observe mid-call, which `order`
+	// cannot express: KAS emits some notifications before answering the RPC, so a
+	// test needs to read host state at that instant rather than afterwards.
+	duringCall func()
+	gotMethod  string
+	gotParams  map[string]any
+	callCount  int
+	sessionID  vibekit.SessionID
 }
 
 func (b *recordingBridge) Call(_ context.Context, method string, params any) (*vibekit.RPCResponse, error) {
@@ -40,6 +45,9 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*v
 	b.gotMethod = method
 	if m, ok := params.(map[string]any); ok {
 		b.gotParams = m
+	}
+	if b.duringCall != nil {
+		b.duringCall()
 	}
 	if b.callErr != nil {
 		return nil, b.callErr
@@ -136,7 +144,7 @@ func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.C
 // recordingBridge{sessionID: "sess-1"} or every rewind test refuses.
 func seedChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
 		c.Messages = []vibekit.Message{
 			{ID: "u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
@@ -294,7 +302,7 @@ func TestCmdRewindChat_AFailedResumeIsA502(t *testing.T) {
 func TestCmdRewindChat_RefusesAChatWithNoSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	if err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.RecordSession("")
 		return true
 	}); err != nil {
@@ -346,14 +354,15 @@ type recordingStore struct {
 	order *[]string
 }
 
-func (s *recordingStore) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+func (s *recordingStore) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
 	*s.order = append(*s.order, "mutate")
 	return s.ChatStore.Mutate(ctx, id, fn)
 }
 
 // The replay-adoption wait must come BEFORE the revert and the truncation: a resume's
-// staged projection is swapped in on another goroutine and mergeProjection returns its
-// messages wholesale, so a swap landing after the cut hands every reverted turn back.
+// staged projection is swapped in on another goroutine, and the merge preserves a record
+// row newer than the replay's newest while re-adding a projected row that pairs with
+// nothing, so a swap landing after the cut hands every reverted turn back.
 func TestCmdRewindChat_WaitsForTheReplayBeforeItReverts(t *testing.T) {
 	order := []string{}
 	base := testsupport.NewInMemoryChatStore()
@@ -498,7 +507,7 @@ func seedLiveLayout(t *testing.T, store ChatStore, id vibekit.ChatID) {
 			TurnStopReasonRaw: vibekit.StopReasonError,
 		}
 	}
-	err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.RecordSession("sess-1")
 		c.Messages = []vibekit.Message{
 			{ID: "m-u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
@@ -587,5 +596,148 @@ func TestCmdRewindChat_LogsHowManyMessagesItDropped(t *testing.T) {
 
 	if !strings.Contains(logs.String(), "dropped_messages=2") {
 		t.Errorf("log does not report dropped_messages=2: %s", logs.String())
+	}
+}
+
+// seedKASChat writes u1, a1, u2, a2 where each user row also carries the agent-side id
+// KAS's own log holds it under. That second id is the one revertMultiple accepts, and
+// seedChat above is the same layout WITHOUT it — the legacy population.
+func seedKASChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
+	t.Helper()
+	_, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+		c.RecordSession("sess-1")
+		c.Messages = []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "first", KASMessageID: "kas-1", Ts: 100},
+			{ID: "a1", Role: vibekit.RoleAssistant, Content: "reply one", Ts: 200},
+			{ID: "u2", Role: vibekit.RoleUser, Content: "second", KASMessageID: "kas-2", Ts: 300},
+			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+// The user's own report, in one assertion: the client addresses a turn by the id it
+// minted, and the wire must carry the id KAS's session log holds that turn under. The two
+// spaces are disjoint, so sending vibekit's own is what KAS answers `not found` to.
+func TestCmdRewindChat_AddressesKASByItsOwnRecordID(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedKASChat(t, store, "c1")
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got := b.gotParams["messageId"]; got != "kas-2" {
+		t.Errorf("messageId = %v, want kas-2: vibekit's own id names nothing in KAS's log", got)
+	}
+}
+
+// A row an older build's replay projected has KAS's record id as its OWN id and no
+// separate field, so the fallback is what keeps that population working.
+func TestCmdRewindChat_FallsBackToTheRowsOwnIDWhenNoKASIDIsHeld(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedChat(t, store, "c1")
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if got := b.gotParams["messageId"]; got != "u2" {
+		t.Errorf("messageId = %v, want u2", got)
+	}
+}
+
+// KAS cannot explain a turn vibekit holds no agent-side id for — its reason names an id
+// the reader never saw and offers nothing to do about it. vibekit adds the one thing it
+// knows, and KEEPS KAS's reason, because the refusal may be a specific one worth reading.
+func TestCmdRewindChat_ExplainsARefusalOnATurnItCannotAddress(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedChat(t, store, "c1")
+	b := &recordingBridge{
+		result:    map[string]any{"success": false, "error": `Message "u2" not found`},
+		sessionID: "sess-1",
+	}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", statusOf(err))
+	}
+	body := errText(err)
+	if !strings.Contains(body, "no id for this turn in the agent's current session") {
+		t.Errorf("response %s does not say why this turn is unaddressable", body)
+	}
+	if !strings.Contains(body, "not found") {
+		t.Errorf("response %s dropped KAS's own reason", body)
+	}
+}
+
+// The same refusal on a turn vibekit CAN address means something else entirely (mid-turn,
+// a concurrent revert), so the id explanation must not be attached to it.
+func TestCmdRewindChat_DoesNotBlameIDCaptureWhenTheKASIDWasSent(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedKASChat(t, store, "c1")
+	b := &recordingBridge{
+		result: map[string]any{
+			"success": false,
+			"error":   "Cannot revert while the agent is still running. Stop the turn and try again.",
+		},
+		sessionID: "sess-1",
+	}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", statusOf(err))
+	}
+	if body := errText(err); strings.Contains(body, "no id for this turn in the agent's current session") {
+		t.Errorf("response %s blames id capture for a mid-turn refusal", body)
+	}
+}
+
+// A stamp minted under a session the chat has since retired names a record the current
+// session's log does not hold, so KAS answers `not found` — the original report's toast. The
+// clear is what turns that row into one vibekit can explain: it sends the row's own id and
+// appends the sentence instead of forwarding a bare refusal.
+func TestCmdRewindChat_ARetiredSessionsStampIsGoneSoTheRefusalIsExplained(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedKASChat(t, store, "c1")
+	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.RecordSession("sess-2")
+		return true
+	}); err != nil {
+		t.Fatalf("retire the session: %v", err)
+	}
+	b := &recordingBridge{
+		result:    map[string]any{"success": false, "error": `Message "u2" not found`},
+		sessionID: "sess-2",
+	}
+	host := newBridgeHost(store, b)
+
+	_, err := CmdRewindChat(t.Context(), host, host, rewindReq(t, "c1", "u2"))
+
+	if statusOf(err) != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", statusOf(err), errText(err))
+	}
+	if got := b.gotParams["messageId"]; got != "u2" {
+		t.Errorf("messageId = %v, want u2: kas-2 names a record only the retired session held", got)
+	}
+	body := errText(err)
+	if !strings.Contains(body, "not found") {
+		t.Errorf("response %s dropped KAS's own reason", body)
+	}
+	if !strings.Contains(body, "no id for this turn in the agent's current session") {
+		t.Errorf("response %s does not say why this turn is unaddressable", body)
 	}
 }

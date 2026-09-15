@@ -79,22 +79,17 @@
    (first and last 20 lines, the rest one click further). */
 
 /* The reveal control for a windowed output's elided middle. The only depth 2 in
-   the ladder that does not leave the transcript. */
+   the ladder that does not leave the transcript, and the class's one placement:
+   it sits INSIDE `.tool-output`, so `.tool-output`'s own padding is its inline
+   inset and this rule keeps only the block gap that placement needs.
+   Its shape is `.btn-small`'s: it carried a hand copy of that rule whose only
+   divergences were defects, so the two selector lists below name it. The copy's
+   `--c-bg-primary` fill was the PAGE rung under a control sitting inside a
+   `--c-bg-secondary` tool card, which in dark mode paints #0a0a14 in a #262636
+   box — reported as a pitch-black box. `.refusal-btn` was the same defect and the
+   same conversion fixed it (vibekit-ui.md "Color system"). */
 .tool-output-reveal {
-  display: block;
-  margin: var(--sp-1) 0 0;
-  padding: 0.125rem var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-
-.tool-output-reveal:hover {
-  background: var(--c-bg-tertiary);
-  color: var(--c-text-primary);
+  margin-block-start: var(--sp-1);
 }
 
 /* `from -> to`, the two facts a move's claim line cannot carry. */
@@ -196,6 +191,7 @@
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   padding: var(--sp-2) 0.75rem;
   min-height: var(--btn-h);
@@ -290,6 +286,25 @@
   padding-inline: 0.75rem;
   min-height: var(--btn-h);
   min-width: 0; /* allow ellipsis on flex children */
+
+  /* THE FILE BADGE'S HEIGHT, declared HERE because its two inputs are the two
+     declarations above it and a reader retuning either has to see it move. A
+     custom property inherits, and the badge is a real CHILD of this row (unlike
+     the subtitle, which is a sibling — see `--tool-chev-box` on `.tool-call`),
+     so the read resolves.
+
+     It is the content box a STANDALONE card's header leaves, which is the
+     TIGHTEST context the badge renders in: a group MEMBER row overrides
+     `padding-block` to `var(--sp-1)` and so leaves 8px more, and that rule
+     deliberately does NOT redeclare this — one badge size per pointer tier,
+     or the same chip renders at two heights in one transcript. 20px on a fine
+     pointer, 28px on a coarse one.
+
+     CONSEQUENCE, because it is the boundary: the badge is now the TALLEST thing
+     in a header, and a lone badged card resolves to exactly `--btn-h` rather
+     than being lifted to it. So anything added to this row taller than this
+     grows the row, which is the defect `.tool-file-link` records below. */
+  --tool-badge-h: calc(var(--btn-h) - 2 * var(--sp-2));
 }
 
 /* The WHOLE summary expands the card: the title row, the description or move
@@ -305,6 +320,7 @@
    answering the same gesture differently. */
 .tool-summary.has-disclosure {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -406,15 +422,15 @@
   color: var(--c-yellow);
 }
 
-/* The rule that refused the call. Presented as label/value pairs rather than
-   prose so the capability and the source file can be copied out of it. */
+/* The rule that refused the call, as label/value pairs so the capability and the
+   source file can be copied out. A notice: the state's hue wash, no edge and no
+   rung (27-run-card.css `.run-alert` is the same idiom). */
 .tool-denial {
   display: grid;
   gap: var(--sp-1);
   padding: var(--sp-2);
   margin-block-end: var(--sp-2);
-  border-inline-start: 2px solid var(--c-yellow);
-  background: var(--c-bg-tertiary);
+  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
   border-radius: var(--r);
 }
 
@@ -444,39 +460,6 @@
   min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
-}
-
-.tool-duration {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-/* WITHDRAWN WHEN THERE IS NOTHING TO SAY, or the readout to its left stops
- * ending on the header's own gutter. `tool-card.ts` builds this span
- * unconditionally and fills it only once a duration lands, and an empty flex item
- * still has a box: the header's `gap` is charged between it and the element
- * before it, AND its own `margin-inline-start` applies. Measured on a `Read File`
- * card at 1440: the file badge ended at 1208 against a content edge of 1224, so
- * 16px of dead space held it off the edge — reported as the badge looking
- * un-right-aligned, "as if it reserves space for a chevron that is not there".
- * There is no chevron there; this slot is what the reader was seeing.
- *
- * The `margin-inline-start` on this span is the OTHER half of the same rule and
- * was already right: the inline gap is carried by the separated element rather
- * than by the row's `gap`, so it exists exactly when the element does — which is
- * only true once the element itself stops existing when it is empty. Both halves
- * are stated in `vibekit-ui.md` ("A right-aligned readout ends on its container's
- * own gutter"), where the turn footer's ledger caret and the tool header's own
- * status dot already take this half; this span was the site still paying a gutter
- * for a value it does not have. */
-.tool-duration:empty {
-  display: none;
-}
-
-.tool-duration:not(:empty)::before {
-  content: "• ";
 }
 
 /* The arc is PAINTED and the box never turns (`--vk-spin-arc`, 00-header.css):
@@ -665,27 +648,23 @@
  * the cascade over the library's region rule — dropping height here would
  * kill the collapse animation. */
 .tool-details {
-  border-block-start: 1px solid var(--c-border);
   padding: var(--sp-2) var(--sp-3);
   max-height: 18.75rem;
   overflow-y: auto;
 
-  /* The machine-text surface, the wash prose code already takes (13-messages.css).
-     Off the INK rather than a ramp rung, so it holds at whatever depth the card
-     sits at and in both themes with no per-theme value. */
-  background: var(--c-code-bg);
+  /* A well; its step is the seam, so no rule (vibekit-ui.md "Seams"). */
+  background: var(--c-well);
   transition:
     height var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard);
 }
 
 /* Collapsed chrome, keyed off the attribute the disclosure controller sets:
- * vertical padding + separator would otherwise still render at height 0. */
+ * vertical padding would otherwise still render at height 0. */
 .tool-details[aria-hidden="true"] {
   overflow: hidden;
   opacity: 0;
   padding-block: 0;
-  border-block-start: none;
 }
 
 .tool-input,
@@ -721,18 +700,31 @@
   white-space: nowrap;
   max-width: 12.5rem;
 
-  /* THE BADGE MEASURES THE GLYPH BESIDE IT, so no row can be driven past its own
-     height floor by carrying one. `--icon-ui` is what `.ic-ui` sizes the kind glyph
-     at (03-base.css), so the two are equal by construction at both tiers rather
-     than by two numbers kept in step.
-     `--ctl-h-sm` was the previous answer and it was one tier short of a fix: 24px on
-     a fine pointer against the 20px `.tool-header` has left inside its 36px floor at
-     `padding-block: var(--sp-2)`, so a LONE tool call carrying a badge rendered a
-     40px row beside every 36px one — reported as the box with a file badge being
-     taller than all the others, and 52px/44px before that when the hit-target floor
-     was the box. A group MEMBER hid it, because the row idiom's `padding-block:
-     var(--sp-1)` leaves 28px and a 24px chip fits: the height came from the
-     CONTAINER, which is exactly what the header's one-floor rule says it must not.
+  /* THE BADGE FILLS THE HEIGHT ITS ROW ALREADY HAS, and no more, so it gains
+     vertical breathing room without any row being able to grow. `--tool-badge-h`
+     (`.tool-header` above) is the content box a standalone card's header leaves,
+     so the fit is by construction at every pointer tier rather than by a number
+     kept in step with one.
+
+     OVERTURNS `--icon-ui`, which this rule used to read on the reasoning that
+     matching the kind glyph beside it made the fit structural. The premise held
+     and the conclusion did not: the glyph is not the tallest thing the row can
+     carry, so measuring it left the chip 4px short of the space the row already
+     had on a fine pointer and 8px short on a coarse one — a 15.4px line box in a
+     16px button, which paints as a pill with no vertical padding at all inside a
+     36px row, and is what it was reported as. The fit was never the property
+     under threat; the two candidates differ only in whether the badge WASTES the
+     room, so the derivation that fills it is the honest one.
+
+     `--ctl-h-sm` was the answer before that and it was one tier too tall: 24px
+     against the 20px a standalone header leaves, so a LONE tool call carrying a
+     badge rendered a 40px row beside every 36px one (52px against 44px before
+     that, when the hit-target floor was the box). A group MEMBER hid it, because
+     the row idiom's `padding-block: var(--sp-1)` leaves 28px and a 24px chip
+     fits: the height came from the CONTAINER, which is exactly what the header's
+     one-floor rule says it must not. That failure is what `--tool-badge-h`
+     deriving from the TIGHTEST context is guarding against, and
+     `tool-group-height.test.ts` pins the lone-card case at both tiers.
 
      The TARGET keeps the floor — `61-mcp-tools.css`'s expander idiom, `inset` off
      `--hit-floor` so it follows the tier with no second declaration. Vertical only
@@ -750,7 +742,7 @@
      `min-height`, and a logical property is a DIFFERENT one resolved against it by
      cascade order rather than by specificity. */
   position: relative;
-  block-size: var(--icon-ui);
+  block-size: var(--tool-badge-h);
   min-width: var(--hit-floor);
   min-height: 0;
   transition:
@@ -893,23 +885,23 @@
      and a rendered one alike, so 69px of content renders at 71px. Adding the border
      here is the error `.plan-message` recorded — it counts it twice.
 
-     An expression rather than a literal because TWO of its terms move on the pointer
-     tier: `--btn-h` is the identity row's own floor (36 -> 44) and `--hit-floor` sizes
-     the ledger row's tallest child, which is `.turn-ledger-summary`'s BUTTON, floored
-     by 61-mcp-tools.css's universal hit target (24 -> 44). The remaining two terms sit
-     on DIFFERENT elements: the 1px is `.subagent-foot`'s own `border-block-start`
-     (below), and the `--sp-1 * 2` is the padding-block of the `.turn-footer` NESTED
-     inside it (29-turns.css, `padding: var(--sp-1) var(--sp-3)`), which
-     `.subagent-foot > .subagent-footer` overrides on the inline axis only.
-     `.subagent-foot` itself declares no padding at all, so a reader auditing that rule
-     for this term will not find it there.
+     An expression rather than a literal because BOTH of its tier terms move on the
+     pointer tier: `--btn-h` is the identity row's own floor (36 -> 44), and the ledger
+     row is the BAND `.turn-ledger-summary` declares for itself (29-turns.css,
+     `max(--hit-floor, --ctl-h-dense)`: 32 -> 44). The 1px sits on a DIFFERENT element,
+     `.subagent-foot`'s own `border-block-start` (below), so a reader auditing that
+     rule for it will not find it there; `.subagent-foot` declares no padding at all.
+
+     The `--sp-1 * 2` term this carried is GONE with the nested footer's block padding:
+     that band now IS its ledger button's hit box rather than the box plus padding, so
+     the mouse tier is unchanged (32 replaces 24 + 8) and the coarse tier drops 8px.
 
      MEASURED over 200 boxes (`subagent-card-metrics.test.ts`), against `auto 4rem`'s
      rendered 66px:
 
        tier     settled / collapsed container   running
        fine     71px                            38px
-       coarse   99px                            46px
+       coarse   91px                            46px
 
      So 4rem UNDER-stated the 96.6% resting case and the list grew as the reader
      scrolled. ONE ESTIMATE CANNOT BE EXACT FOR BOTH, and this one is the LARGER,
@@ -924,7 +916,7 @@
      history. A RUNNING card is by construction the newest delegated work, at the live
      edge where the reader already is, so it renders on arrival and never consults this
      value at all. */
-  --subagent-content: calc(var(--btn-h) + var(--hit-floor) + var(--sp-1) * 2 + 1px);
+  --subagent-content: calc(var(--btn-h) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--subagent-content);
@@ -954,6 +946,7 @@
 .subagent-container.has-disclosure > .subagent-header,
 a.subagent-header {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1258,14 +1251,26 @@ a.subagent-header {
    Scoped by the parent rather than declared flat, deliberately: `.turn-footer` and
    a bare `.subagent-footer` score the same specificity, so which one won would
    depend on the CSS MANIFEST order between this file and 29-turns.css. Two classes
-   settles it wherever the files sit. */
+   settles it wherever the files sit.
+
+   NO INLINE PADDING ON EITHER EDGE, and TWO rules were deleted here rather than
+   retuned: this one's `padding-inline-end: var(--sp-2)` and a
+   `.subagent-foot > .subagent-footer > .turn-ledger-summary` declaring an 8px
+   leading gutter. Both existed to give this card a denser gutter than the turn
+   card's, on the claim that 8px was "this card's own ink gutter" — and that claim
+   was FALSE ABOUT THIS CARD. `.subagent-header` above is `padding: var(--sp-2)
+   var(--sp-3)`, so a delegate's identity ink starts on the same 12px every other
+   card's does: measured 12.0px for the header glyph against 8.0px for the foot's
+   `i`, i.e. the FOOT was the outlier inside its own card. The 8px was only the value
+   this row's retired `padding-inline` happened to carry. 29-turns.css now declares
+   both edges for every card that mounts this footer, so a padding here would be
+   ADDED to the button's own and indent the delegate's ink. */
 .subagent-foot > .subagent-footer {
   flex: 1 1 auto;
   min-width: 0;
   background: none;
   border-block-start: none;
   border-radius: 0;
-  padding-inline: var(--sp-2);
 }
 
 /* Nested prose fills the subagent body, and now it does so with no rule here.
@@ -1498,6 +1503,7 @@ a.subagent-header {
 .btn,
 .btn-save,
 .btn-small,
+.tool-output-reveal,
 .uip-ask-ok,
 .uip-ask-cancel {
   display: flex;
@@ -1574,6 +1580,7 @@ a.subagent-header {
 .btn,
 .btn-save,
 .btn-small,
+.tool-output-reveal,
 .uip-ask-ok,
 .uip-ask-cancel {
   gap: var(--sp-2);
@@ -1869,11 +1876,19 @@ a.subagent-header {
   flex: 1;
 }
 
-/* Git button dot in the chat toolbar. Colors derived from data-state via
- * git-badge.ts. Priority: error > both > local > remote > hidden.
- * Each state gets a distinct hue so the user can tell at a glance
- * whether the badge is calling for action (error / local) or just
- * informational (remote-only). */
+/* Git button dot in the chat toolbar. Colours derived from data-state via
+ * git-badge.ts. Priority: error > dirty > hidden.
+ *
+ * TWO hues, both of which a developer already reads without a legend: red is
+ * broken, amber is modified. That is the vocabulary `.git-st-*` above uses per
+ * file, and it is VS Code's (gitDecoration.deletedResourceForeground /
+ * .modifiedResourceForeground). They are the STATE inks, never the
+ * destructive-action palette --c-danger / --c-warning — see vibekit-ui.md
+ * "Color system".
+ *
+ * There is no third hue, because behind-origin is not a state here and the
+ * blended local-AND-behind fill it forced into existence is deleted with it
+ * (git-badge.ts's header carries the reasoning). */
 .git-badge {
   position: absolute;
   /* These insets have to keep it INSIDE the button's box: the toolbar clips its
@@ -1884,24 +1899,14 @@ a.subagent-header {
   width: 0.4375rem;
   height: 0.4375rem;
   border-radius: 50%;
-  background: var(--c-accent);
+  /* The `dirty` fill; `error` below is the one override, so a state that somehow
+     reaches the DOM without an arm is still visible rather than invisible. */
+  background: var(--c-yellow);
   pointer-events: none;
 }
 
-.git-badge[data-state="local"] {
-  background: var(--c-warning);
-}
-
-.git-badge[data-state="remote"] {
-  background: var(--c-accent);
-}
-
-.git-badge[data-state="both"] {
-  background: color-mix(in srgb, var(--c-warning) 50%, var(--c-accent));
-}
-
 .git-badge[data-state="error"] {
-  background: var(--c-danger);
+  background: var(--c-red);
 }
 
 /* Makes this button the badge's containing block; nothing else positions it. */
@@ -2018,6 +2023,7 @@ a.subagent-header {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -2109,6 +2115,7 @@ a.subagent-header {
   padding: 1px var(--sp-1);
   border-radius: var(--r-sm);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 

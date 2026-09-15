@@ -12,9 +12,6 @@ vi.mock("./tool-group.js", () => ({
   breakToolGroup: vi.fn(),
   getOrCreateToolGroup: vi.fn(),
   maybeCollapseGroup: vi.fn(),
-  formatDuration: vi.fn(),
-  trackInProgress: vi.fn(),
-  untrackInProgress: vi.fn(),
 }));
 vi.mock("./tool-card.js", () => ({
   buildToolCard: vi.fn(() => document.createElement("div")),

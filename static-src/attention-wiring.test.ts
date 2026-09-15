@@ -96,7 +96,12 @@ vi.mock("./transport.js", () =>
   import("./__test-helpers__/tabs-server.js").then((m) => m.tabTransportMock()),
 );
 vi.mock("./api-client.js", () =>
-  import("./__test-helpers__/tabs-server.js").then((m) => ({ apiGetTyped: m.tabListRead() })),
+  import("./__test-helpers__/tabs-server.js").then((m) => ({
+    apiGetTyped: m.tabListRead(),
+    // tabs.ts reaches api-client.ts through the files-shared.js edge the
+    // multi-instance browser added, so the real link needs this name present.
+    apiGet: vi.fn(() => Promise.resolve(null)),
+  })),
 );
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./device-view.js", () => {
@@ -1064,9 +1069,9 @@ describe("initAttention", () => {
 
   it("persists an acknowledgement so a reconnect cannot re-raise it", async () => {
     // The latches behind every cue are rebuilt from server state — the connect
-    // replay re-delivers turn_state per busy chat and re-pushes every unanswered
-    // decision — so without persistence a dismissed count came back on a phone
-    // simply returning to a backgrounded page.
+    // handshake names every busy chat and re-pushes every unanswered decision — so
+    // without persistence a dismissed count came back on a phone simply returning to
+    // a backgrounded page.
     //
     // The KEY is the tab id, which survives a reload because ids are server-minted
     // and persisted with the collection: the same subject comes back under the same

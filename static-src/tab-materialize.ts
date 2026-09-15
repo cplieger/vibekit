@@ -6,19 +6,21 @@
 // inside an effect subscribes the caller to nothing.
 
 import type { TabKind, TabSubject } from "./types.js";
-import type { Route } from "./router.js";
+import type { Route } from "./route-path.js";
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { get, subagentStatusFor } from "./store.js";
 import { runLabelOf } from "./run-store.js";
 import { FALLBACK_SUBAGENT_NAME, subagentLabel } from "./roles.js";
 import { findSubagentInvocation } from "./subagent-slice.js";
+// Acyclic: files-shared.ts imports only api-client.js and @cplieger/reactive.
+import { FB_ROOT, normalizeDirPath } from "./files-shared.js";
 
 // --- The injected half ---
 
 /** Chat behaviour, from chat.ts. `dot` is injected because the pending-ask half of
  *  it reads the decision dock, which is not a leaf module; `close` is the chat's
  *  CLIENT-LOCAL teardown, whoever closed the tab. */
-export interface ChatTabOpener {
+interface ChatTabOpener {
   show: (chatID: string) => void;
   refresh: (chatID: string) => void;
   close: (chatID: string) => void;
@@ -27,7 +29,7 @@ export interface ChatTabOpener {
 
 /** Editor behaviour, from editor-openers.ts. A subject carries the path and nothing
  *  else; content, dirty state, mode and line selection live in `fileStates`. */
-export interface EditorTabOpener {
+interface EditorTabOpener {
   show: (path: string) => void;
   refresh: (path: string) => void;
   close: (path: string) => void;
@@ -35,7 +37,7 @@ export interface EditorTabOpener {
 
 /** Run behaviour, from run-view.ts. No `owns` and no `cancel`: a run tab is always a
  *  VIEW, and nothing that closes a tab cancels a run. */
-export interface RunTabOpener {
+interface RunTabOpener {
   show: (workflowID: string) => void;
   refresh: (workflowID: string) => void;
 }
@@ -43,7 +45,7 @@ export interface RunTabOpener {
 /** Subagent behaviour, from subagent-view.ts. No `close` half: the tab is a reading
  *  surface over blocks the chat store owns, so it starts nothing and can stop
  *  nothing, and every door opens it with `owns: false`. */
-export interface SubagentTabOpener {
+interface SubagentTabOpener {
   show: (chatID: string, subtaskID: string) => void;
   refresh: (chatID: string, subtaskID: string) => void;
 }
@@ -115,6 +117,13 @@ function runName(workflowID: string): string {
  *  computes today, deliberately, so a converted call site renames nothing. */
 function fileName(path: string): string {
   return path.split("/").pop() ?? path;
+}
+
+/** A browser's tab label: the folder's last segment, or "Files" at the mounts
+ *  listing. `dir` is always `normalizeDirPath` output, so `"/"` is the only
+ *  rootless spelling that reaches this. */
+function filesTabName(dir: string): string {
+  return dir === FB_ROOT ? "Files" : (dir.split("/").pop() ?? dir);
 }
 
 // --- The subagent ref codec ---
@@ -387,36 +396,38 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
           );
         },
       };
-    case "files":
+    case "files": {
+      // Normalised ONCE, and that value is spent on the name, the route and both lazy
+      // calls: a persisted ref is bounded only by MaxRefBytes, so "/workspace/x/" is
+      // legal and spending it raw would put a non-canonical folder in the URL.
+      const dir = normalizeDirPath(subject.ref);
       return {
-        name: "Files",
+        name: filesTabName(dir),
         icon: TAB_ICONS.files,
         view: TAB_VIEWS.files,
-        route: { kind: "files", path: "." },
+        // The folder this tab was OPENED at; `setFilesRoute` keeps it in step once
+        // the tab navigates, or the next unrelated emit overwrites the URL.
+        route: { kind: "files", path: dir },
         owns: subject.owns,
         ...parentOf(subject),
-        // No onShow, for the settings case's reason: the browser's whole
-        // activation was its directory read.
+        // ONE lazy import doing bind-then-load: split across `onShow` and `refresh`, the
+        // two import() promises would decide the order and a load could precede the bind.
         refresh: () => {
           lazily(
-            import("./files.js").then(({ loadFileBrowser }) => {
-              loadFileBrowser();
+            import("./files.js").then(({ showFilesTab }) => {
+              showFilesTab(dir);
             }),
           );
         },
-        // DIVERGENCE the union resolves the other way: the sidebar's door passes
-        // resetFileBrowser and the boot restore passes nothing, so a restored
-        // Files tab kept its stale rows and its search mode when closed. The
-        // reset is the intended behaviour of a files-tab close, so every door
-        // gets it.
         onClose: () => {
           lazily(
-            import("./files.js").then(({ resetFileBrowser }) => {
-              resetFileBrowser();
+            import("./files.js").then(({ releaseFilesTab }) => {
+              releaseFilesTab(dir);
             }),
           );
         },
       };
+    }
     case "history":
       return {
         name: "History",
@@ -477,26 +488,14 @@ export function materializeTab(subject: TabSubject): TabViewSpec {
 
 // --- The inverse ---
 
-/** The subject a URL route names: which tab kind, and which ref.
+/** The subject a URL route names: which tab kind, and which ref. The inverse of the
+ *  `route` each case above produces, beside them so a new kind is ONE compile error
+ *  covering both directions. Total over the nine kinds, no default branch.
  *
- *  The exact inverse of the `route` each case above produces, and it lives beside
- *  them for that reason — a new kind is ONE compile error covering both
- *  directions rather than two files that can disagree about what `/run/{id}`
- *  means. Total over the nine route kinds with no default branch, same rule as
- *  the factory.
- *
- *  A singleton's route carries a sub-position (a settings tab, a browser path)
- *  and its subject carries none, so that half is dropped: `/settings/tools` and
- *  `/settings` name the same tab. That asymmetry is the design — the sub-position
- *  is corrected AFTER the tab is activated, by applyRoute — so this direction
- *  round-trips and the other deliberately does not.
- *
- *  Its consumer is app.ts's back/forward guard. A history entry may only ACTIVATE
- *  a tab that is already open, so the projection is asked whether this route names
- *  one before the route is applied at all. Without that question a back press onto
- *  a closed tab's URL OPENED a fresh tab at it: the reader watched a tab they had
- *  closed come back, and under the server-owned collection every other device had
- *  to absorb it too. */
+ *  A singleton's sub-position is DROPPED (`/settings/tools` and `/settings` name one
+ *  tab), because applyRoute corrects it after the activation. A FILES ref is the tab's
+ *  ORIGIN, so this answers what a route MINTS; which OPEN browser a route addresses is
+ *  `filesTabForRoute`'s question. */
 export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
   switch (route.kind) {
     case "chat":
@@ -514,7 +513,7 @@ export function subjectForRoute(route: Route): { kind: TabKind; ref: string } {
     case "git":
       return { kind: "git", ref: "" };
     case "files":
-      return { kind: "files", ref: "" };
+      return { kind: "files", ref: route.path };
     case "history":
       return { kind: "history", ref: "" };
     case "docs":

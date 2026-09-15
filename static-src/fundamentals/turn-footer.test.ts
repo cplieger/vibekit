@@ -16,7 +16,10 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { page } from "vitest/browser";
 
-import { loadCSS } from "../__test-helpers__/css-rules.js";
+import { loadCSS, mountAppCSS } from "../__test-helpers__/css-rules.js";
+import type { FooterExtras, TurnSummaryData } from "./turn-footer.js";
+import { projectTurns, turnLedger, type Turn } from "../turns.js";
+import type { Message } from "../types.js";
 
 const openFileGitDiff = vi.fn();
 vi.mock("../editor-openers.js", () => ({
@@ -31,25 +34,24 @@ vi.mock("../editor-openers.js", () => ({
   },
 }));
 
-const { buildTurnFooter, updateTurnFooter, earnsTurnFooter } = await import("./turn-footer.js");
+const { buildTurnFooter, updateTurnFooter, earnsTurnFooter, turnFacts } =
+  await import("./turn-footer.js");
 
 function line(el: HTMLElement): string {
   return el.querySelector(".turn-ledger-text")?.textContent ?? "";
 }
 
-/** The turn's own time, which left the ledger string for a right-aligned slot of
- *  its own. Returns "" for a turn with no duration, matching the element's own
- *  empty state. */
-function elapsed(el: HTMLElement): string {
-  return el.querySelector(".turn-elapsed")?.textContent ?? "";
+/** The fact slot beside the `i`: the row's lead fact, `turnFacts(d)[0]`. */
+function factEl(el: HTMLElement): HTMLElement {
+  const f = el.querySelector<HTMLElement>(":scope > .turn-fact");
+  if (f === null) {
+    throw new Error("no .turn-fact");
+  }
+  return f;
 }
 
-function elapsedEl(el: HTMLElement): HTMLTimeElement {
-  const t = el.querySelector<HTMLTimeElement>(".turn-elapsed");
-  if (t === null) {
-    throw new Error("no .turn-elapsed");
-  }
-  return t;
+function fact(el: HTMLElement): string {
+  return factEl(el).textContent;
 }
 
 function summary(el: HTMLElement): HTMLButtonElement {
@@ -140,8 +142,6 @@ describe("the ledger row", () => {
         outcome,
         credits: 1.5,
         elapsedMs: 92000,
-        commands: 3,
-        reads: 12,
         models: ["sonnet-4"],
         changedFiles: TWO_FILES,
       });
@@ -158,73 +158,141 @@ describe("the ledger row", () => {
     expect(line(el)).toBe("Failed");
     updateTurnFooter(el, { outcome: "cancelled", credits: 1, elapsedMs: 3000 });
     expect(line(el)).toBe("Cancelled");
-    expect(elapsed(el)).toBe("3.0s");
+    expect(turnFacts({ outcome: "cancelled", credits: 1, elapsedMs: 3000 })).toContain("3.0s");
+    expect(fact(el)).toBe("3.0s");
     expect(sectionRows(el, "Cost")).toEqual([["Credits", "1.00"]]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The turn's own time, in its own slot.
-//
-// It was one `·`-separated part of the ledger string, sixth of up to seven, in a
-// line that otherwise reports cost — so "how long did that take", which a reader
-// asks of a turn often, was the hardest thing on the row to find. It now sits
-// right-aligned in a `<time>` of its own, painted unconditionally.
+// The turn's facts: the ORDERED list, and the LEAD of it the row paints. Most important
+// first, from the same fields the panel renders, so the ranking is what decides which
+// fact the row shows — which is why the order is asserted exactly and not as a set. The
+// list is ALSO what `earnsTurnFooter` reads, so a change here moves the gate; that
+// block below and the paint invariant at the foot of this file are what say so.
 // ---------------------------------------------------------------------------
 
-describe("the turn's own time", () => {
-  it("renders the same span the ledger used to spell", () => {
+describe("the turn's facts", () => {
+  it("ranks files, commands, delegates, the other kinds, the clock, the credits", () => {
+    expect(
+      turnFacts({
+        changedFiles: TWO_FILES,
+        kindCounts: { read: 12, execute: 3, edit: 3 },
+        delegateCount: 2,
+        elapsedMs: 92000,
+        credits: 1.5,
+      }),
+    ).toEqual([
+      "2 files +6 \u22122",
+      "3 commands",
+      "2 delegates",
+      "12 reads",
+      "3 edits",
+      "1m 32s",
+      "1.50 credits",
+    ]);
+  });
+
+  it("skips every zero or absent value", () => {
+    expect(turnFacts({})).toEqual([]);
+    expect(
+      turnFacts({ credits: 0, elapsedMs: 0, kindCounts: { read: 0 }, changedFiles: {} }),
+    ).toEqual([]);
+    // A turn with no edits leads with its commands.
+    expect(turnFacts({ kindCounts: { execute: 5 }, elapsedMs: 1000 })).toEqual([
+      "5 commands",
+      "1.0s",
+    ]);
+  });
+
+  it("bundles the files with their summed line deltas, and omits a zero side", () => {
+    expect(turnFacts({ changedFiles: { "a.ts": { lines_added: 5, lines_removed: 0 } } })).toEqual([
+      "1 file +5",
+    ]);
+    expect(turnFacts({ changedFiles: { "a.ts": { lines_added: 0, lines_removed: 3 } } })).toEqual([
+      "1 file \u22123",
+    ]);
+    // A rename-only turn: two files, no line deltas, so the count alone.
+    expect(
+      turnFacts({
+        changedFiles: {
+          "a.ts": { lines_added: 0, lines_removed: 0 },
+          "b.ts": { lines_added: 0, lines_removed: 0 },
+        },
+      }),
+    ).toEqual(["2 files"]);
+  });
+
+  it("names one call and one delegate in the singular", () => {
+    expect(turnFacts({ kindCounts: { execute: 1 }, delegateCount: 1 })).toEqual([
+      "1 command",
+      "1 delegate",
+    ]);
+  });
+
+  it("hoists every command kind ahead of a higher read count", () => {
+    // `shell` and `command` count as commands too, through the shared noun table.
+    expect(turnFacts({ kindCounts: { read: 40, shell: 2, command: 1 } })).toEqual([
+      "2 shell commands",
+      "1 command",
+      "40 reads",
+    ]);
+  });
+
+  it("spells the wall clock the way the panel does", () => {
     // The thresholds are `formatElapsed`'s and did not move: a tenth of a second
     // below a minute, whole seconds above it, floored rather than rounded.
-    expect(elapsed(buildTurnFooter({ elapsedMs: 45500 }))).toBe("45.5s");
-    expect(elapsed(buildTurnFooter({ elapsedMs: 90000 }))).toBe("1m 30s");
-    expect(elapsed(buildTurnFooter({ elapsedMs: 119999 }))).toBe("1m 59s");
-    expect(elapsed(buildTurnFooter({ elapsedMs: 7_200_000 }))).toBe("2h 0m");
+    expect(turnFacts({ elapsedMs: 45500 })).toEqual(["45.5s"]);
+    expect(turnFacts({ elapsedMs: 90000 })).toEqual(["1m 30s"]);
+    expect(turnFacts({ elapsedMs: 119999 })).toEqual(["1m 59s"]);
+    expect(turnFacts({ elapsedMs: 7_200_000 })).toEqual(["2h 0m"]);
   });
 
-  it("carries a machine-readable duration beside the text", () => {
-    // What a `<time>` is FOR, and it costs nothing: both spellings come from one
-    // value, so they cannot disagree.
-    expect(elapsedEl(buildTurnFooter({ elapsedMs: 92000 })).dateTime).toBe("PT1M32S");
-    expect(elapsedEl(buildTurnFooter({ elapsedMs: 400 })).dateTime).toBe("PT0.4S");
-    expect(elapsedEl(buildTurnFooter({ elapsedMs: 7_200_000 })).dateTime).toBe("PT2H");
+  it("shows the first fact in the slot as soon as the footer is built", () => {
+    const el = buildTurnFooter({ changedFiles: TWO_FILES, kindCounts: { execute: 3 } });
+    expect(fact(el)).toBe("2 files +6 \u22122");
+    expect(factEl(el).hidden).toBe(false);
   });
 
-  it("makes no claim at all for a turn that has no duration", () => {
-    // Not a zero span: a duration nobody stamped is not a duration of zero, and a
-    // `<time>` with neither a `datetime` nor valid content is not a conforming
-    // `<time>` — so the element is emptied AND hidden rather than asserting `PT0S`.
-    const el = buildTurnFooter({ credits: 1 });
-    expect(elapsed(el)).toBe("");
-    expect(elapsedEl(el).hasAttribute("datetime")).toBe(false);
-    expect(elapsedEl(el).hidden).toBe(true);
+  it("hides the slot when there is nothing to say", () => {
+    // A cancel that beat the usage stamp: the footer is earned by the outcome word
+    // alone and the slot makes no claim rather than showing an empty box.
+    const el = buildTurnFooter({ outcome: "cancelled" });
+    expect(fact(el)).toBe("");
+    expect(factEl(el).hidden).toBe(true);
   });
 
-  it("clears itself when a repaint drops the duration", () => {
-    const el = buildTurnFooter({ elapsedMs: 3000 });
-    expect(elapsedEl(el).hasAttribute("datetime")).toBe(true);
-    expect(elapsedEl(el).hidden).toBe(false);
-    updateTurnFooter(el, { credits: 1 });
-    expect(elapsed(el)).toBe("");
-    expect(elapsedEl(el).hasAttribute("datetime")).toBe(false);
-    expect(elapsedEl(el).hidden).toBe(true);
-  });
-
-  it("comes back when a later repaint has one", () => {
+  it("clears the slot when a repaint drops every fact, and refills it later", () => {
     // The reachable direction: `updateTurnFooter` runs on every paint and a turn's
     // duration is stamped at turn end, so the footer exists before the value does.
-    const el = buildTurnFooter({ commands: 2 });
-    expect(elapsedEl(el).hidden).toBe(true);
-    updateTurnFooter(el, { commands: 2, elapsedMs: 3000 });
-    expect(elapsed(el)).toBe("3.0s");
-    expect(elapsedEl(el).hidden).toBe(false);
+    const el = buildTurnFooter({ elapsedMs: 3000 });
+    expect(fact(el)).toBe("3.0s");
+    updateTurnFooter(el, { outcome: "cancelled" });
+    expect(fact(el)).toBe("");
+    expect(factEl(el).hidden).toBe(true);
+    updateTurnFooter(el, { outcome: "cancelled", kindCounts: { execute: 2 }, elapsedMs: 3000 });
+    expect(fact(el)).toBe("2 commands");
+    expect(factEl(el).hidden).toBe(false);
   });
 
-  it("is the footer's own child, so the grid can place it", () => {
+  it("follows the new list's LEAD when a repaint re-ranks it", () => {
+    // A live turn's list grows as its tool calls land, and a file changed later
+    // outranks the commands that were leading — so the slot has to re-read `[0]`
+    // rather than keep whatever it first painted.
+    const el = buildTurnFooter({ kindCounts: { execute: 2 }, elapsedMs: 3000 });
+    expect(fact(el)).toBe("2 commands");
+    updateTurnFooter(el, { changedFiles: TWO_FILES, kindCounts: { execute: 2 }, elapsedMs: 3000 });
+    expect(fact(el)).toBe("2 files +6 \u22122");
+  });
+
+  it("is the footer's own child, so the grid can place it beside the button", () => {
     // `:scope >` is how every one of the footer's own readers addresses its parts,
-    // and the stylesheet places this one by `.turn-footer > .turn-elapsed`.
+    // and the stylesheet places this one by `.turn-footer > .turn-fact`. A sibling
+    // rather than a child of the button, so the fact never reaches the button's
+    // computed name.
     const el = buildTurnFooter({ elapsedMs: 1000 });
-    expect(el.querySelector(":scope > .turn-elapsed")).not.toBeNull();
+    expect(el.querySelector(":scope > .turn-fact")).not.toBeNull();
+    expect(el.querySelector(".turn-ledger-summary .turn-fact")).toBeNull();
   });
 });
 
@@ -285,15 +353,28 @@ describe("the trigger", () => {
     // below: with the `aria-label` removed and no `.sr-only` span, a clean turn's
     // trigger has NO accessible name at all — the text is empty, the caret and the
     // `i` are decorative, and the glyph carries no text.
-    const el = buildTurnFooter({ outcome: "completed", credits: 1 });
+    // With a fact painted beside it, so the name proves the slot is outside the
+    // button's content.
+    const el = buildTurnFooter({
+      outcome: "completed",
+      credits: 1,
+      changedFiles: TWO_FILES,
+      kindCounts: { execute: 2 },
+    });
     expect(summary(el).hasAttribute("aria-label")).toBe(false);
+    expect(fact(el)).toBe("2 files +6 \u22122");
     await expectName(el, "Turn details");
   });
 
   it("still carries the outcome word in the name of a turn that ended badly", async () => {
     // Why there is no `aria-label`: one would WIN over the button's own text and
     // hide this word, which is the exact defect `OUTCOME_LEAD` exists to fix.
-    const el = buildTurnFooter({ outcome: "cancelled", credits: 1 });
+    const el = buildTurnFooter({
+      outcome: "cancelled",
+      credits: 1,
+      changedFiles: TWO_FILES,
+      kindCounts: { execute: 2 },
+    });
     await expectName(el, "Cancelled Turn details");
   });
 
@@ -308,6 +389,29 @@ describe("the trigger", () => {
 // ---------------------------------------------------------------------------
 
 describe("the info panel", () => {
+  // THE PANEL IS NEVER EMPTY ON THE PRODUCTION PATH, so the `i` is never a dead end.
+  // Sensitive to a producer that stamps NEITHER timing; one alone still fills it.
+  // Through `turnLedger` because a BARE `{outcome}` DOES open an empty panel — every
+  // field is optional, so that call compiles while being a shape nothing builds.
+  it("is never empty for a turn built the way production builds one", () => {
+    const msgs = [
+      { id: "u1", role: "user", ts: 1_700_000_000_000, content: "hi" },
+      {
+        id: "a1",
+        role: "assistant",
+        ts: 1_700_000_000_500,
+        content: "",
+        turn_outcome: "cancelled",
+      },
+    ] as unknown as Message[];
+    const turn = projectTurns(msgs, false)[0];
+    expect(turn).toBeDefined();
+    const led = turnLedger(turn as Turn);
+    const footer = buildTurnFooter({ ...led, outcome: (turn as Turn).outcome });
+    const infoRows = footer.querySelectorAll(".turn-info-row").length;
+    expect(infoRows, "the cancelled turn that carries nothing else").toBeGreaterThan(0);
+  });
+
   it("withholds every section on a turn with nothing to state", () => {
     // A cancel that beat the usage stamp: the footer is still earned (the reader
     // needs to know the turn was cancelled) and the panel has no fact to show, so it
@@ -391,6 +495,23 @@ describe("the info panel", () => {
     expect(
       sectionRows(buildTurnFooter({ endedAt: 0, startedAt: 0, elapsedMs: 1000 }), "Timings"),
     ).toEqual([["Wall clock", "1.0s"]]);
+  });
+
+  it("withholds Ended while the turn is still running", () => {
+    // The stamp a live turn CARRIES is not a claim about its end: `endedAt` is the last
+    // body message's `ts` (`turns.ts` `turnLedger`), so a turn whose reply has started
+    // streaming holds one already — and at the row's minute precision it reads identical
+    // to Started, which is a finished turn's shape on a turn that has not finished. The
+    // section states Started alone, and the row is ABSENT rather than blank, so the panel
+    // carries one stamp rather than two.
+    const started = Date.UTC(2026, 0, 2, 9, 5, 0);
+    const el = buildTurnFooter({ outcome: "running", startedAt: started, endedAt: started + 40 });
+    expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started"]);
+    expect(panel(el).querySelectorAll("time")).toHaveLength(1);
+    // And it comes back on the settle, in place: the withholding is a property of the
+    // OUTCOME rather than of this footer instance.
+    updateTurnFooter(el, { outcome: "completed", startedAt: started, endedAt: started + 92000 });
+    expect(sectionRows(el, "Timings").map(([label]) => label)).toEqual(["Started", "Ended"]);
   });
 
   it("puts the file rows and one row per tool kind under Work", () => {
@@ -536,9 +657,7 @@ describe("the per-file rows", () => {
   // plus the become/collapse transitions either side of it. Every turn that earns a
   // footer now has a panel to open — the reasoning is at `updateTurnFooter`'s
   // `aria-expanded` write — so `summary.disabled` is never set and an assertion on it
-  // would pass whatever the code did. The one fact those cases carried that is still
-  // live is the GATE admitting `sinceMs`, and it is asserted where the gate is, in the
-  // `earnsTurnFooter` block below.
+  // would pass whatever the code did.
   it("keeps its rows across a repaint that leaves the files alone", () => {
     const el = buildTurnFooter({ changedFiles: TWO_FILES });
     summary(el).click();
@@ -576,27 +695,20 @@ describe("earnsTurnFooter", () => {
     expect(earnsTurnFooter({})).toBe(false);
     expect(earnsTurnFooter({ credits: 0, elapsedMs: 0 })).toBe(false);
     expect(earnsTurnFooter({ changedFiles: {} })).toBe(false);
-    expect(earnsTurnFooter({ commands: 0, reads: 0 })).toBe(false);
-    // A gap of zero earns nothing. Not in tension with `timingRows`, which renders
-    // the row for `sinceMs: 0`: this gate asks whether the turn has anything worth a
-    // footer and two turns starting together does not, while the row asks whether a
-    // gap was MEASURED, which is a different question with `undefined` as its no.
-    expect(earnsTurnFooter({ sinceMs: 0 })).toBe(false);
   });
 
   it("is true when any ledger dimension is present", () => {
     expect(earnsTurnFooter({ credits: 0.1 })).toBe(true);
     expect(earnsTurnFooter({ elapsedMs: 1 })).toBe(true);
-    // The gap before the turn, and it is the ONE panel-only field the gate admits
-    // (the reasoning is at `earnsTurnFooter`). This gate decides the footer EXISTS,
-    // and with no footer there is no panel to state the gap in words — leaving the
-    // rail's seam tooltip as the only channel, which needs a pointer.
-    expect(earnsTurnFooter({ sinceMs: 14_400_000 })).toBe(true);
-    expect(earnsTurnFooter({ commands: 1 })).toBe(true);
-    expect(earnsTurnFooter({ reads: 1 })).toBe(true);
     expect(
       earnsTurnFooter({ changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } } }),
     ).toBe(true);
+  });
+
+  it("is NOT made true by a kind map that counts nothing", () => {
+    // What a real turn carries: the counter AND its kind map, which earns and paints.
+    expect(earnsTurnFooter({ kindCounts: { execute: 1 } })).toBe(true);
+    expect(earnsTurnFooter({ kindCounts: { read: 7 } })).toBe(true);
   });
 
   // The files are on disk regardless, and a cancel is exactly when a reader
@@ -621,15 +733,11 @@ describe("earnsTurnFooter", () => {
     expect(earnsTurnFooter({ models: ["sonnet-4"], outcome: "completed" })).toBe(false);
   });
 
-  // Nor by the panel's OWN fields, for the same reason and one more: the panel is
-  // reached THROUGH this row, and a row with no lead word and no numbers is not a
-  // door worth painting on every turn in the transcript.
-  it("is not made true by the info panel's own fields", () => {
+  // The fields `turnFacts` emits nothing for: no fact, so no lead, so no footer.
+  it("is not made true by a panel field the row cannot paint", () => {
     expect(
       earnsTurnFooter({
         toolMs: 9000,
-        kindCounts: { read: 3 },
-        delegateCount: 1,
         delegateMs: 9000,
         startedAt: 1000,
         endedAt: 9000,
@@ -637,6 +745,14 @@ describe("earnsTurnFooter", () => {
         truncated: true,
       }),
     ).toBe(false);
+  });
+
+  it("IS made true by a kind count or a delegate count, which the row does paint", () => {
+    // The gate and the projection agreeing: each of these emits a fact, so each paints.
+    expect(earnsTurnFooter({ kindCounts: { search: 3 } })).toBe(true);
+    expect(turnFacts({ kindCounts: { search: 3 } })).toEqual(["3 searches"]);
+    expect(earnsTurnFooter({ delegateCount: 1 })).toBe(true);
+    expect(turnFacts({ delegateCount: 1 })).toEqual(["1 delegate"]);
   });
 
   it("still shows the model on a footer something else earned", () => {
@@ -711,7 +827,6 @@ describe("the trigger's hover text", () => {
   it("is never a native title", () => {
     const footer = buildTurnFooter({
       outcome: "completed",
-      commands: 2,
       changedFiles: { "a.ts": { lines_added: 3, lines_removed: 1 } },
     });
     expect(summary(footer).hasAttribute("title")).toBe(false);
@@ -729,7 +844,9 @@ describe("the trigger's hover text", () => {
     // The clause that withheld the tooltip is gone with the readout state it tested
     // for: every footer discloses a panel, so a footer with no tooltip would be a
     // door with nothing saying so.
-    expect(tip(buildTurnFooter({ outcome: "completed", commands: 2 }))).toBe("Show turn details");
+    expect(tip(buildTurnFooter({ outcome: "completed", kindCounts: { execute: 2 } }))).toBe(
+      "Show turn details",
+    );
   });
 
   it("carries NO outcome clause at all, because the row names every outcome now", () => {
@@ -739,7 +856,7 @@ describe("the trigger's hover text", () => {
     // running" tooltip that a previous pass removed for exactly this reason. With
     // OUTCOME_LEAD total there is nothing left for the tooltip to add.
     for (const outcome of ["cancelled", "refused", "unknown", "failed", "interrupted"] as const) {
-      const footer = buildTurnFooter({ outcome, commands: 1 });
+      const footer = buildTurnFooter({ outcome });
       expect(line(footer), `${outcome} names itself in the row`).not.toBe("");
       expect(tip(footer), `${outcome} adds no hover clause`).toBe("Show turn details");
     }
@@ -757,3 +874,285 @@ describe("the trigger's hover text", () => {
     expect(row?.getAttribute("data-tooltip")).toBe("Open the diff for src/a.ts");
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE PAINT INVARIANT: an earned footer paints something, per REASON it is earned. One
+// case per reason, through `buildTurnFooter` and `updateTurnFooter` rather than a
+// hand-built footer, which carries whatever the fixture put in it. Two mechanisms keep
+// it honest: the table is a `Record` over `keyof TurnSummaryData`, so a summary field
+// added later fails the type check until it has a probe, and each probe's `earns` is a
+// LITERAL — read off the gate, deleting a fact takes the reason out of both columns.
+// ---------------------------------------------------------------------------
+
+describe("every reason a footer is earned paints something", () => {
+  let bundle: HTMLStyleElement;
+
+  beforeAll(() => {
+    // The whole assembled cascade, because two of the three channels are decided by
+    // CSS rather than by an attribute: `.turn-ledger-text:empty` is `display: none`,
+    // and the glyph is hidden for a running severity. A style read with no stylesheet
+    // would report both as painted.
+    bundle = mountAppCSS();
+  });
+
+  afterAll(() => {
+    bundle.remove();
+  });
+
+  /** Whether one channel is genuinely on screen: not `hidden`, not `display: none`
+   *  (its own or an ancestor's), and carrying text.
+   *
+   *  OPACITY IS DELIBERATELY NOT READ. `.turn-footer` has an `@starting-style`
+   *  entry transition from `opacity: 0`, so a footer appended in this frame can
+   *  legitimately compute 0 — an animation the row is arriving with rather than a
+   *  channel being withheld, and reading it would make every case here a race. */
+  function shows(el: HTMLElement | null): boolean {
+    if (el === null || el.hidden || !el.checkVisibility()) {
+      return false;
+    }
+    return (el.textContent ?? "") !== "";
+  }
+
+  /** The two channels the FOOTER itself owns. The leading glyph is not a third one:
+   *  it carries no text and is drawn from `data-severity`, and every outcome that
+   *  gets a glyph also gets a word (`OUTCOME_LEAD` is total over the five), so the
+   *  word already stands for it. */
+  function paints(footer: HTMLElement): boolean {
+    document.body.replaceChildren(footer);
+    return (
+      shows(footer.querySelector<HTMLElement>(":scope > .turn-fact")) ||
+      shows(footer.querySelector<HTMLElement>(":scope > .turn-ledger-summary > .turn-ledger-text"))
+    );
+  }
+
+  /** One single-field summary per field of `TurnSummaryData`, with the verdict the
+   *  gate owes it. `outcome` probes the EARNING value — `completed` and `running`
+   *  are the two that earn nothing, and the `earnsTurnFooter` block above covers
+   *  them, so spending this row on one of those would leave the word channel
+   *  untested here. */
+  const PROBES: Record<
+    keyof TurnSummaryData,
+    { readonly d: TurnSummaryData; readonly earns: boolean }
+  > = {
+    changedFiles: {
+      d: { changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } } },
+      earns: true,
+    },
+    kindCounts: { d: { kindCounts: { search: 3 } }, earns: true },
+    delegateCount: { d: { delegateCount: 2 }, earns: true },
+    elapsedMs: { d: { elapsedMs: 3000 }, earns: true },
+    credits: { d: { credits: 0.5 }, earns: true },
+    outcome: { d: { outcome: "failed" }, earns: true },
+    // The aggregates carry no kind map, which no producer emits — see the
+    // `earnsTurnFooter` block. Neither earns and neither paints.
+    // Panel-only, and the row has no expression for any of them.
+    toolMs: { d: { toolMs: 9000 }, earns: false },
+    delegateMs: { d: { delegateMs: 9000 }, earns: false },
+    startedAt: { d: { startedAt: 1_700_000_000_000 }, earns: false },
+    endedAt: { d: { endedAt: 1_700_000_009_000 }, earns: false },
+    stopReasonRaw: { d: { stopReasonRaw: "max_tokens" }, earns: false },
+    truncated: { d: { truncated: true }, earns: false },
+    models: { d: { models: ["sonnet-4"] }, earns: false },
+  };
+
+  it("holds for a footer BUILT from that reason", () => {
+    for (const [field, { d, earns }] of Object.entries(PROBES)) {
+      expect(earnsTurnFooter(d), `${field}: the gate's verdict`).toBe(earns);
+      expect(paints(buildTurnFooter(d)), `${field}: earned ${String(earns)}, so paints`).toBe(
+        earns,
+      );
+    }
+  });
+
+  it("holds for a footer REPAINTED into that reason", () => {
+    // The live path, and the one the defect was reachable through: a running turn's
+    // footer is built before its numbers exist and `updateTurnFooter` runs on every
+    // paint, so the row has to acquire its channel on a repaint rather than only at
+    // build.
+    for (const [field, { d, earns }] of Object.entries(PROBES)) {
+      const el = buildTurnFooter({});
+      expect(paints(el), `${field}: an empty footer paints nothing to start with`).toBe(false);
+      updateTurnFooter(el, d);
+      expect(paints(el), `${field}: repainted into ${field}, so paints`).toBe(earns);
+    }
+  });
+
+  it("earns a footer for each EXTRA, whose channel is a control this module never builds", () => {
+    // The `Record` closes the population the same way `PROBES` does, so an extra added
+    // later fails the type check until it has a row. Its CONTROL is asserted where the
+    // caller mounts it: `messages-footer-extras.test.ts`.
+    const extras: Record<keyof FooterExtras, FooterExtras> = {
+      rewindable: { rewindable: true },
+      settledProse: { settledProse: true },
+    };
+    for (const [name, extra] of Object.entries(extras)) {
+      expect(earnsTurnFooter({}, extra), `${name} earns a footer`).toBe(true);
+      expect(paints(buildTurnFooter({})), `${name}: the footer's own channels stay empty`).toBe(
+        false,
+      );
+    }
+  });
+});
+
+// `updateTurnFooter` runs on every paint of its turn card, so on a live turn it runs at
+// chunk cadence, and the panel is full of real controls: each file row is a button with
+// a tooltip that opens a diff.
+describe("the info panel repaints only when its data moved", () => {
+  /** Element-by-element IDENTITY. `toEqual` over two arrays of DOM nodes compares
+   *  them STRUCTURALLY, so it passes for a rebuilt row holding the same markup —
+   *  which is precisely the thing these cases exist to detect. Measured: an unsorted
+   *  file signature repainted every row and a `toEqual` assertion stayed green. */
+  function sameElements(after: readonly Element[], before: readonly Element[]): void {
+    expect(after).toHaveLength(before.length);
+    for (const [i, el] of before.entries()) {
+      expect(after[i], `element ${String(i)} was replaced`).toBe(el);
+    }
+  }
+
+  const data = {
+    elapsedMs: 4200,
+    changedFiles: {
+      "b.go": { lines_added: 3, lines_removed: 1 },
+      "a.go": { lines_added: 5, lines_removed: 0 },
+    },
+  };
+
+  it("keeps every file row across a repaint with the same summary", () => {
+    const el = buildTurnFooter(data);
+    // IN the document, or `focus()` is a no-op on a detached tree and the focus half
+    // of this case passes for the wrong reason.
+    document.body.appendChild(el);
+    try {
+      const before = rows(el);
+      expect(before).toHaveLength(2);
+      const first = before[0];
+      first?.focus();
+      expect(document.activeElement).toBe(first);
+
+      updateTurnFooter(el, { ...data, changedFiles: { ...data.changedFiles } });
+
+      // Identity, because content cannot tell a kept row from a rebuilt one — which is
+      // exactly why this went unnoticed.
+      sameElements(rows(el), before);
+      expect(document.activeElement).toBe(first);
+    } finally {
+      el.remove();
+    }
+  });
+
+  // A `Record`'s insertion order is the order the paths happened to arrive in, so an
+  // unsorted signature would move for a set that did not change. The rows themselves
+  // are sorted by path, so the signature is too.
+  it("keeps them when the same paths arrive in a different order", () => {
+    const el = buildTurnFooter(data);
+    const before = rows(el);
+
+    updateTurnFooter(el, {
+      ...data,
+      changedFiles: {
+        "a.go": { lines_added: 5, lines_removed: 0 },
+        "b.go": { lines_added: 3, lines_removed: 1 },
+      },
+    });
+
+    sameElements(rows(el), before);
+  });
+
+  it("repaints when a file's line counts move", () => {
+    const el = buildTurnFooter(data);
+    const before = rows(el);
+
+    updateTurnFooter(el, {
+      ...data,
+      changedFiles: { ...data.changedFiles, "a.go": { lines_added: 9, lines_removed: 0 } },
+    });
+
+    expect(rows(el)[0]).not.toBe(before[0]);
+    expect(sectionRows(el, "Timings").length).toBeGreaterThan(0);
+  });
+
+  it("repaints when a file is added to the set", () => {
+    const el = buildTurnFooter(data);
+    expect(rows(el)).toHaveLength(2);
+
+    updateTurnFooter(el, {
+      ...data,
+      changedFiles: { ...data.changedFiles, "c.go": { lines_added: 1, lines_removed: 0 } },
+    });
+
+    expect(rows(el)).toHaveLength(3);
+  });
+
+  // THE TOTALITY CASE, on the recorded SIGNATURE rather than the rendered HTML: two
+  // fields (`commands`, `reads`) render in the row's fact slot instead, so a moved
+  // signature costs them one identical repaint, which is the safe direction. This is
+  // the case that has to fail when the record stops being total.
+  it("moves its signature for every field of the summary, one at a time", () => {
+    const probes: Record<keyof typeof FIELD_PROBES, Record<string, unknown>> = FIELD_PROBES;
+    for (const [field, over] of Object.entries(probes)) {
+      const el = buildTurnFooter(data);
+      const before = panel(el).getAttribute("data-sig");
+      expect(before, `${field}: the first paint recorded no signature`).not.toBeNull();
+
+      updateTurnFooter(el, { ...data, ...over });
+
+      expect(
+        panel(el).getAttribute("data-sig"),
+        `${field} moved and the panel's signature did not`,
+      ).not.toBe(before);
+    }
+  });
+
+  // The rendering half, over the fields the panel genuinely paints. Separate from the
+  // case above so a failure names one thing: a stale signature and a section that
+  // stopped rendering are different defects.
+  it("repaints the rendered sections when their own fields move", () => {
+    for (const field of RENDERED_FIELDS) {
+      const el = buildTurnFooter(data);
+      const before = panel(el).innerHTML;
+
+      updateTurnFooter(el, { ...data, ...FIELD_PROBES[field] });
+
+      expect(panel(el).innerHTML, `${field} moved and the panel did not repaint`).not.toBe(before);
+    }
+  });
+});
+
+/** One moved field each, over the WHOLE summary type. `satisfies` rather than a typed
+ *  const so the keys stay literal for the two cases above while still being checked
+ *  against the type — which is what makes a field added to `TurnSummaryData` and
+ *  forgotten here a type error rather than a silent hole. */
+const FIELD_PROBES = {
+  elapsedMs: { elapsedMs: 9999 },
+  credits: { credits: 1.5 },
+  models: { models: ["opus", "sonnet"] },
+  toolMs: { toolMs: 1200 },
+  kindCounts: { kindCounts: { search: 3 } },
+  delegateCount: { delegateCount: 2 },
+  delegateMs: { delegateMs: 500 },
+  startedAt: { startedAt: 1_700_000_000_000 },
+  endedAt: { endedAt: 1_700_000_009_000 },
+  outcome: { outcome: "failed" as const },
+  stopReasonRaw: { outcome: "failed" as const, stopReasonRaw: "max_tokens" },
+  truncated: { outcome: "failed" as const, truncated: true },
+  changedFiles: { changedFiles: { "z.go": { lines_added: 1, lines_removed: 0 } } },
+} satisfies Record<keyof TurnSummaryData, Partial<TurnSummaryData>>;
+
+/** The subset a SINGLE-field probe can observe in the panel's own sections. Written out
+ *  rather than derived, because three fields are absent for three reasons: `commands`
+ *  and `reads` render in the row's fact slot, and `outcome` is only the GATE on
+ *  Diagnostics, so moving it alone from this baseline withholds nothing. */
+const RENDERED_FIELDS = [
+  "elapsedMs",
+  "credits",
+  "models",
+  "toolMs",
+  "kindCounts",
+  "delegateCount",
+  "delegateMs",
+  "startedAt",
+  "endedAt",
+  "stopReasonRaw",
+  "truncated",
+  "changedFiles",
+] as const satisfies readonly (keyof typeof FIELD_PROBES)[];

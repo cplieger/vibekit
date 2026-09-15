@@ -33,9 +33,6 @@ vi.mock("./store-signals.js", () => ({
 }));
 vi.mock("./tool-group.js", () => ({
   maybeCollapseGroup: vi.fn(),
-  formatDuration: vi.fn(() => ""),
-  trackInProgress: vi.fn(),
-  untrackInProgress: vi.fn(),
 }));
 vi.mock("./tool-schema.js", () => ({
   isToolDone: vi.fn(() => false),

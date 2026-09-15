@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/durable"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -64,12 +65,6 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	}
 	if replay {
 		if c, exists := chats.Get(ctx, chatID); exists {
-			// Derive the outcome from the record rather than restating this
-			// attempt's: a chat bound to a session was forked, one with no
-			// session started fresh.
-			outcome := forkOutcomeOf(c.ACPSessionID)
-			slog.Info("tangent: repeat op resolved to the chat it already opened",
-				"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
 			// Through the coordinator even on the replay: the first attempt
 			// can have created the chat and then failed its tab write, and
 			// this finishes that. Open is idempotent, so the ordinary
@@ -79,9 +74,16 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 			if err != nil {
 				return nil, err
 			}
+			// The repeat finishes a load the first attempt never STARTED, and
+			// skips one whose session that attempt already lost.
+			var inherited bool
+			opened.Chat, inherited = loadForkedHistory(ctx, bridges, chats, opened.Chat)
+			outcome := forkOutcomeOf(opened.Chat.ACPSessionID, inherited)
+			slog.Info("tangent: repeat op resolved to the chat it already opened",
+				"chat", chatID, "parent", p.ParentChatID, "outcome", outcome)
 			return openedResponse(&opened, map[string]any{
 				"outcome":    outcome,
-				"session_id": c.ACPSessionID,
+				"session_id": opened.Chat.ACPSessionID,
 			}), nil
 		}
 		// The op was recorded but its chat is not there: the first attempt
@@ -101,11 +103,14 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	if err != nil {
 		return nil, err
 	}
-	outcome := forkOutcomeOf(opened.Chat.ACPSessionID)
 	if opened.Replay && sessionID != "" && opened.Chat.ACPSessionID != sessionID {
 		slog.Warn("tangent: a concurrent attempt of this op already opened the chat, so this attempt's forked session is bound to nothing",
 			"chat", opened.Chat.ID, "parent", p.ParentChatID, "orphaned_session", sessionID)
 	}
+
+	var inherited bool
+	opened.Chat, inherited = loadForkedHistory(ctx, bridges, chats, opened.Chat)
+	outcome := forkOutcomeOf(opened.Chat.ACPSessionID, inherited)
 
 	slog.Info("tangent opened",
 		"chat", opened.Chat.ID, "parent", p.ParentChatID,
@@ -116,10 +121,63 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 	}), nil
 }
 
-// forkOutcomeOf reads a tangent's path off the record it produced: a chat
-// bound to a session was forked, one with no session started fresh.
-func forkOutcomeOf(sessionID string) string {
-	if sessionID == "" {
+// loadForkedHistory gives the tangent the transcript KAS already holds for it and
+// answers with the RE-READ record, plus whether that record still names the session
+// the fork produced. The retirement chain is what says so: the fork binds its session
+// inside the create, so a non-empty chain means that session was retired and the
+// tangent inherited nothing.
+//
+// It refuses nothing, and a failure does not heal itself: the chat stays as it stands.
+// Why the load runs here, and what a late swap reaches: `vibekit.md`'s `fork_chat` row.
+func loadForkedHistory(ctx context.Context, bridges BridgeAccess, chats ChatStore, c *vibekit.Chat) (*vibekit.Chat, bool) {
+	if c == nil || c.ACPSessionID == "" {
+		return c, false
+	}
+	// Deliberately not a comparison against the id THIS attempt forked: a losing
+	// concurrent attempt's record names the WINNER's session, and that one inherited.
+	if len(c.PriorACPSessionIDs) > 0 {
+		return c, false
+	}
+	want := c.ACPSessionID
+	if len(c.Messages) == 0 {
+		id := vibekit.ChatID(c.ID)
+		resumeForkedSession(ctx, bridges, id, want)
+		if refreshed, exists := chats.Get(ctx, id); exists {
+			c = refreshed
+		}
+	}
+	return c, c.ACPSessionID == want
+}
+
+// resumeForkedSession opens the TANGENT's own bridge and waits for its replay to
+// land. Its own bridge rather than the parent's, which is already resumed: the
+// projection is keyed by chat, so a load issued on the parent's bridge would ingest
+// the fork's history into the PARENT's transcript.
+func resumeForkedSession(ctx context.Context, bridges BridgeAccess, chatID vibekit.ChatID, want string) {
+	// durable for the OPEN, the request's own for the WAIT: a cancelled spawn takes
+	// tryLoadSession's failure branch, which DETACHES the forked session.
+	bridge, err := bridges.OpenBridge(durable.Context(ctx), chatID, "")
+	if err != nil || bridge == nil {
+		slog.Warn("tangent: the forked session could not be resumed, so the tangent opens empty",
+			"chat", chatID, "acp_session", want, keyError, err)
+		return
+	}
+	if string(bridge.SessionID()) != want {
+		slog.Warn("tangent: the resume fell through to a fresh session, so the tangent lost its inherited context",
+			"chat", chatID, "want", want, "got", bridge.SessionID())
+		return
+	}
+	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
+		slog.Warn("tangent: the replay was not adopted in time, so the tangent opens empty until the swap announces the replacement",
+			"chat", chatID, keyError, err)
+	}
+}
+
+// forkOutcomeOf reads a tangent's path off what it ended up with: only a chat still
+// bound to the session the fork produced was forked, so a refused fork AND a resume
+// that fell through to a fresh session both report fresh.
+func forkOutcomeOf(sessionID string, inherited bool) string {
+	if sessionID == "" || !inherited {
 		return vibekit.ForkOutcomeFresh
 	}
 	return vibekit.ForkOutcomeForked

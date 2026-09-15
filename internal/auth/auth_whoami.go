@@ -8,7 +8,7 @@ import (
 
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // WhoamiState discriminates /api/whoami's three answers. "I could not ask" is a

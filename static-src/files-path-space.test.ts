@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 
 import { joinPath, parentPath, normalizeDirPath } from "./files-shared.js";
 import { FileBrowserState } from "./files-state.js";
-import { parseRoute, buildPath } from "./router.js";
+import { parseRoute, buildPath } from "./route-path.js";
 import { statusForPath, statusUnder, _setReposForTest } from "./git-status-store.js";
 import { absPath, setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 import type { GitRepoStatus, GitFileEntry } from "./git-types.js";
@@ -130,6 +130,9 @@ describe("the /files route and the browser agree on the root", () => {
 
   it("builds /files back from that path, with no empty segment", () => {
     expect(buildPath({ kind: "files", path: new FileBrowserState().currentPath })).toBe("/files");
+    expect(buildPath({ kind: "files", path: walk("workspace", "vibekit") })).toBe(
+      "/files/workspace/vibekit",
+    );
   });
 
   it("round-trips a directory below the root", () => {
@@ -189,6 +192,10 @@ describe("normalizeDirPath is the one door into the space", () => {
     ["//workspace//", "/workspace"],
     ["  /workspace/vibekit  ", "/workspace/vibekit"],
     ["workspace/vibekit/", "/workspace/vibekit"],
+    // An INTERIOR run collapses too: a pasted /files/workspace//x reaches a tab ref
+    // and a tab label, so surviving here mints a second tab for an open folder.
+    ["/workspace//x", "/workspace/x"],
+    ["/workspace///deep//er/", "/workspace/deep/er"],
   ];
 
   for (const [input, expected] of cases) {

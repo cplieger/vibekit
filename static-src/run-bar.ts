@@ -47,6 +47,7 @@
 // ---------------------------------------------------------------------------
 
 import { el, computed, effect, touch, untracked } from "@cplieger/reactive";
+import { reconcile } from "./reconcile.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { $ } from "./dom.js";
 import { watchActiveId } from "./store.js";
@@ -62,13 +63,8 @@ import {
 import { runPendingAsks } from "./decision-dock.js";
 import { holdRunClock, releaseRunClock, type RunClockHolder } from "./messages-blocks.js";
 import { openRunView } from "./run-view.js";
-import {
-  STATE_WORD,
-  paintStateMark,
-  stateOf,
-  withAsk,
-  type ExecState,
-} from "./exec-view/status.js";
+import { STATE_WORD, stateOf, withAsk, type ExecState } from "./exec-view/status.js";
+import type { TabRunDotStatus } from "./tabs.js";
 import { formatElapsed } from "./strings.js";
 
 /** The state a row paints when nothing has been fetched for its run yet.
@@ -169,24 +165,32 @@ function render(bar: HTMLUListElement): void {
   const chatID = watchActiveId();
   const ids = rows(chatID);
 
-  bar.replaceChildren();
-  if (ids.length === 0) {
-    bar.classList.add("hidden");
-    // Reset the announce baseline so arriving at a chat that already has runs reads
-    // them out fresh, while the empty case stays silent.
-    reconcileHolds([]);
-    prevCount = 0;
-    prevChatID = chatID;
-    return;
-  }
-  bar.classList.remove("hidden");
+  bar.classList.toggle("hidden", ids.length === 0);
   // BEFORE the rows, not after: `buildRow` points its clock span at this run's hold,
   // so a hold created afterwards would leave the FIRST render's clock unaddressable —
   // which is every render for a run whose state was already in the store when the bar
   // started showing it, and the tick would then never write to it.
   reconcileHolds(ids);
-  for (const id of ids) {
-    bar.appendChild(buildRow(id, chatID));
+  // KEYED BY RUN ID, and each surviving row is PATCHED rather than rebuilt. Both
+  // halves are needed. `replaceChildren` on the bar rebuilt every row for any change
+  // to any of them — so a twenty-step run dropped `:hover` and restarted its mark's
+  // beat twenty times, and a row's clock span was re-created under the shared tick
+  // each time. And `paintRow` writes text and attributes in place rather than
+  // re-seating the row's children, so even the row whose state actually moved keeps
+  // its glyph, its focus and its clock (see `paint-sig.ts` for what a re-seat costs).
+  reconcile(bar, ids, {
+    key: (id: string) => id,
+    mount: (id: string) => buildRow(id, chatID),
+    update: (row: HTMLElement, id: string) => {
+      paintRow(row, id);
+    },
+  });
+  if (ids.length === 0) {
+    // Reset the announce baseline so arriving at a chat that already has runs reads
+    // them out fresh, while the empty case stays silent.
+    prevCount = 0;
+    prevChatID = chatID;
+    return;
   }
 
   // Announce only on the same chat, and only when the COUNT moves — a chat switch
@@ -204,53 +208,118 @@ function render(bar: HTMLUListElement): void {
 }
 
 /** One row: an `<li>` carrying the state, holding the `<button>` that opens the
- *  run's own tab. */
+ *  run's own tab.
+ *
+ *  The SHELL only — one glyph and four spans, every one of them empty. Everything
+ *  that depends on the run's state is written by `paintRow`, which the caller runs
+ *  immediately and again on every later render, so a row is built once per run and
+ *  patched thereafter. */
 function buildRow(id: string, chatID: string): HTMLElement {
-  const st = runState(id);
-  const asks = runPendingAsks(id);
-  const state = execStateOf(st, asks.count > 0);
-  const name = runName(st);
-  const word = state === UNKNOWN_STATE ? "" : STATE_WORD[state];
-  const steps = stepText(st);
-
+  // The workflow mark, by attribute rather than a painted child: 12-tabs.css paints
+  // this row, a run's own tab row and a chat row's fold mark from one rule
+  // (`vibekit-ui.md` "The composer's run bar carries the SAME mark"). No attribute
+  // means reserved box, nothing to show.
   const glyph = el("span", { className: "run-bar-glyph", "aria-hidden": "true" });
-  if (state !== UNKNOWN_STATE) {
-    // The one writer of a state's mark, so this row, the transcript's step rows and
-    // the exec tree cannot spell one state three ways.
-    paintStateMark(glyph, state);
-  }
-
-  const clock = el("span", { className: "run-bar-clock" }, elapsedText(st));
+  const clock = el("span", { className: "run-bar-clock" });
 
   const btn = el(
     "button",
-    {
-      type: "button",
-      className: "run-bar-open",
-      // The visible state is a glyph plus a word, both visual, so the name has to
-      // carry it too. The step counter rides along because it is the row's other
-      // non-textual claim about progress.
-      "aria-label": accessibleName(name, word, steps),
-    },
+    { type: "button", className: "run-bar-open" },
     glyph,
-    el("span", { className: "run-bar-name" }, name),
-    el("span", { className: "run-bar-state" }, word),
-    el("span", { className: "run-bar-steps" }, steps),
+    el("span", { className: "run-bar-name" }),
+    el("span", { className: "run-bar-state" }),
+    el("span", { className: "run-bar-steps" }),
     clock,
   );
+  // The NAME is resolved at click time rather than captured here, because this row
+  // outlives its first paint now: a run whose label arrives with its first fetch
+  // would otherwise open a tab called "Workflow run" for the rest of the session.
   btn.addEventListener("click", () => {
-    openRunView(id, name, chatID);
+    void openRunView(id, runName(runState(id)), chatID);
   });
 
-  const row = el("li", { className: "run-bar-row", "data-state": state }, btn);
-  // Re-point this run's hold at THIS render's clock span, so the shared tick writes
-  // into the row that is actually on screen. The hold exists by construction — the
-  // caller reconciles before it builds — and the guard is the type's, not a doubt.
+  const row = el("li", { className: "run-bar-row" }, btn);
+  // Point this run's hold at the clock span ONCE. `paintRow` never replaces it, so
+  // the shared tick keeps writing into the row on screen for as long as the bar shows
+  // that run. The hold exists by construction — the caller reconciles holds before it
+  // builds — and the guard is the type's, not a doubt.
   const hold = holds.get(id);
   if (hold !== undefined) {
     hold.clock = clock;
   }
+  paintRow(row, id);
   return row;
+}
+
+/** Write one row's state into the shell `buildRow` made, IN PLACE.
+ *
+ *  Text and attributes only: nothing here creates, moves or replaces a node, so a
+ *  row being repainted keeps `:hover`, keeps keyboard focus, keeps its mark's beat
+ *  running, and keeps the clock element the shared tick holds a pointer to. That is
+ *  why the bar needs no signature guard — there is nothing left for one to skip. */
+function paintRow(row: HTMLElement, id: string): void {
+  const btn = row.querySelector<HTMLButtonElement>(":scope > .run-bar-open");
+  if (btn === null) {
+    return;
+  }
+  const st = runState(id);
+  const state = execStateOf(st, runPendingAsks(id).count > 0);
+  const name = runName(st);
+  const word = state === UNKNOWN_STATE ? "" : STATE_WORD[state];
+  const steps = stepText(st);
+
+  row.dataset["state"] = state;
+  const mark = runMarkStatus(state);
+  const glyph = btn.querySelector<HTMLElement>(":scope > .run-bar-glyph");
+  if (glyph !== null) {
+    // A run with no fetched state writes NO attribute, which is how the shared rule
+    // says "reserved box, nothing to show" — so leaving a stale one behind would
+    // claim a status this row cannot vouch for.
+    if (mark === "") {
+      delete glyph.dataset["status"];
+    } else {
+      glyph.dataset["status"] = mark;
+    }
+  }
+  setText(btn, ".run-bar-name", name);
+  setText(btn, ".run-bar-state", word);
+  setText(btn, ".run-bar-steps", steps);
+  setText(btn, ".run-bar-clock", elapsedText(st));
+  // The visible state is a glyph plus a word, both visual, so the name has to carry
+  // it too. The step counter rides along because it is the row's other non-textual
+  // claim about progress.
+  btn.setAttribute("aria-label", accessibleName(name, word, steps));
+}
+
+function setText(host: HTMLElement, selector: string, text: string): void {
+  const span = host.querySelector<HTMLElement>(`:scope > ${selector}`);
+  if (span !== null) {
+    span.textContent = text;
+  }
+}
+
+/** The workflow mark's own status for a row's state, or `""` for a row that has
+ *  nothing to show yet.
+ *
+ *  Total over `ExecState` with no `default`, so a member added to that vocabulary
+ *  fails the type check here rather than painting nothing. A settled state answers
+ *  `""`: the mark withdraws when a run ends and has no vocabulary for an outcome. */
+function runMarkStatus(state: ExecState | typeof UNKNOWN_STATE): TabRunDotStatus | "" {
+  switch (state) {
+    case "running":
+      return "working";
+    case "waiting":
+      return "waiting";
+    case "input":
+      return "input";
+    case "unknown":
+    case "pending":
+    case "ok":
+    case "fail":
+    case "warn":
+    case "skipped":
+      return "";
+  }
 }
 
 /** Fold a run's status and its ask onto ONE axis, the way the card's STEP rows and

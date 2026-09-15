@@ -8,7 +8,7 @@
 // and a table edit would pass silently. The copies below are the assertion.
 import { describe, it, expect } from "vitest";
 
-import { markerLabel, railLabel, seamLabel, type MarkerSubject } from "./rail-labels.js";
+import { markerLabel, railLabel, type MarkerSubject } from "./rail-labels.js";
 import type { TurnOutcome } from "./turns.js";
 
 /** Every member of the wire union, so the sweeps below are a partition rather
@@ -265,55 +265,6 @@ describe("the marker vocabulary is total over TurnOutcome", () => {
         }
       }
     }
-  });
-});
-
-describe("a seam's label", () => {
-  it("names the pause and the two turns it separates", () => {
-    expect(seamLabel("2h", 12, 13)).toBe("2h pause between turn 12 and turn 13");
-  });
-
-  it("takes the gap already worded, so the coarse vocabulary has one owner", () => {
-    // The renderer words `ms` into `2h` / `3d` / `40m` and hands the string over. A
-    // second formatter here could disagree with the seam band's own reading of the
-    // same pause, which is the divergence this signature makes unrepresentable.
-    expect(seamLabel("3d", 4, 5)).toBe("3d pause between turn 4 and turn 5");
-    expect(seamLabel("40m", 4, 5)).toBe("40m pause between turn 4 and turn 5");
-  });
-});
-
-describe("the pause a marker follows", () => {
-  const s = subject({ outcome: "completed", first_line: "pick this up again" });
-
-  it("says what the seam's band cannot, because the band paints no text", () => {
-    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "2h" }).tooltip).toBe(
-      "pick this up again \u00b7 2h pause before this turn",
-    );
-  });
-
-  it("sits after the turn's own duration and ahead of the transient facts", () => {
-    expect(
-      markerLabel(s, { pending: true, hit: true, elapsedMs: 90_000, gapBefore: "1d" }).tooltip,
-    ).toBe(
-      "pick this up again \u00b7 1m 30s \u00b7 1d pause before this turn \u00b7 " +
-        "Loading this turn\u2026 \u00b7 Contains a search match",
-    );
-  });
-
-  it("stays out of the accessible NAME, like the duration beside it", () => {
-    // The name is read on every focus, and a pause is a fact about the SEAM above
-    // this turn rather than about the turn — the same reason the duration is
-    // description-only.
-    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "2h" }).ariaLabel).toBe(
-      "Go to turn 14",
-    );
-  });
-
-  it("says nothing at all for a marker no seam sits above", () => {
-    expect(markerLabel(s, { pending: false, hit: false }).tooltip).toBe("pick this up again");
-    expect(markerLabel(s, { pending: false, hit: false, gapBefore: "" }).tooltip).toBe(
-      "pick this up again",
-    );
   });
 });
 

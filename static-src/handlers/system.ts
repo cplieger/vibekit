@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
-// System-level handlers: settings_updated, transport:gap,
-// compaction_started.
+// System-level handlers: connected, settings_updated, transport:reconcile,
+// transport:resumed, the two connect-hook snapshots, compaction_started,
+// mode_changed.
 //
-// SSE events flow through bus (onSSE). `transport:gap` is a client-side event
-// emitted by transport.ts on reconnect when the server's replay ring no
-// longer covers our last-seen event id; we refetch the active chat and
-// refresh the header list so stale usage/names/model counters reconcile.
+// SSE events flow through bus (onSSE). `transport:reconcile` is a client-side
+// event the SSE adapter emits when every claim this client holds is void (the
+// stream bound to a new hub epoch, or the digest answered must_refetch); the
+// body re-reads the whole projection. The everyday wake is NOT this path: the
+// adapter's digest refetches exactly the subjects that moved.
 // ---------------------------------------------------------------------------
 
-import { onSSE, onBus, BUS_TRANSPORT_GAP, BUS_PAGE_RESUMED } from "../bus.js";
+import { onSSE, onBus, BUS_RECONCILE, BUS_PAGE_RESUMED, decodeEnvelope, dispatch } from "../bus.js";
 import { adoptThemeFromSettings, syncSettings } from "../settings.js";
 import { restoreLastModel, restoreLastEffort } from "../session-context.js";
 import { setWorkspaceRoot } from "../workspace.js";
@@ -17,24 +19,22 @@ import {
   setAgentStatus,
   setCurrentMode,
   forgetSteers,
-  steerCount,
   clearTurnFailed,
   clearTurnDone,
 } from "../store.js";
-import { bumpSyncEpoch, forgetAllViews } from "../tab-freshness.js";
 import { refreshActiveView } from "../tabs.js";
 import { dropDecisions, dropRunDecisions } from "../decision-dock.js";
+import { closeNotificationsExcept } from "../notify.js";
+import { askTarget, chatTarget, pushTargetTag, runTarget } from "../push-subject.js";
 import { loadList, scheduleListRetry } from "../store-load.js";
 import { clearTurnState, retractStaleThinking } from "../turn-teardown.js";
 import { refreshRetention } from "../retention.js";
 import { adoptConnectRuns, invalidateCachedRuns, rebuildLiveRuns } from "../run-store.js";
 import { fetchCatalog } from "../session-catalog.js";
-import type { ConnectedPayload } from "../wire/types.gen.js";
-
-/** Numbers the gaps, so each one's run readers share a token no other gap can
- *  match. Monotonic per page: a counter rather than a random id because the only
- *  property needed is that two gaps differ. */
-let gapSeq = 0;
+import { invalidateTurnRails } from "../turn-rail.js";
+import type { SSEPayloads } from "../bus.js";
+import type { ServerEvent } from "../types.js";
+import type { ConnectedPayload, RunInputNeededPayload } from "../wire/types.gen.js";
 
 // The handshake states the workspace root — the only way the client learns
 // where the workspace is, needed to make relative agent paths openable.
@@ -95,7 +95,7 @@ onSSE("settings_updated", () => {
       return;
     }
     restoreLastModel(s.last_model);
-    restoreLastEffort(s.last_effort, s.last_effort_model);
+    restoreLastEffort(s.last_effort_by_model);
     // A theme chosen on another device lands here. Safe against a loop:
     // syncSettings already seeded the write tracker from this payload.
     adoptThemeFromSettings(s);
@@ -103,91 +103,134 @@ onSSE("settings_updated", () => {
   void refreshRetention();
 });
 
-onBus(BUS_TRANSPORT_GAP, (_gap) => {
-  // A gap drops every claim this client can no longer support; the connect replay
-  // in the same burst re-establishes whatever is still true. Must NOT assert an
-  // outcome: nothing here knows how anything finished.
-  //
-  // Bump the epoch FIRST, or a heal below captures the old one and stamps its
-  // answer as fresh. Only the active VIEW is refreshed; every other view heals at
-  // its next activation.
-  bumpSyncEpoch();
+onBus(BUS_RECONCILE, ({ cause, signal }) => {
+  // Every claim this client holds is void; the fresh hello's own hook frames
+  // (`pending_snapshot`, `status_snapshot`) re-establish the pending and waiting
+  // sets, so nothing here touches the docks. Must NOT assert an outcome: nothing
+  // here knows how anything finished.
   const sessions = getSessions();
-  let forgotten = 0;
   for (const s of sessions) {
-    // Agent-declared status is as untrustworthy as `thinking` after a gap.
-    setAgentStatus(s.id, "", "");
     clearTurnFailed(s.id);
     clearTurnDone(s.id);
-    // Unresolved requests are re-pushed by the connect replay (every kind,
-    // on every connect), which lands after this handler.
-    dropDecisions(s.id);
-    // Steers are KAS's state; a gap may have dropped the frames that
-    // resolved them. FORGOTTEN, not promoted — asserting "never read" here
-    // would be a guess. The connect replay DOES re-offer whatever is still in
-    // KAS's buffer (`replayPendingSteers`), so a row still waiting comes back
-    // under its own id; what a gap cannot recover is a steer the agent read
-    // during the outage, whose note the mark already carries.
-    forgotten += steerCount(s.id);
-    forgetSteers(s.id);
     clearTurnState(s.id);
   }
-  // The one line that separates the two triggers behind "my steer vanished while
-  // I was away": a gap here means the dock was force-emptied and the connect
-  // replay is what refills it, and its ABSENCE with a dock that emptied anyway
-  // means the turn simply ended and the steer was never read. Nothing else on
-  // either path is observable from the outside.
-  console.warn("[gap] tore down", sessions.length, "sessions, forgot", forgotten, "waiting steers");
-  // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has
-  // no session row for the loop above to reach. Same reasoning as dropDecisions:
-  // the connect replay re-offers whatever is still open, and it does NOT replay
-  // the settle, so an ask answered during the outage would otherwise keep its card.
-  dropRunDecisions();
-  // No tab reconcile here: the tab set is its own server-owned collection,
-  // so a gap is answered by re-reading it (app.ts wires `transport:gap` to
-  // `listTabs`); a deleted chat's tabs are already closed by the coordinator.
-  // A failed list load here leaves the sidebar holding rows the gap already licensed
-  // dropping, with nothing else scheduled to re-read it before the next reconnect.
-  // `scheduleListRetry` decides whether the failure was the SERVER's — see its reach gate.
-  void loadList().then((ok) => {
+  console.warn(`[reconcile:${cause}] tore down`, sessions.length, "sessions");
+  // No tab reconcile here: the tab set is its own server-owned collection, so a
+  // reconcile is answered by re-reading it (app.ts wires this event to `listTabs`);
+  // a deleted chat's tabs are already closed by the coordinator.
+  // A failed list load here leaves the sidebar holding rows the reconcile already
+  // licensed dropping, with nothing else scheduled to re-read it before the next
+  // one. `scheduleListRetry` decides whether the failure was the SERVER's — see its
+  // reach gate.
+  void loadList(signal).then((ok) => {
     if (!ok) {
       scheduleListRetry();
     }
   });
   // ONE token for both run readers below: they act on the same event a network round
-  // trip apart, so without it every live run is fetched twice. Minted here because the
-  // gap is the cause; run-store.ts `answeredCause` owns what the token means.
-  const cause = `gap:${String(++gapSeq)}`;
-  // The live-runs inventory is event-fed, so a gap leaves it blind to any
-  // run that started or settled during the outage; re-read the server's
-  // presence-based projection.
-  void rebuildLiveRuns(cause);
+  // trip apart, so without it every live run is fetched twice. run-store.ts
+  // `answeredCause` owns what the token means.
+  const token = `reconcile:${cause}`;
+  // The live-runs inventory is event-fed, so a lost stream leaves it blind to any
+  // run that started or settled meanwhile; re-read the server's presence-based
+  // projection.
+  void rebuildLiveRuns(token, signal);
   // A run's node state is APPLIED from `run_progress` rather than refetched, so
-  // frames lost in the outage leave a stale tree with nothing to notice it. This
-  // is the one moment the client knows it missed some.
-  invalidateCachedRuns(cause);
-  // The mode/model catalog is a workspace fact the server holds in memory and announces on
-  // no frame, so a `config_option_update` during the outage, or a server restart that
-  // empties the holder, leaves the picker on whatever boot answered. A gap is the one
-  // signal this client gets, and this handler is the ONE reader of that endpoint.
-  void fetchCatalog();
-  // LAST, so it stays after the bump above: a refresh that captured the old epoch
-  // would stamp its answer as fresh.
+  // frames lost leave a stale tree with nothing to notice it. This is the one
+  // moment the client knows it may have missed some.
+  invalidateCachedRuns(token);
+  // The mode/model catalog is a workspace fact the server holds in memory and
+  // announces on no frame, so a `config_option_update` during the outage, or a
+  // server restart that empties the holder, leaves the picker on whatever boot
+  // answered.
+  void fetchCatalog({ signal });
+  // The rail's `GET /api/chats/{id}/turns` carries no stamp, so its records are
+  // invalidated by hand here; each chat re-reads its index at its next activation.
+  invalidateTurnRails();
+  // LAST: the active view's own gate reads the map the bind just cleared, so the
+  // refresh it decides on is a real one.
   refreshActiveView();
 });
 
-// A resume says real time passed unobserved, which undermines every view rather than
-// only the one on screen — a chat marked `loaded` at the current epoch reads FRESH for
-// the life of the document, so an in-app switch back to it costs zero fetches and shows
-// the pre-suspension window. So the freshness RECORDS go and the refresh follows, in that
-// order, or the active view's own gate reads the record the drop is about to remove.
-//
-// The records rather than the epoch, which is `forgetAllViews`' own subject: a resume
-// dropped no frames, so a fetch that spanned the suspension is answered from the server's
-// current state and stranding it would buy a second fetch for nothing. Every other view
-// pays its one refresh when the reader activates it.
+/** The tag a pending item's banner carries, computed the way the handler that
+ *  showed it did: a run ask's is the run's (whichever chat the envelope is keyed
+ *  to), a request-shaped ask's is `askTarget`'s (the run it is about when it is a
+ *  step's, else its chat), every other item's is its chat's. */
+function liveAskTag(evt: ServerEvent): string {
+  const chatID = evt.chat_id ?? "";
+  switch (evt.type) {
+    case "run_input_needed":
+      return pushTargetTag(runTarget((evt.payload as RunInputNeededPayload).workflow_id));
+    case "permission_needed":
+    case "elicitation_needed":
+    case "user_input_needed":
+      return pushTargetTag(askTarget(chatID, (evt.payload as SSEPayloads[typeof evt.type]).run_id));
+    default:
+      return pushTargetTag(chatTarget(chatID));
+  }
+}
+
+// The connect hook's pending set, WHOLE and possibly empty: every unanswered
+// permission, run ask and steer across every chat, as the envelopes the live path
+// would have published. Replace, never merge — a row resolved on another device
+// while this one was away left no frame behind, and only an atomic replacement
+// with the current set takes it off the screen. Every item re-dispatches through
+// the ordinary envelope door, so its handler is the live one.
+onSSE("pending_snapshot", (_chatID, p) => {
+  // Decoded first, so the set of chats the snapshot still names is known before
+  // anything is dropped; a malformed item is reported and skipped, not fatal to the
+  // frame.
+  const items: ServerEvent[] = [];
+  for (const item of p.items) {
+    try {
+      items.push(decodeEnvelope(item));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("sse: pending_snapshot item rejected:", msg);
+    }
+  }
+  // Every chat or run banner the set does not name comes down, whether or not this
+  // tab ever rendered the ask: the tab that slept through it is the one holding it.
+  void closeNotificationsExcept(new Set(items.map(liveAskTag)));
+  for (const s of getSessions()) {
+    dropDecisions(s.id);
+    // FORGOTTEN, not promoted — asserting "never read" here would be a guess. The
+    // items below re-offer whatever is still in KAS's buffer under its own id; what
+    // cannot be recovered is a steer the agent read while this client was away,
+    // whose note the mark already carries.
+    forgetSteers(s.id);
+  }
+  // A run's own asks are keyed to `run:<workflowId>`, which is no chat and so has no
+  // session row for the loop above to reach.
+  dropRunDecisions();
+  for (const evt of items) {
+    dispatch(evt);
+  }
+});
+
+// The connect hook's retained waiting-status set, WHOLE and possibly empty: the
+// agent status of every chat is REPLACED from it, so a `waiting_on_user` answered
+// elsewhere while this client was away clears, and one still owed comes back on a
+// second device. A live `chat_status` later on the same connection re-sets a
+// running chat's own declaration.
+onSSE("status_snapshot", (_chatID, p) => {
+  const rows = new Map(p.rows.map((r) => [r.chat_id, r]));
+  for (const s of getSessions()) {
+    const row = rows.get(s.id);
+    if (row === undefined) {
+      setAgentStatus(s.id, "", "");
+    } else {
+      setAgentStatus(s.id, row.status, row.description ?? "");
+    }
+  }
+});
+
+// A resume says real time passed unobserved. Every view whose kind has a digest
+// subject is answered by the adapter's digest, which runs right after this; the
+// active view of any OTHER kind (a run tree, a file listing, the settings page)
+// has no subject to be asked about and would stay stale until the reader switched
+// tabs, so it refreshes here as it always has.
 onBus(BUS_PAGE_RESUMED, () => {
-  forgetAllViews();
   refreshActiveView();
 });
 

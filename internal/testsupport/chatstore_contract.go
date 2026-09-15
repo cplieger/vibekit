@@ -7,16 +7,16 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// ChatStoreContract is the subject of ChatStoreContractTest: the 7 methods of a
+// ChatStoreContract is the subject of ChatStoreContractTest: the 8 methods of a
 // chat store this suite exercises. There is no shared ChatStore interface any
 // more — each consumer declares 1 to 6 methods of the 11 — and a contract suite
 // has no business naming a method it does not assert on.
 //
-// SetDraft is absent because the suite does not exercise it, and that is a GAP
-// rather than a decision: SetDraft has the subtlest contract of the eleven (no
-// UpdatedAt stamp, no broadcast, a silent no-op on a chat that does not exist)
-// and no shared case pins any of it. RegisterRoutes is absent because a store's
-// HTTP mounting is not a storage behaviour.
+// SetDraft is here only for its version contract (the returned state carries the
+// `chat` version the write minted); its other three properties (no UpdatedAt
+// stamp, no broadcast, a silent no-op on a chat that does not exist) are still a
+// GAP no shared case pins. RegisterRoutes is absent because a store's HTTP
+// mounting is not a storage behaviour.
 //
 // UpsertTurnPlan is here because its turn-boundary rule is derived rather than
 // remembered — the row is found by walking back to the first user message — so a
@@ -25,11 +25,12 @@ import (
 type ChatStoreContract interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	List(ctx context.Context) []vibekit.ChatHeader
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
 	Delete(ctx context.Context, id vibekit.ChatID) error
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error
 	UpsertTurnPlan(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
 }
 
 // contractChatName is the name every case gives the chat it opens; the suite
@@ -48,6 +49,10 @@ func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreCo
 	t.Run("Mutate_creates_new_chat", func(t *testing.T) { testMutateCreatesNewChat(t, newStore(t)) })
 	t.Run("Mutate_updates_existing_chat", func(t *testing.T) { testMutateUpdatesExistingChat(t, newStore(t)) })
 	t.Run("Mutate_noop_when_false_returned", func(t *testing.T) { testMutateNoopWhenFalseReturned(t, newStore(t)) })
+	t.Run("Mutate_returns_a_version_that_moves_per_save", func(t *testing.T) {
+		testMutateVersionMovesPerSave(t, newStore(t))
+	})
+	t.Run("SetDraft_fills_ComposerState_Version", func(t *testing.T) { testSetDraftFillsVersion(t, newStore(t)) })
 	t.Run("Delete_removes_chat", func(t *testing.T) { testDeleteRemovesChat(t, newStore(t)) })
 	t.Run("List_returns_created_chats", func(t *testing.T) { testListReturnsCreatedChats(t, newStore(t)) })
 	t.Run("AppendMessage_adds_to_chat", func(t *testing.T) { testAppendMessageAddsToChat(t, newStore(t)) })
@@ -83,7 +88,7 @@ func testGetReturnsIndependentCopy(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	const tampered = "tampered"
 	ctx := context.Background()
-	_ = s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "keep"
 		c.Messages = []vibekit.Message{{
 			ID: "m1", Role: "assistant", Content: "original",
@@ -123,7 +128,7 @@ func testGetReturnsIndependentCopy(t *testing.T, s ChatStoreContract) {
 
 func testMutateCreatesNewChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	err := s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
+	_, err := s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists should be false for new chat")
 		}
@@ -144,11 +149,11 @@ func testMutateCreatesNewChat(t *testing.T, s ChatStoreContract) {
 
 func testMutateUpdatesExistingChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "first"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			t.Error("exists should be true for existing chat")
 		}
@@ -163,11 +168,11 @@ func testMutateUpdatesExistingChat(t *testing.T, s ChatStoreContract) {
 
 func testMutateNoopWhenFalseReturned(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "created"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "should-not-persist"
 		return false
 	})
@@ -179,7 +184,7 @@ func testMutateNoopWhenFalseReturned(t *testing.T, s ChatStoreContract) {
 
 func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "doomed"
 		return true
 	})
@@ -194,11 +199,11 @@ func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 
 func testListReturnsCreatedChats(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "a", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "a", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "alpha"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "b", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "b", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "beta"
 		return true
 	})
@@ -210,7 +215,7 @@ func testListReturnsCreatedChats(t *testing.T, s ChatStoreContract) {
 
 func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = contractChatName
 		return true
 	})
@@ -229,7 +234,7 @@ func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 
 func testUpdateMessageMutatesInPlace(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = contractChatName
 		return true
 	})
@@ -257,7 +262,7 @@ func planMsg(id, content string, status vibekit.PlanStatus) *vibekit.Message {
 
 // seedTurn opens a chat and appends one user message, which is what makes a turn.
 func seedTurn(s ChatStoreContract, chatID vibekit.ChatID, msgID string) {
-	_ = s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = contractChatName
 		return true
 	})
@@ -316,5 +321,63 @@ func testUpsertTurnPlanStartsARowPerTurn(t *testing.T, s ChatStoreContract) {
 	}
 	if c.Messages[3].Plan[0].Content != "second turn" {
 		t.Errorf("turn 2 plan = %q, want \"second turn\"", c.Messages[3].Plan[0].Content)
+	}
+}
+
+// testMutateVersionMovesPerSave pins the `chat` version contract every store
+// and double must hold: a saved mutation returns a non-empty version that
+// differs from the previous save's, and a declined mutator returns "".
+func testMutateVersionMovesPerSave(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	first, err := s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "one"
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	if first == "" {
+		t.Fatal("a saved Mutate returned an empty version")
+	}
+	second, err := s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "two"
+		return true
+	})
+	if err != nil {
+		t.Fatalf("second Mutate: %v", err)
+	}
+	if second == "" || second == first {
+		t.Errorf("second Mutate returned %q after %q, want a different non-empty version", second, first)
+	}
+	declined, err := s.Mutate(context.Background(), "c1", func(*vibekit.Chat, bool) bool { return false })
+	if err != nil {
+		t.Fatalf("declined Mutate: %v", err)
+	}
+	if declined != "" {
+		t.Errorf("a declined Mutate returned %q, want \"\"", declined)
+	}
+}
+
+// testSetDraftFillsVersion pins that the composer write mints a `chat` version
+// onto the returned state, so the draft_changed broadcast has a stamp under
+// the real store and both doubles alike.
+func testSetDraftFillsVersion(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	if _, err := s.Mutate(context.Background(), "c1", func(*vibekit.Chat, bool) bool { return true }); err != nil {
+		t.Fatalf("Setup: Mutate: %v", err)
+	}
+	state, err := s.SetDraft(context.Background(), "c1", "draft")
+	if err != nil || state == nil {
+		t.Fatalf("SetDraft = (%v, %v), want a state", state, err)
+	}
+	if state.Version == "" {
+		t.Error("ComposerState.Version is empty after a composer write")
+	}
+	again, err := s.SetDraft(context.Background(), "c1", "draft two")
+	if err != nil || again == nil {
+		t.Fatalf("second SetDraft = (%v, %v), want a state", again, err)
+	}
+	if again.Version == state.Version {
+		t.Errorf("second composer write returned version %q, same as the first", again.Version)
 	}
 }

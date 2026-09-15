@@ -123,19 +123,40 @@
     background-image: var(--img-dash-on-accent);
   }
 
+  /* TEXT INFLATION IS THE UA'S OWN DEFAULT, and on iOS it scales EACH BLOCK by
+     that block's own width — so a surface whose blocks differ in width renders
+     one font size per block. ONE declaration at the root covers every such
+     surface, because the property inherits. The PREFIXED form is required:
+     Safari implements only `-webkit-text-size-adjust`, so the standard property
+     alone fixes nothing on the one engine that has the behaviour. `100%` and not
+     `none`, which also blocks the reader's own zoom-to-scale text in older
+     WebKit. Measurement, the reported surface and the affected set:
+     `vibekit-ui.md` "Text inflation". */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     font-family: var(--font-sans);
     font-size: var(--fs-base);
 
     /* Two-tone canvas: sidebar color for the first --sidebar-w (with the
-       sidebar's 1px border at its edge), page color after it. Every box in
-       the app is pinned to the LAYOUT viewport (`#app` fixed inset 0, the
-       sidebar fixed top/bottom 0), and iPadOS 26 standalone mode keeps the
-       home-indicator/keyboard band OUTSIDE that viewport — so below
-       `bottom: 0` only the document canvas paints. A flat primary canvas
-       showed as a primary-colored strip under the secondary sidebar column.
-       The gradient tiles the whole physical screen, so the band continues
-       each column's own color whatever the OS decides the viewport is.
+       sidebar's 1px border at its edge), page color after it. A MITIGATION,
+       PENDING REMOVAL. It was added on the premise that iPadOS 26 standalone
+       mode keeps the home-indicator/keyboard band permanently OUTSIDE the
+       layout viewport, so that below the shell only the document canvas paints
+       and a flat primary canvas showed as a primary-colored strip under the
+       secondary sidebar column; the gradient tiles the whole physical screen,
+       so the band continues each column's own color. THAT PREMISE IS WRONG: the
+       short rectangle iOS hands the web view is TRANSIENT, not permanent —
+       backgrounding the app and reopening it hands over a correct frame, and
+       the existing layout stretches down into the band. The shell now STATES
+       its height (`--app-h` above, read by `#app` here and by `#sidebar` in
+       10-shell-app.css) instead of inheriting whatever rectangle the OS gives
+       the fixed-positioning containing block, so nothing should paint outside
+       it. The gradient stays until that is confirmed on device: if a band
+       somehow persists, removing its paint first would make it look worse.
        50-mobile.css resets this to flat primary where the sidebar is an
        off-canvas drawer. */
     background: linear-gradient(
@@ -211,7 +232,10 @@
     display: grid;
     grid-template-columns: 1fr;
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--app-h);
   }
 
   [id="chat-area"] {

@@ -3,10 +3,14 @@ package agent
 import "net/http"
 
 // runRoutes is the HTTP surface over the run lifecycle: the /api/runs and
-// /api/recipes endpoints plus the schedule CRUD. An adapter holding nothing but
-// its subject, because the dependency runs one way — every handler parses a
-// request, calls one domain method and writes a response.
-type runRoutes struct{ runs *Runs }
+// /api/recipes endpoints plus the schedule CRUD. An adapter holding its subject
+// and the hub epoch the live-runs envelope stamps, because the dependency runs
+// one way — every handler parses a request, calls one domain method and writes
+// a response.
+type runRoutes struct {
+	runs  *Runs
+	epoch func() string
+}
 
 // register mounts every run and schedule endpoint.
 func (rr *runRoutes) register(mux *http.ServeMux) {

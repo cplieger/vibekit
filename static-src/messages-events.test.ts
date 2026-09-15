@@ -7,7 +7,6 @@ document.body.innerHTML = '<div id="messages"></div>';
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 vi.mock("./tool-group.js", () => ({
   breakToolGroup: vi.fn(),
-  trackInProgress: vi.fn(),
 }));
 vi.mock("./tool-card.js", () => ({
   buildToolCard: vi.fn(() => document.createElement("div")),
@@ -179,10 +178,9 @@ describe("compacted event summary", () => {
     expect(node.querySelector(".boundary")).toBeNull();
     const head = node.querySelector("summary.compaction-head");
     expect(head?.textContent ?? "").toContain("Conversation compacted");
-    // The app's own joiner (status.ts's effort pill is the shape), with the dot
-    // in its own element so the row's gap sits on both of its sides.
-    expect(head?.querySelector(".compaction-note > .compaction-dot")?.textContent).toBe("·");
-    expect(head?.textContent ?? "").toContain("summary");
+    // The label is the whole row: the chevron says it opens, so a trailing
+    // "summary" word restated it.
+    expect(head?.textContent ?? "").not.toContain("summary");
   });
 
   // The row sets `list-style: none`, so this glyph is the only thing on screen

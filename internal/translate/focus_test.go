@@ -148,7 +148,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 					c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: tc.userMsg})
 					return true
 				}); err != nil {
@@ -306,7 +306,7 @@ func TestKASDerivedTitle_MirrorsUpstream(t *testing.T) {
 // an EMPTY one). Refusing the answer means the chat keeps the name it had.
 func TestHandleSessionInfoUpdate_FocusRefusesRefusalShapedTitle(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	if err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = append(c.Messages, vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: "test"})
 		return true
 	}); err != nil {
@@ -363,7 +363,7 @@ func TestHandleSessionInfoUpdate_FocusOnAContentFreeConversation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+				if _, err := store.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 					c.Messages = append(c.Messages,
 						vibekit.Message{ID: "m1", Role: vibekit.RoleUser, Content: tc.userMsg})
 					return true

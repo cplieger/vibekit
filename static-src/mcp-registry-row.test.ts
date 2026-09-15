@@ -13,6 +13,9 @@ vi.mock("./dom.js", () => ({
 }));
 vi.mock("./actions/mcp.js", () => ({
   searchRegistry: { cancel: () => undefined, dispatch: async () => null },
+  // Present-but-undefined so real-ESM linking succeeds: the module under test
+  // imports the name and nothing here reaches the error branch that reads it.
+  registryFailureOf: undefined,
 }));
 vi.mock("./actions/index.js", () => ({
   subscribeToActions: () => () => undefined,
@@ -22,9 +25,7 @@ vi.mock("./actions/index.js", () => ({
 }));
 
 import { renderRegistryResult } from "./mcp-panels-search.js";
-import type { RegistrySearchResult } from "./actions/mcp.js";
-
-type Entry = RegistrySearchResult["servers"][number];
+import type { RegistryEntry as Entry } from "./wire/types.gen.js";
 
 const liveRemote: Entry = {
   name: "ex/live",

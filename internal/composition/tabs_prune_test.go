@@ -33,7 +33,7 @@ func TestPruneTabs_DropsAChatTabWhoseChatIsGoneAndKeepsTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chat store: %v", err)
 	}
-	if err := chatStore.Mutate(t.Context(), "c-live", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := chatStore.Mutate(t.Context(), "c-live", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "still here"
 		return true
 	}); err != nil {

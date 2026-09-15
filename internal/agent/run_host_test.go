@@ -27,7 +27,7 @@ type bufferedEvent struct {
 // bufferedEvents decodes the SSE replay buffer, so a test asserts what a client sees.
 func bufferedEvents(h *Runtime) []bufferedEvent {
 	var out []bufferedEvent
-	for _, e := range h.bus.fanout.Buffered() {
+	for _, e := range h.bus.fanout.Snapshot() {
 		var evt bufferedEvent
 		if json.Unmarshal(e.Event.Data, &evt) == nil {
 			out = append(out, evt)
@@ -823,7 +823,7 @@ func TestCancelForChat_ReportsARunListItCouldNotRead(t *testing.T) {
 	const chatID vibekit.ChatID = "c1"
 	seed := func(t *testing.T, cs *fakeChatStore) {
 		t.Helper()
-		if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true

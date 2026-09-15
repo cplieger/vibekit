@@ -424,3 +424,55 @@ func TestStore_WritesA0600File(t *testing.T) {
 		t.Errorf("%s stayed %v after a rewrite, so a widened mode survives every later write", FileName, got)
 	}
 }
+
+// TestStore_ListStampedPairsTheSetWithItsVersion pins the `runs` subject's
+// contract: every mutation that changed the set moves the collection version, a
+// mutation that changed nothing leaves it, and ListStamped reads both in one
+// section so the version always describes the set beside it.
+func TestStore_ListStampedPairsTheSetWithItsVersion(t *testing.T) {
+	s := NewMemory()
+	if got, version := s.ListStamped(); len(got) != 0 || version != "0" {
+		t.Fatalf("fresh ListStamped = (%d leases, %q), want (0, \"0\")", len(got), version)
+	}
+	ctx := t.Context()
+	lease := Lease{WorkflowID: "wf_1", Origin: OriginManual, StartedAt: time.Now()}
+	if err := s.Put(ctx, &lease); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, afterPut := s.ListStamped()
+	if len(got) != 1 || afterPut != "1" {
+		t.Fatalf("after Put: ListStamped = (%d leases, %q), want (1, \"1\")", len(got), afterPut)
+	}
+	deadline := time.Now().Add(time.Hour)
+	if err := s.SetDeadline(ctx, "wf_1", deadline); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+	if _, v := s.ListStamped(); v != "2" {
+		t.Errorf("after SetDeadline: version = %q, want \"2\"", v)
+	}
+	if err := s.SetDeadline(ctx, "wf_1", deadline); err != nil {
+		t.Fatalf("SetDeadline repeat: %v", err)
+	}
+	if _, v := s.ListStamped(); v != "2" {
+		t.Errorf("after an unchanged SetDeadline: version = %q, want \"2\" (nothing moved)", v)
+	}
+	if err := s.SetFirstAbsentAt(ctx, "wf_1", time.Now()); err != nil {
+		t.Fatalf("SetFirstAbsentAt: %v", err)
+	}
+	if _, v := s.ListStamped(); v != "3" {
+		t.Errorf("after SetFirstAbsentAt: version = %q, want \"3\"", v)
+	}
+	if err := s.Release(ctx, "wf_1"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	got, afterRelease := s.ListStamped()
+	if len(got) != 0 || afterRelease != "4" {
+		t.Errorf("after Release: ListStamped = (%d leases, %q), want (0, \"4\")", len(got), afterRelease)
+	}
+	if err := s.Release(ctx, "wf_1"); err != nil {
+		t.Fatalf("Release repeat: %v", err)
+	}
+	if _, v := s.ListStamped(); v != "4" {
+		t.Errorf("after releasing a released lease: version = %q, want \"4\" (nothing moved)", v)
+	}
+}

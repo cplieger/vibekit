@@ -23,9 +23,35 @@ import { buildChip } from "./chip.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { editNativeRule, explainPolicy, setSecurityProfile } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
+import { sigChanged } from "./paint-sig.js";
+import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
 import type { PolicyView, PolicyRule, SecurityProfile } from "./types.js";
+
+/** One row of the policy table: a scope's heading, or one rule under it. */
+type PolicyEntry =
+  | { readonly kind: "label"; readonly scope: string }
+  | { readonly kind: "rule"; readonly scope: string; readonly rule: PolicyRule };
+
+/** A row's stable IDENTITY — everything about a rule except its effect, which is the
+ *  one field an edit moves and the one the row is repainted for. `keyenc` join because
+ *  a capability, a glob and a source path are all free-form text, so a "|"-joined key
+ *  would let one field's content impersonate a boundary and two distinct rules collide
+ *  into one row. */
+function policyEntryKey(e: PolicyEntry): string {
+  if (e.kind === "label") {
+    return join("label", e.scope);
+  }
+  return join(
+    "rule",
+    e.scope,
+    e.rule.capability,
+    e.rule.source,
+    join(...(e.rule.match ?? [])),
+    join(...(e.rule.exclude ?? [])),
+  );
+}
 import { ICON_CLOSE } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { el } from "@cplieger/reactive";
@@ -393,36 +419,47 @@ class NativePolicyController {
   /** Render the picker. One radio per profile, its own description under the label,
    *  because what separates two of them is a sentence rather than a word.
    *
-   *  Rebuilt on every load rather than reconciled: five rows with no state of their
-   *  own beyond `checked`, so a keyed reconcile would be machinery for nothing. */
+   *  Keyed by profile id: a radio is focusable and this runs on every policy load
+   *  and every `permissions_changed` frame. `update` writes `checked`
+   *  UNCONDITIONALLY — a signature guard is disqualified where the reader mutates
+   *  the DOM directly (`web.md`), because a refused switch leaves the model
+   *  unchanged and only a repaint corrects the rung on screen. */
   private renderProfiles(): void {
     const host = maybeEl("security-profile-list");
     if (host === null) {
       return;
     }
-    const rows = this.profiles.map((p, i) => {
-      const input = el("input", { type: "radio", className: "" }) as HTMLInputElement;
-      input.type = "radio";
-      input.name = "security-profile";
-      input.value = p.id;
-      input.checked = p.id === this.activeProfile;
-      input.addEventListener("change", () => {
-        if (input.checked) {
-          void this.selectProfile(p.id);
-        }
-      });
-      const row = el("label", { className: "perm-mode profile-row" }, input);
-      // The loosest rung is last in the ladder, and the ladder's ORDER is the
-      // server's. Deriving "loosest" from the position rather than from the id is
-      // what keeps this from hardcoding a profile name the server owns.
-      if (i === this.profiles.length - 1 - 1) {
-        row.classList.add("profile-row-loosest");
+    // The loosest rung is last in the ladder, and the ladder's ORDER is the server's
+    // (Custom sits after it). Deriving "loosest" from the position rather than from
+    // the id is what keeps this from hardcoding a profile name the server owns.
+    const loosest = this.profiles[this.profiles.length - 2]?.id ?? "";
+    const paint = (row: HTMLElement, p: SecurityProfile): void => {
+      row.classList.toggle("profile-row-loosest", p.id === loosest);
+      const input = row.querySelector<HTMLInputElement>(":scope > input");
+      if (input !== null) {
+        input.checked = p.id === this.activeProfile;
       }
-      row.append(el("span", {}, profileLabel(p.id)));
-      row.append(el("p", { className: "section-hint profile-desc" }, profileDescription(p.id)));
-      return row;
+    };
+    reconcile(host, this.profiles, {
+      key: (p: SecurityProfile) => p.id,
+      mount: (p: SecurityProfile) => {
+        const input = el("input", { type: "radio", className: "" }) as HTMLInputElement;
+        input.type = "radio";
+        input.name = "security-profile";
+        input.value = p.id;
+        input.addEventListener("change", () => {
+          if (input.checked) {
+            void this.selectProfile(p.id);
+          }
+        });
+        const row = el("label", { className: "perm-mode profile-row" }, input);
+        row.append(el("span", {}, profileLabel(p.id)));
+        row.append(el("p", { className: "section-hint profile-desc" }, profileDescription(p.id)));
+        paint(row, p);
+        return row;
+      },
+      update: paint,
     });
-    host.replaceChildren(...rows);
   }
 
   /** Paint the Customize button and the status line, and lock the table outside
@@ -600,20 +637,50 @@ class NativePolicyController {
       ...NATIVE_SCOPE_ORDER,
       ...[...groups.keys()].filter((s) => !NATIVE_SCOPE_ORDER.includes(s)),
     ];
-    const frag: HTMLElement[] = [];
+    // ONE flat keyed list over both element kinds — a scope's label and the rules
+    // under it — so a row is preserved without each group boundary needing a
+    // container. A writable row holds a `<select>`, and this runs on every
+    // `permissions_changed` frame plus after every edit.
+    //
+    // The key is a stable identity and the effect is repainted in `update`; the key
+    // may not carry content (`web.md` "A KEYED RECONCILE IS NOT ENOUGH ON ITS OWN").
+    const rows: PolicyEntry[] = [];
     for (const scope of order) {
       const grp = groups.get(scope);
       if (grp === undefined || grp.length === 0) {
         continue;
       }
-      frag.push(
-        el("div", { className: "native-policy-scope-label" }, NATIVE_SCOPE_LABEL[scope] ?? scope),
-      );
+      rows.push({ kind: "label", scope });
       for (const r of grp) {
-        frag.push(this.ruleRow(r));
+        rows.push({ kind: "rule", scope, rule: r });
       }
     }
-    list.replaceChildren(...frag);
+    reconcile(list, rows, {
+      key: (e: PolicyEntry) => policyEntryKey(e),
+      mount: (e: PolicyEntry) => {
+        if (e.kind === "label") {
+          return el(
+            "div",
+            { className: "native-policy-scope-label" },
+            NATIVE_SCOPE_LABEL[e.scope] ?? e.scope,
+          );
+        }
+        const row = this.ruleRow(e.rule);
+        // Recorded at mount, or the first update repaints a row that has not moved.
+        sigChanged(row, [e.rule.effect]);
+        return row;
+      },
+      // The EFFECT is the only field not in the key, so it is the only one a kept row
+      // can be stale about. It decides the row's class and its select's value, so the
+      // repaint is the row's children plus that class.
+      update: (row: HTMLElement, e: PolicyEntry) => {
+        if (e.kind !== "rule" || !sigChanged(row, [e.rule.effect])) {
+          return;
+        }
+        row.className = `native-rule native-rule-${e.rule.effect}`;
+        row.replaceChildren(...Array.from(this.ruleRow(e.rule).childNodes));
+      },
+    });
   }
 
   private ruleRow(r: PolicyRule): HTMLElement {

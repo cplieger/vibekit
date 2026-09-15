@@ -50,7 +50,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	// three promoted methods reach it without panicking and report its no-op
 	// answers. A round-trip belongs to the tests that install a real store.
 	t.Run("chat_store_methods_are_reachable", func(t *testing.T) {
-		if err := d.Mutate(ctx, "c1", func(*vibekit.Chat, bool) bool { return true }); err != nil {
+		if _, err := d.Mutate(ctx, "c1", func(*vibekit.Chat, bool) bool { return true }); err != nil {
 			t.Errorf("Mutate on the nop store returned %v, want nil", err)
 		}
 		if _, ok := d.Get(ctx, "c1"); ok {

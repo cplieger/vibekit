@@ -1,0 +1,91 @@
+{
+  "_comment": [
+    "A GET /api/workspace/kiro-docs reply, produced by a real scan over one .kiro tree.",
+    "",
+    "server.KiroDoc and server.KiroDocsResponse are wiregen-registered; TestKiroDocsWireContract",
+    "(Go) asserts the scan marshals to exactly these bytes, and docs.node.test.ts (TypeScript)",
+    "decodes it through the generated decodeKiroDocsResponse. Every row kind appears once:",
+    "steering (always, fileMatch and a nested doc), a skill with a declared inclusion, an agent",
+    "with a model and tools, a spec grouped under its feature, and two hooks from one file.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/server/ -run TestKiroDocsWireContract",
+    "then re-run the TS half: npx vitest --run docs.node.test.ts (from static-src/)."
+  ],
+  "result": {
+    "docs": [
+      {
+        "category": "steering",
+        "name": "always",
+        "path": "ws/.kiro/steering/always.md",
+        "group": ".",
+        "description": "Always on",
+        "inclusion": "always"
+      },
+      {
+        "category": "steering",
+        "name": "matched",
+        "path": "ws/.kiro/steering/matched.md",
+        "group": ".",
+        "description": "Go layout",
+        "inclusion": "fileMatch",
+        "file_match": "internal/**/*.go"
+      },
+      {
+        "category": "steering",
+        "name": "deep",
+        "path": "ws/.kiro/steering/nested/deep.md",
+        "group": "nested",
+        "description": "Nested",
+        "inclusion": "always"
+      },
+      {
+        "category": "skill",
+        "name": "review",
+        "path": "ws/.kiro/skills/review/SKILL.md",
+        "description": "Review a change",
+        "inclusion": "manual",
+        "steering_override": true
+      },
+      {
+        "category": "agent",
+        "name": "twin",
+        "path": "ws/.kiro/agents/twin.md",
+        "description": "Even-cycle twin of the other reviewer.",
+        "model": "claude-opus-5",
+        "tools": [
+          "read",
+          "write"
+        ]
+      },
+      {
+        "category": "spec",
+        "name": "Search requirements",
+        "path": "ws/.kiro/specs/search/requirements.md",
+        "group": "search"
+      },
+      {
+        "category": "spec",
+        "name": "Search design",
+        "path": "ws/.kiro/specs/search/design.md",
+        "group": "search"
+      },
+      {
+        "category": "hook",
+        "name": "First",
+        "path": "ws/.kiro/hooks/two.json",
+        "group": "two.json",
+        "trigger": "PostFileSave",
+        "action": "echo one"
+      },
+      {
+        "category": "hook",
+        "name": "Second",
+        "path": "ws/.kiro/hooks/two.json",
+        "group": "two.json",
+        "trigger": "SessionStart",
+        "action": "do a thing"
+      }
+    ],
+    "truncated": false
+  }
+}

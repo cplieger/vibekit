@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 )
@@ -28,6 +29,17 @@ func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 func (s *Store) List(ctx context.Context) []vibekit.ChatHeader {
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers
+}
+
+// ListStamped is List plus the `chats` stamp the REST envelope carries. The scan
+// takes no lock, so the version is read FIRST: a Mutate landing during the scan
+// puts its header in the list and its bump outside the stamp, and the client then
+// holds a list at least as new as its version, which the next digest reads as one
+// spurious changed and never as a false unchanged.
+func (s *Store) ListStamped(ctx context.Context) ([]vibekit.ChatHeader, *vibekit.SubjectStamp) {
+	version, _ := s.versions.Current(subject.KindChats, "")
+	headers, _ := s.listWithCompleteness(ctx)
+	return headers, s.restStamp(subject.KindChats, "", version)
 }
 
 // listResult carries a scan and its completeness through one singleflight slot.

@@ -19,7 +19,7 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 	ctx := b.Context()
 
 	// Create chat with 10 pre-existing messages.
-	err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
+	_, err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "benchmark chat"
 		for i := range 10 {
 			c.Messages = append(c.Messages, vibekit.Message{

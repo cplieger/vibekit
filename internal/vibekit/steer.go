@@ -1,5 +1,23 @@
 package vibekit
 
+// SteerIDPrefix is what KAS puts in front of a steer's message id. It also keeps
+// a steer's id space clear of an agent notice's, which takes `notify-` instead.
+const SteerIDPrefix = "steer-"
+
+// SteerIDFor mints the id a steer will be known by: `steer-<messageID>`.
+//
+// It is DERIVABLE rather than only server-assigned, and that is load-bearing twice
+// over. KAS's own `handleSessionSteer` prefixes the `messageId` the caller sent and
+// stamps that same value on both the response and the `steering_queued`
+// notification, so a caller knows the id BEFORE the call returns — which is what
+// lets the steer ledger be written ahead of the RPC instead of racing the
+// notification (internal/command/steer.go). The client mints the same id at submit
+// to key its optimistic row, so `static-src/store.ts` steerIDFor is the twin and
+// must agree with this on the prefix.
+func SteerIDFor(messageID string) string {
+	return SteerIDPrefix + messageID
+}
+
 // SteerOrigin says WHOSE words a mid-turn steer carries.
 //
 // KAS's steering buffer is the only inbound channel into a live turn, so it

@@ -71,7 +71,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	h := New(t.Context(), "/tmp/work", factory, cs)
 	cs.Bus = h
 
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Register the bridge directly so we don't have to drive a full
 	// cmdPrompt flow; we're testing Shutdown ordering, not prompt

@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { TabKind, TabSubject } from "./types.js";
-import type { Route } from "./router.js";
+import type { Route } from "./route-path.js";
 import type { TabDotStatus, TabViewSpec } from "./tab-view.js";
 // The mocked module's own type, for the partial factory below. A top-level
 // `import type` rather than an inline `import()` annotation, which the lint forbids.
@@ -52,8 +52,8 @@ vi.mock("./settings-tabs.js", () => ({
 }));
 vi.mock("./git.js", () => ({ loadGitRepos: vi.fn(), refreshGitView: vi.fn() }));
 vi.mock("./files.js", () => ({
-  loadFileBrowser: vi.fn(),
-  resetFileBrowser: vi.fn(),
+  showFilesTab: vi.fn(),
+  releaseFilesTab: vi.fn(),
 }));
 vi.mock("./history.js", () => ({
   loadHistoryView: vi.fn(),
@@ -64,13 +64,12 @@ vi.mock("./docs.js", () => ({
   showDocsTab: vi.fn(),
   refreshDocsView: vi.fn(),
   forceDocsTab: vi.fn(),
-  showDocsView: vi.fn(),
 }));
 
 import { get } from "./store.js";
 import { runLabelOf } from "./run-store.js";
-import { showDocsTab, refreshDocsView, forceDocsTab, showDocsView } from "./docs.js";
-import { loadFileBrowser, resetFileBrowser } from "./files.js";
+import { showDocsTab, refreshDocsView, forceDocsTab } from "./docs.js";
+import { showFilesTab, releaseFilesTab } from "./files.js";
 import { loadGitRepos, refreshGitView } from "./git.js";
 import { loadHistoryView, refreshHistoryView, teardownHistoryView } from "./history.js";
 import { loadSettingsTabData, refreshSettingsPanel } from "./settings-tabs.js";
@@ -160,7 +159,12 @@ const CASES: readonly { kind: TabKind; ref: string; view: string; route: Route }
     route: { kind: "settings", tab: "general" },
   },
   { kind: "git", ref: "", view: "#git-view", route: { kind: "git", tab: "changes" } },
-  { kind: "files", ref: "", view: "#files-view", route: { kind: "files", path: "." } },
+  {
+    kind: "files",
+    ref: "/workspace/x",
+    view: "#files-view",
+    route: { kind: "files", path: "/workspace/x" },
+  },
   { kind: "history", ref: "", view: "#history-view", route: { kind: "history" } },
   { kind: "docs", ref: "", view: "#docs-view", route: { kind: "docs", tab: "steering" } },
 ];
@@ -488,12 +492,23 @@ describe("names", () => {
   it.each([
     ["settings", "Settings"],
     ["git", "Git"],
-    ["files", "Files"],
     ["history", "History"],
     ["docs", "Kiro docs"],
   ] as const)("names the %s singleton", (kind, name) => {
     register();
     expect(materializeTab(subject({ kind })).name).toBe(name);
+  });
+
+  // Files is NOT in that table any more: it is one tab per folder, so its label is
+  // the folder's last segment rather than a constant.
+  it("names a files tab after the folder it was opened at", () => {
+    register();
+    expect(materializeTab(subject({ kind: "files", ref: "/workspace/x" })).name).toBe("x");
+  });
+
+  it("names a files tab at the mounts listing", () => {
+    register();
+    expect(materializeTab(subject({ kind: "files", ref: "/" })).name).toBe("Files");
   });
 });
 
@@ -510,17 +525,24 @@ describe("subjectForRoute inverts the factory's route", () => {
     expect(subjectForRoute(route)).toEqual({ kind, ref });
   });
 
-  // The OTHER direction deliberately does not round-trip. A singleton's route
-  // carries a sub-position and its subject carries none, which is what makes
-  // /settings/tools and /settings name one tab: the sub-position is corrected
-  // after activation, by applyRoute.
+  // The OTHER direction deliberately does not round-trip, for the three kinds whose
+  // route carries a SUB-TAB their subject cannot: that is what makes /settings/tools
+  // and /settings name one tab, the sub-position being corrected after activation by
+  // applyRoute. A files path is NOT one of those — it is the folder a route MINTS a
+  // browser at, so it survives into the ref.
   it.each([
     [{ kind: "settings", tab: "tools" } as Route, "settings"],
     [{ kind: "git", tab: "prs" } as Route, "git"],
     [{ kind: "docs", tab: "hooks" } as Route, "docs"],
-    [{ kind: "files", path: "a/b" } as Route, "files"],
   ])("drops a singleton's sub-position: %o", (route, kind) => {
     expect(subjectForRoute(route)).toEqual({ kind, ref: "" });
+  });
+
+  it("keeps a files route's folder, because that is what a mint opens the tab at", () => {
+    expect(subjectForRoute({ kind: "files", path: "/workspace/x" })).toEqual({
+      kind: "files",
+      ref: "/workspace/x",
+    });
   });
 
   // Same rule one axis along: a run route's `#node=` fragment names a POSITION
@@ -558,9 +580,6 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
 
   // A toggle CLOSES the tab when it is already active, so a factory that reached
   // one would make materializing a subject destroy the tab it describes.
-  // showDocsView is that hazard concretely: it delegates straight to tabs.ts's
-  // toggleDocsView, and docs.js exports it beside the plain loader, which is what
-  // makes this assertable rather than merely stated.
   //
   // `forceDocsTab` is the SECOND thing this pins: the activation must not force the
   // canonical sub-tab, which is what discarded the reader's own on every switch back.
@@ -570,12 +589,12 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     await settle();
     expect(showDocsTab).toHaveBeenCalled();
     expect(forceDocsTab).not.toHaveBeenCalled();
-    expect(showDocsView).not.toHaveBeenCalled();
   });
 
   // Settings and files have NO activation half left: each one's whole `onShow` was
   // the data half, so the field is dropped rather than emptied — an `onShow` that
-  // did nothing would read as a door somebody forgot to wire.
+  // did nothing would read as a door somebody forgot to wire. For files the data
+  // half is also the BIND, which is why it may not be split across the two hooks.
   it("settings has no onShow at all", () => {
     register();
     expect(materializeTab(subject({ kind: "settings" })).onShow).toBeUndefined();
@@ -583,7 +602,7 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
 
   it("files has no onShow at all", () => {
     register();
-    expect(materializeTab(subject({ kind: "files" })).onShow).toBeUndefined();
+    expect(materializeTab(subject({ kind: "files", ref: "/workspace/x" })).onShow).toBeUndefined();
   });
 
   it("git", async () => {
@@ -593,11 +612,11 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(loadGitRepos).toHaveBeenCalled();
   });
 
-  it("files closes through its own reset", async () => {
+  it("files releases the tab it names", async () => {
     register();
-    materializeTab(subject({ kind: "files" })).onClose?.();
+    materializeTab(subject({ kind: "files", ref: "/workspace/x" })).onClose?.();
     await settle();
-    expect(resetFileBrowser).toHaveBeenCalled();
+    expect(releaseFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 
   it("history, both directions", async () => {
@@ -628,13 +647,14 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
     expect(refreshGitView).toHaveBeenCalled();
   });
 
-  // The files kind's refresh IS `loadFileBrowser`: there is no third name for
-  // `loadDir`, so this pins the alias rather than a second export.
-  it("files refresh reads the directory", async () => {
+  // A files refresh is BIND-then-load, addressed by the subject's own ref: N browsers
+  // share one view element, so an activation is what re-points it, and the ref is
+  // what says which one.
+  it("files refresh binds and loads the tab it names", async () => {
     register();
-    materializeTab(subject({ kind: "files" })).refresh();
+    materializeTab(subject({ kind: "files", ref: "/workspace/x" })).refresh();
     await settle();
-    expect(loadFileBrowser).toHaveBeenCalled();
+    expect(showFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 
   it("history refresh refetches the list", async () => {
@@ -661,5 +681,43 @@ describe("a singleton's onShow reaches its LOADER, never its toggle", () => {
   it("docs carries no onClose", () => {
     register();
     expect("onClose" in materializeTab(subject({ kind: "docs" }))).toBe(false);
+  });
+});
+
+// A ref arrives from the persisted set bounded only by MaxRefBytes, so a trailing
+// slash and an interior double slash are both legal spellings of one folder. The
+// factory normalises once and spends that value on the name, the route and the lazy
+// call, so all three name the same folder; without it the label and the URL would
+// carry the spelling while the state loaded the canonical folder.
+describe("a non-canonical files ref resolves to ONE folder", () => {
+  async function settle(): Promise<void> {
+    await new Promise((done) => {
+      setTimeout(done, 0);
+    });
+  }
+
+  const refs: [string, string][] = [
+    ["/workspace/x/", "a trailing slash"],
+    ["/workspace//x", "an interior double slash"],
+    ["workspace/x", "no leading slash"],
+  ];
+
+  for (const [ref, why] of refs) {
+    it(`agrees on route, label and loaded folder for ${why}`, async () => {
+      register();
+      const spec = materializeTab(subject({ kind: "files", ref }));
+      expect(spec.route).toEqual({ kind: "files", path: "/workspace/x" });
+      expect(spec.name).toBe("x");
+      spec.refresh();
+      await settle();
+      expect(showFilesTab).toHaveBeenCalledWith("/workspace/x");
+    });
+  }
+
+  it("releases the canonical folder a non-canonical ref opened", async () => {
+    register();
+    materializeTab(subject({ kind: "files", ref: "/workspace/x/" })).onClose?.();
+    await settle();
+    expect(releaseFilesTab).toHaveBeenCalledWith("/workspace/x");
   });
 });

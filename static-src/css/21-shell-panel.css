@@ -11,13 +11,20 @@
    @starting-style needed since the element never enters/leaves the layout
    (this also makes the first restoreShell() open animate consistently). */
 .shell-panel {
-  /* HOW FAR THE RESIZE BAR'S TARGET REACHES, declared ONCE here because both
-     halves of the arithmetic are this element's children: `.shell-resize` grows
-     its target by this much and `.shell-header` pays for it out of its own top
-     padding AND its height. The term is the tier's floor minus the 3px the bar
-     already paints, so the whole target is exactly --hit-floor with no second
-     declaration to keep in step. */
-  --shell-resize-reach: calc(var(--hit-floor) - 0.1875rem);
+  /* THE PAINTED BAR'S OWN HEIGHT, declared here because two rules read it: the bar
+     paints it, and the bar's target expander subtracts it from the tier's hit
+     floor to reach the rest of the way down. A hairline is the whole point — the
+     seam is a 3px cue and the TARGET over it is --hit-floor at both tiers.
+
+     IT USED TO BE `--shell-resize-reach`, the OTHER half of that subtraction, and
+     it lived here because `.shell-header` read it too: the header paid for the
+     target's reach out of its own top padding AND its own height, so a 3px seam
+     cost the bar the whole floor. Measured on the shipped stylesheet at the fine
+     tier, and on the deployed app: a 56px header around a 32px content band, title
+     and buttons pushed to the bottom of it, 43% of the bar empty — and 89px around
+     a 44px band on a coarse pointer. The header pays nothing now; the buttons
+     out-stack the expander instead (see .shell-header-btn). */
+  --shell-bar-h: 0.1875rem;
 
   border-block-start: 1px solid var(--c-border);
   flex-shrink: 0;
@@ -44,10 +51,6 @@
       visibility 0s var(--dur-exit); /* flip AFTER the collapse finishes */
   }
 
-  &.collapsed {
-    height: 2rem;
-  }
-
   /* Live resize drag: the pointer must track 1:1, not ease 200ms behind. */
   &.resizing {
     transition: none;
@@ -59,7 +62,7 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 0.1875rem;
+  height: var(--shell-bar-h);
   cursor: ns-resize;
   background: transparent;
   z-index: 1;
@@ -77,32 +80,36 @@
      its four buttons' clicks. Measured before this line: box 44px against a
      visual bar of 3px.
 
-     The floor's own comment already names this control as one of the two that
-     grow their TARGET instead (the other is `.status-dot`), so the expander below
-     is the intended mechanism and this is the missing half of it. A class rule
+     The floor's own comment already names this control as one that grows its
+     TARGET instead, so the expander below is the intended mechanism and this is the
+     missing half of it. A class rule
      scores (0,1,0) against the floor's zero, so this wins by specificity. */
   min-width: 0;
   min-height: 0;
 }
 
-/* The hit target, grown by an expander so the visual bar stays 3px. IT REACHES
-   DOWNWARD, and the reversal is the whole point: the bar sits at `top: 0` of a
-   panel that declares `overflow: hidden` (above), so everything the old upward
-   expander reached into the transcript's dead space was CLIPPED. Hit-tested on the
-   real target before the reversal: 6px against the 24/44 the declaration claimed —
-   a 3px bar plus the 4px it also reached down, minus overlap.
+/* The hit target, grown by an expander so the painted bar stays a hairline. IT
+   REACHES DOWNWARD, and the direction is forced twice over. The bar sits at
+   `top: 0` of a panel that declares `overflow: hidden` (above), so everything the
+   original upward expander reached into was CLIPPED — hit-tested then, 6px of real
+   target against the 24/44 the declaration claimed. And up is the wrong direction
+   even unclipped, which the clip hid: this panel's previous sibling is the
+   COMPOSER, whose pill row ends 9px above the seam and whose Send button ends 13px
+   above it (measured on the deployed app at 1280px), so an upward reach would take
+   the bottom rows of the app's most important control.
 
-   Down is where the header's buttons are, so the header PAYS for the reach out of
-   its own `padding-block-start` and its own `height` (below): the padding keeps
-   every button's whole box below the expander, and the height grows by the same
-   term because `box-sizing: border-box` is global (02-reset.css) — padding alone
-   would eat the header's declared height and crush its buttons. Resulting real
-   target: 3px bar + 21px (fine) / 41px (coarse) = 24 / 44, which is --hit-floor at
-   both tiers with no per-tier literal anywhere. */
+   Down is the header, and the header pays NOTHING for it: its buttons are raised
+   above this expander (.shell-header-btn below), so what the expander owns is the
+   header's inert region — the title, and the gaps between the buttons. Reaching
+   over the title is a gain rather than a cost, since the cursor and the grab area
+   then agree across most of the seam's width.
+
+   The term is the tier's floor minus the bar already painted, so the whole target
+   is exactly --hit-floor at both tiers with no per-tier literal anywhere. */
 .shell-resize::before {
   content: "";
   position: absolute;
-  inset: 0 0 calc(-1 * var(--shell-resize-reach));
+  inset: 0 0 calc(var(--shell-bar-h) - var(--hit-floor));
 }
 
 .shell-resize:hover,
@@ -110,27 +117,22 @@
   background: var(--c-accent);
 }
 
-/* The header pays for the resize bar's downward reach, and BOTH declarations are
-   needed: the top padding is what keeps its buttons' whole boxes out of the
-   expander, and the height grows by the same term because `box-sizing: border-box`
-   is global (02-reset.css), so padding alone would take the room out of the
-   content box and crush the buttons instead of moving them. The content band is
-   therefore still 2rem.
+/* The header is its own content band and nothing else: one 2rem row of title plus
+   controls.
 
-   THE TERM IS THE REACH PLUS THE PAINTED BAR IT HANGS BELOW, which is the whole
-   target: this header's top edge is the panel's top edge, so clearing the reach
-   alone leaves the bar's own 3px over the buttons. Measured with the reach alone
-   on a coarse pointer: the target ran 0..44 while the button's box started at
-   44.5 - 3 = 41.5, so its top 2.5px resized the panel instead of pressing Close.
-   The sum is --hit-floor by construction; it is spelled as the reach plus the bar
-   rather than as the token, so the one place the term is declared stays the one
-   place it is derived. */
+   IT USED TO PAY FOR THE RESIZE BAR'S TARGET, in `padding-block-start` AND in
+   `height` — the second because `box-sizing: border-box` is global (02-reset.css),
+   so padding alone takes the room out of the content box and crushes the buttons
+   instead of moving them. Both declarations went together with the reason for
+   them: the buttons out-stack the expander now, so there is nothing to move out of
+   its way. The content band was 2rem before and is 2rem now; what left is the dead
+   strip above it, which was the whole hit floor. */
 .shell-header {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: calc(var(--shell-resize-reach) + 0.1875rem) var(--sp-3) 0;
-  height: calc(2rem + var(--shell-resize-reach) + 0.1875rem);
+  padding-inline: var(--sp-3);
+  height: 2rem;
   border-block-end: 1px solid var(--c-border);
   flex-shrink: 0;
 }
@@ -147,6 +149,23 @@
 }
 
 .shell-header-btn {
+  /* ABOVE THE RESIZE BAR'S TARGET, and that is what lets the header keep its own
+     height. The expander reaches --hit-floor down from the panel's top edge, so on
+     a coarse pointer it covers this row whole, and the bar carries `z-index: 1` —
+     so every button here has to out-stack it or the seam takes their clicks, which
+     is exactly what the header's old top padding was buying its way out of.
+
+     TWO conditions hold it, and only the pair: this z-index, and `.shell-header`
+     never becoming a STACKING CONTEXT, which would scope this rule inside the header
+     and put the bar back over the whole row. Measured in Chromium against the four
+     ways in reach here — `isolation: isolate`, a `transform`, an `opacity` below 1,
+     and `position` with a non-auto `z-index` — each of which fails the hit tests.
+     A bare `position: relative` does NOT (z-index stays `auto`, so no context is
+     created), which is the trap: it is the one declaration that looks like it would
+     and is harmless. `touch-policy.test.ts` hit-tests each button's three edges at
+     both tiers, so breaking either condition fails there. */
+  position: relative;
+  z-index: 2;
   background: none;
   border: none;
   color: var(--c-text-primary);
@@ -225,15 +244,8 @@
   font-size: 0.6875rem;
   text-align: center;
   padding: 2px 0;
+  -webkit-user-select: none;
   user-select: none;
-}
-
-.shell-panel:where(.collapsed) .shell-resize {
-  display: none;
-}
-
-.shell-panel:where(.collapsed) .shell-terminal {
-  display: none;
 }
 
 /* Subtle top-border glow when disconnected / reconnecting */
@@ -321,10 +333,10 @@
    what it scored inside the media query and no rule newly outranks another. */
 :where([data-pointer="coarse"]) {
   .shell-header {
-    /* Plus the resize bar's whole target, for the base rule's reason: the top
-       padding this arm inherits is inside the border box, so the height has to
-       carry it or the 44px buttons below lose exactly that much room. */
-    height: calc(2.75rem + 1px + var(--shell-resize-reach) + 0.1875rem);
+    /* One 44px row plus the border it declares, because `box-sizing: border-box` is
+       global (02-reset.css) and a 2.75rem height would leave a 43px content box for
+       44px buttons. */
+    height: calc(2.75rem + 1px);
   }
 
   .shell-header-btn {

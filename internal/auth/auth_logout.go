@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/vibekit/internal/procgroup"
 	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/vibekit/internal/sanitize"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin to acknowledge the

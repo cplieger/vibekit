@@ -278,7 +278,10 @@ type LiveRun struct {
 
 // LiveRunsResponse is GET /api/runs/live's reply.
 type LiveRunsResponse struct {
-	Runs []LiveRun `json:"runs"`
+	// Subject is the `runs` digest stamp with the hub epoch, paired with the set
+	// under the lease store's lock.
+	Subject *SubjectStamp `json:"subject,omitempty"`
+	Runs    []LiveRun     `json:"runs"`
 }
 
 // RunControlsResponse is GET /api/runs/{id}/controls's reply: what may be done to

@@ -19,8 +19,9 @@ type InMemoryChatStore struct {
 	Bus interface {
 		Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	}
-	chats map[vibekit.ChatID]*vibekit.Chat
-	mu    sync.Mutex
+	chats    map[vibekit.ChatID]*vibekit.Chat
+	versions chatVersions
+	mu       sync.Mutex
 }
 
 // NewInMemoryChatStore returns a ready-to-use InMemoryChatStore.
@@ -29,6 +30,14 @@ func NewInMemoryChatStore() *InMemoryChatStore {
 }
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
+// Exists reports whether the fake holds id.
+func (s *InMemoryChatStore) Exists(id vibekit.ChatID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.chats[id]
+	return ok
+}
+
 func (s *InMemoryChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -51,7 +60,7 @@ func (s *InMemoryChatStore) List(_ context.Context) []vibekit.ChatHeader {
 }
 
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
-func (s *InMemoryChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) error {
+func (s *InMemoryChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	orig, exists := s.chats[id]
@@ -62,18 +71,19 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate 
 		c = vibekit.Chat{ID: string(id), CreatedAt: time.Now().UnixMilli()}
 	}
 	if !mutate(&c, exists) {
-		return nil
+		return "", nil
 	}
 	c.UpdatedAt = time.Now().UnixMilli()
 	s.chats[id] = &c
+	version := s.versions.bump(id)
 	if s.Bus != nil {
+		evt := vibekit.EventChatUpdated
 		if !exists {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatCreated, ChatID: id, Payload: c.Header()})
-		} else {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventChatUpdated, ChatID: id, Payload: c.Header()})
+			evt = vibekit.EventChatCreated
 		}
+		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: evt, ChatID: id, Payload: c.Header()})
 	}
-	return nil
+	return version, nil
 }
 
 // SetDraft stores the chat's draft without touching UpdatedAt and without
@@ -89,6 +99,7 @@ func (s *InMemoryChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text 
 	}
 	c.Draft = text
 	state := c.Composer()
+	state.Version = s.versions.bump(id)
 	return &state, nil
 }
 
@@ -110,6 +121,7 @@ func (s *InMemoryChatStore) SetAttachments(_ context.Context, id vibekit.ChatID,
 	}
 	c.Attachments = next
 	state := c.Composer()
+	state.Version = s.versions.bump(id)
 	return &state, nil
 }
 
@@ -126,55 +138,74 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id vibekit.ChatID) error {
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
 func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
-	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+	var appended bool
+	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		c.Messages = append(c.Messages, *msg)
-		if s.Bus != nil {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
-		}
+		appended = true
 		return true
 	})
+	if err != nil || !appended || s.Bus == nil {
+		return err
+	}
+	s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
+	return nil
 }
 
 // UpsertTurnPlan overwrites this turn's plan row, or appends msg when the turn
 // carries none. Mirrors (*chat.Store).UpsertTurnPlan; the turn boundary is the
 // first user message walking back from the tail.
 func (s *InMemoryChatStore) UpsertTurnPlan(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
-	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+	var updated *vibekit.Message
+	var appended bool
+	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		if i, ok := turnPlanRow(c.Messages); ok {
 			c.Messages[i].Plan = msg.Plan
-			if s.Bus != nil {
-				s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: &c.Messages[i]})
-			}
+			updated = &c.Messages[i]
 			return true
 		}
 		c.Messages = append(c.Messages, *msg)
-		if s.Bus != nil {
-			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg})
-		}
+		appended = true
 		return true
 	})
+	if err != nil || s.Bus == nil {
+		return err
+	}
+	switch {
+	case updated != nil:
+		s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
+	case appended:
+		s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
+	}
+	return nil
 }
 
 // UpdateMessage applies mutate to the message identified by msgID within the stored chat.
 func (s *InMemoryChatStore) UpdateMessage(_ context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error {
-	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+	var updated *vibekit.Message
+	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		for i := range c.Messages {
 			if c.Messages[i].ID == msgID {
 				mutate(&c.Messages[i])
+				updated = &c.Messages[i]
 				return true
 			}
 		}
 		return false
 	})
+	if err != nil || updated == nil || s.Bus == nil {
+		return err
+	}
+	s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
+	return nil
 }
 
 // Compile-time assertion.

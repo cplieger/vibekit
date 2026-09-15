@@ -30,11 +30,12 @@ func TestCatalog_AnEmptyListIsNotAnEmptyCatalog(t *testing.T) {
 		}
 	}
 
-	if !slices.Equal(c.Modes(), seededModes) {
-		t.Errorf("Modes() = %v, want the seeded %v", c.Modes(), seededModes)
+	modes, models, _ := c.ModesModelsStamped()
+	if !slices.Equal(modes, seededModes) {
+		t.Errorf("modes = %v, want the seeded %v", modes, seededModes)
 	}
-	if !slices.Equal(c.Models(), seededModels) {
-		t.Errorf("Models() = %v, want the seeded %v", c.Models(), seededModels)
+	if !slices.Equal(models, seededModels) {
+		t.Errorf("models = %v, want the seeded %v", models, seededModels)
 	}
 }
 
@@ -62,12 +63,12 @@ func TestCatalog_ReturnsACopy(t *testing.T) {
 	c := &Catalog{}
 	c.SetModes([]vibekit.SessionMode{{ID: "spec", Name: "Spec"}})
 
-	got := c.Modes()
+	got, _, _ := c.ModesModelsStamped()
 	got[0].Name = "mutated by the caller"
 
-	if c.Modes()[0].Name != "Spec" {
-		t.Errorf("Modes()[0].Name = %q after a caller mutated its copy, want %q",
-			c.Modes()[0].Name, "Spec")
+	if again, _, _ := c.ModesModelsStamped(); again[0].Name != "Spec" {
+		t.Errorf("modes[0].Name = %q after a caller mutated its copy, want %q",
+			again[0].Name, "Spec")
 	}
 }
 
@@ -80,9 +81,9 @@ func TestCatalog_SeedingIsNotSharedWithTheCaller(t *testing.T) {
 
 	modes[0].Name = "mutated by the writer"
 
-	if c.Modes()[0].Name != "Spec" {
-		t.Errorf("Modes()[0].Name = %q after the writer mutated its own slice, want %q",
-			c.Modes()[0].Name, "Spec")
+	if held, _, _ := c.ModesModelsStamped(); held[0].Name != "Spec" {
+		t.Errorf("modes[0].Name = %q after the writer mutated its own slice, want %q",
+			held[0].Name, "Spec")
 	}
 }
 
@@ -116,14 +117,13 @@ func TestCatalog_ConcurrentReadersAndWriters(t *testing.T) {
 			c.SetModels([]vibekit.SessionModel{{ID: "m", Name: string(rune('a' + i))}})
 		})
 		wg.Go(func() {
-			_ = c.Modes()
-			_ = c.Models()
+			_, _, _ = c.ModesModelsStamped()
 			_ = c.DefaultEffortFor("m")
 		})
 	}
 	wg.Wait()
 
-	if len(c.Modes()) != 1 || len(c.Models()) != 1 {
-		t.Errorf("Modes()=%v Models()=%v, want one entry each", c.Modes(), c.Models())
+	if modes, models, _ := c.ModesModelsStamped(); len(modes) != 1 || len(models) != 1 {
+		t.Errorf("modes=%v models=%v, want one entry each", modes, models)
 	}
 }

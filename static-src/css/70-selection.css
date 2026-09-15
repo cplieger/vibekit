@@ -10,10 +10,23 @@
    user's complaint was the visible half of that: some surfaces coloured the
    icon and others coloured the background.
 
-   The three channels travel TOGETHER, always. Fill says which row; the edge
-   separates the fill from its neighbours; the ink stays legible on the fill.
-   Any one of them alone is a treatment that some other surface will disagree
-   with, which is how nine recipes happen.
+   The two channels travel TOGETHER, always. Fill says which row; the ink stays
+   legible on the fill. Either one alone is a treatment that some other surface
+   will disagree with, which is how nine recipes happen.
+
+   THERE IS NO SELECTED EDGE, and a census is why. `--c-selected-border` was read
+   in Chromium over this assembled sheet on every one of the 25 selectors below:
+   it painted on 16, and on 7 it landed on a `border: none` no rule reserved
+   against and painted nothing at all — both icon-toggle rules, the shell header's,
+   the turn footer's and all three find-box case buttons — so "three channels,
+   always" was already false for every icon toggle in the app. 3 of the 16 have no
+   production construction site. It was also actively wrong wherever it fired on a
+   FLUSH list, since `.pill-model-list` is `gap: 0` and `.fb-list` has no gap, so
+   selection drew a box around one row between two touching neighbours; that is
+   what was reported on the exec view's tree row. The 6 surfaces carrying a border
+   of their own keep it, reading 1.495:1 dark / 1.401:1 light against the fill
+   (`css-contrast.py pair`), so their outline no longer changes on selection while
+   their fill does.
 
    WHY IT IS LAST IN THE MANIFEST. Each selector below carries its own real
    specificity (a `:where()` wrapper would score 0,0,0 and lose to every base
@@ -26,14 +39,17 @@
    rest of the tab strip.
 
    Values: 01-tokens.css, `--c-selected-*`. Nothing here is a literal.
-   Enforcement: css-tokens.node.test.ts fails on a selected fill without its border
-   and ink.
+   Enforcement: css-tokens.node.test.ts fails on a selected fill without its ink.
    ========================================================================== */
 
-/* Reserve the edge on every selectable base that did not already have one, so
-   the border channel is a colour change rather than a layout change. `.tab`,
-   `.settings-tab` and `.mcp-modal-tab` already reserve theirs; these did not,
-   which is why five of them could only ever carry two channels. */
+/* THE RESERVED 1px IS GEOMETRY NOW RATHER THAN A CHANNEL. It was added so the
+   border channel could be a colour change instead of a layout change; with the
+   channel gone it is simply part of each surface's box. Measured in Chromium,
+   removing it resizes 9 of the 10 reserving surfaces by 1-2px (`.settings-tab`
+   32 -> 30, `.ev-tl-lane` 21 -> 19, `.fb-row` 38 -> 37; only `.tab` is unmoved,
+   its 36px floor absorbing it), so taking it out is a look change on those nine
+   and not a cleanup. `.tab`, `.settings-tab` and `.mcp-modal-tab` reserve theirs
+   in their own files. */
 .pill-model-item,
 .pill-role-item,
 .popup-item,
@@ -49,7 +65,8 @@
    MANIFEST puts last — resets that colour to transparent at equal specificity.
    Every unselected row lost its horizontal rule, leaving the separator visible
    only on a selected row. So reserve the other three sides and hand the block
-   end its own colour back; the selected rule below still replaces all four. */
+   end its own colour back. The selected rule below no longer touches any of the
+   four, so the separator is now `--c-border` on a selected row as well. */
 .fb-row {
   border: 1px solid transparent;
   border-block-end-color: var(--c-border);
@@ -57,15 +74,36 @@
 
 /* THE treatment.
 
-   `.status-dot` is excluded from all three rules below. Its fill IS its state
-   (green connected, yellow connecting, red disconnected), and it is the only
-   channel an 8px disc has, so the selected fill erased the connection colour
-   the moment the popup opened — click the dot, lose the green. Specificity was
-   never going to save it either: the dot's own rules live in 10-shell-app.css,
-   which precedes this file in MANIFEST order, so the fill won the tie. A state indicator is not a selected surface — what
-   marks it open is the card, not a repaint of the disc — and it cannot take the
-   other two channels at all, because `all: unset` (10-shell-app.css) leaves it
-   with no border and no text. */
+   `[id="account-btn"]` is excluded from all three rules below. It is the sidebar
+   footer's identity control — the connection mark and the address as ONE button,
+   and the status card's trigger — and it took over `.pill-expandable` from
+   `.status-dot`, which is what this exclusion used to name. The old spelling would
+   now be DEAD and the button would start taking `--c-selected-bg` when its card
+   opens; it should not, for two reasons, and NEITHER is a violated floor.
+
+   1. THE USER'S INSTRUCTION IS THE LOGOUT BUTTON'S VOCABULARY, which is three
+      channels — hover, press, touch — and not four. The footer's two controls are a
+      PAIR and must answer the pointer alike. What renders the EXPANDED state is the
+      open card plus `aria-expanded`, not a repaint of the trigger.
+   2. IT DEGRADES THE MARK'S SEPARATION FROM ITS BACKDROP, measurably. The three
+      mark inks read 9.996 / 11.696 / 6.419 dark and 4.898 / 5.391 / 4.720 light
+      against `--c-bg-secondary` at rest, and 5.803 / 6.790 / 3.727 and
+      3.198 / 3.519 / 3.081 over `--c-selected-bg` — red in the light theme landing
+      at 3.081, a margin of 0.081 over the floor. That is a COST with no benefit,
+      since (1) already says the state is rendered elsewhere.
+
+   Stated honestly: EVERY ONE of those six figures CLEARS WCAG 1.4.11's 3:1, so the
+   decline does not rest on a floor being broken. An earlier draft of this comment
+   claimed it did, with an unmeasured ~2.4:1 estimate for light green; that estimate
+   was wrong and saying so is the point.
+
+   Excluded by ATTRIBUTE rather than by class or id because `selector-max-id: 0`
+   forbids the id form, and the rewrite is specificity-neutral: an attribute
+   `:not()` and the retired class `:not()` both contribute (0,1,0), so each selector
+   keeps (0,3,0) resting and (0,4,0) with a state pseudo — both inside
+   `selector-max-specificity: "0,4,3"` — and one attribute selector is inside
+   `selector-max-attribute: 2`. It mirrors `:not([id="pointer-mode-btn"])` fifteen
+   lines below. */
 .tab.active:not(.dragging),
 .settings-tab.active,
 .mcp-modal-tab.active,
@@ -80,11 +118,12 @@
 .sched-day.on,
 .recipe-sched-btn.on,
 .pill[aria-pressed="true"],
-.pill-expandable.pill-expanded:not(.status-dot),
+.pill-expandable.pill-expanded:not([id="account-btn"]),
 .icon-btn.active,
-/* The pointer-mode toggle is excluded for the mirror image of `.status-dot`'s
-   reason: not "the fill is its only channel" but "the fill is a SECOND channel it
-   does not need". Its glyph IS its state — `pointer-mode.ts`'s `paint()` slides the
+/* The pointer-mode toggle is excluded for a reason of its own, adjacent to the
+   account button's above: not "a fourth channel breaks the pair" but "the fill is a
+   SECOND channel it does not need". Its glyph IS its state — `pointer-mode.ts`'s
+   `paint()` slides the
    mouse out and the hand in — so the selected fill renders one fact twice, and it
    left a header button looking permanently selected for as long as touch mode was
    on. The theme toggle sitting beside it in the same header swaps glyphs and takes
@@ -114,7 +153,6 @@
 .pr-merge-method:has(input:checked),
 .editor-find-case[aria-pressed="true"] {
   background: var(--c-selected-bg);
-  border-color: var(--c-selected-border);
   color: var(--c-selected-fg);
 }
 
@@ -141,7 +179,7 @@
   .sched-day.on:hover,
   .recipe-sched-btn.on:hover,
   .pill[aria-pressed="true"]:hover,
-  .pill-expandable.pill-expanded:not(.status-dot):hover,
+  .pill-expandable.pill-expanded:not([id="account-btn"]):hover,
   .icon-btn.active:hover,
   .icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]):hover,
   .shell-header-btn[aria-pressed="true"]:hover,
@@ -180,7 +218,7 @@
 .sched-day.on:active,
 .recipe-sched-btn.on:active,
 .pill[aria-pressed="true"]:active,
-.pill-expandable.pill-expanded:not(.status-dot):active,
+.pill-expandable.pill-expanded:not([id="account-btn"]):active,
 .icon-btn.active:active,
 .icon-btn[aria-pressed="true"]:not([id="pointer-mode-btn"]):active,
 .shell-header-btn[aria-pressed="true"]:active,

@@ -124,11 +124,22 @@ vi.mock("./git-scroll.js", () => ({
   },
 }));
 // The real disclosure animates a height and owns aria-hidden/inert; the parts
-// this suite reads are the trigger's aria-expanded and the body staying in the
-// tree, so the stub supplies exactly those.
+// this suite reads are the trigger's aria-expanded, the body staying in the
+// tree, and a click on the trigger reaching `onToggle` as the reader's own, so
+// the stub supplies exactly those.
 vi.mock("@cplieger/ui-primitives/disclosure", () => ({
-  createDisclosure: (trigger: HTMLElement, _body: HTMLElement, opts: { open: boolean }) => {
-    trigger.setAttribute("aria-expanded", String(opts.open));
+  createDisclosure: (
+    trigger: HTMLElement,
+    _body: HTMLElement,
+    opts: { open: boolean; onToggle?: (open: boolean, source: "user" | "api") => void },
+  ) => {
+    let open = opts.open;
+    trigger.setAttribute("aria-expanded", String(open));
+    trigger.addEventListener("click", () => {
+      open = !open;
+      trigger.setAttribute("aria-expanded", String(open));
+      opts.onToggle?.(open, "user");
+    });
     return { open: vi.fn(), close: vi.fn(), toggle: vi.fn() };
   },
 }));
@@ -506,6 +517,22 @@ describe("the status cell", () => {
     );
   });
 
+  it("gives its tooltip the name to point at", async () => {
+    // The path button is `flex: 1` — it is what pushes the row's actions to the
+    // trailing edge — so its box is the row's slack while the name sits at the
+    // leading edge, and a tooltip anchored at that box's centre landed 243px away
+    // from the name (measured over 320 rows). `data-tooltip-anchor` on the label is
+    // what the delegated controller positions against; the tooltip itself stays on
+    // the button, which is what takes focus and carries the accessible name.
+    const mount = await paintRepos([repo([file("README.md", "M")])]);
+    const btn = mount.querySelector<HTMLElement>(".git-file-path");
+
+    expect(btn?.getAttribute("data-tooltip")).toBe("README.md");
+    const mark = btn?.querySelector("[data-tooltip-anchor]");
+    expect(mark?.textContent, "the mark is the name, not an empty wrapper").toBe("README.md");
+    expect(btn?.hasAttribute("data-tooltip-anchor"), "on the ink, not on the box").toBe(false);
+  });
+
   it("gives a typechange its word rather than a bare T", async () => {
     // ` T`/`T ` is what git reports for a file swapped with a symlink. It used
     // to reach the label table on neither side and rendered as "Unknown".
@@ -697,6 +724,44 @@ describe("the path filter", () => {
     expect(group(mount, "unstaged")?.querySelector(".git-file-group-count")?.textContent).toBe(
       "1 file",
     );
+  });
+
+  it("opens a section the reader had collapsed when it holds a matching path", async () => {
+    // A filtered pane is not the resting arrangement, so the filter outranks the
+    // reader's latch while a query stands and the latch is read again once it
+    // clears; read the other way round, a filter typed after a collapse keeps its
+    // one selected row inside an aria-hidden, inert region, with nothing saying
+    // it is there.
+    const mount = await paintRepos([repo([file("src/upload-policy.ts", "M")])]);
+    const header = mount.querySelector<HTMLElement>(".git-repo-section-header");
+    expect(header?.getAttribute("aria-expanded")).toBe("true");
+    header?.click();
+    expect(header?.getAttribute("aria-expanded")).toBe("false");
+
+    applyFilter("upload-policy");
+    expect(mount.querySelector(".git-repo-section-header")?.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    expect(rowPaths(mount)).toEqual(["src/upload-policy.ts"]);
+
+    applyFilter("");
+    expect(mount.querySelector(".git-repo-section-header")?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
+  it("does not trim the query itself: the popup already did", async () => {
+    // The trim rule is the popup's, per kind, and this box is a filter, so what
+    // arrives here is already trimmed. A second trim here was the divergence the
+    // shared rule removed; folding case stays this module's, because it is the
+    // fold its own haystack pairs with.
+    const mount = await paintRepos([repo([file("src/a.ts", "M"), file("docs/b.md", "M")])]);
+
+    applyFilter("DOCS/");
+    expect(rowPaths(mount)).toEqual(["docs/b.md"]);
+
+    applyFilter("docs/ ");
+    expect(rowPaths(mount)).toEqual([]);
   });
 });
 

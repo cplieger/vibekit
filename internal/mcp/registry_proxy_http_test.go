@@ -64,8 +64,9 @@ func TestRegistryProxy_Search_success(t *testing.T) {
 		if got := r.URL.Query().Get("search"); got != "github" {
 			t.Errorf("upstream search=%q, want github", got)
 		}
-		if got := r.URL.Query().Get("limit"); got != "5" {
-			t.Errorf("upstream limit=%q, want 5", got)
+		// One past the caller's 5: the extra row is the proof of a cut.
+		if got := r.URL.Query().Get("limit"); got != "6" {
+			t.Errorf("upstream limit=%q, want 6 (the caller's limit plus the sentinel row)", got)
 		}
 		_, _ = io.WriteString(w, `{"servers":[{"server":{"name":"x","packages":[
 			{"registryType":"npm","identifier":"@x/y","transport":{"type":"stdio"}}
@@ -81,14 +82,204 @@ func TestRegistryProxy_Search_success(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	var body struct {
-		Servers []RegistryEntry `json:"servers"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	body := decodeSearchReply(t, rec)
 	if len(body.Servers) != 1 || body.Servers[0].Name != "x" {
 		t.Errorf("normalised body = %+v, want 1 entry named x", body.Servers)
+	}
+	if body.Truncated || body.Filtered != 0 {
+		t.Errorf("reply = truncated %v, filtered %d; want neither for one installable row under the limit",
+			body.Truncated, body.Filtered)
+	}
+	// Both facts travel even when false or zero: an absent field would read as
+	// "not stated", which is not what a complete answer means.
+	keys := decodeReplyKeys(t, rec)
+	for _, key := range []string{"truncated", "filtered"} {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("body %q lacks the %q key", rec.Body.String(), key)
+		}
+	}
+}
+
+// decodeReplyKeys returns the reply's top-level keys, so a presence check
+// reads the decoded object rather than encoding/json's byte layout.
+func decodeReplyKeys(t *testing.T, rec *httptest.ResponseRecorder) map[string]json.RawMessage {
+	t.Helper()
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &keys); err != nil {
+		t.Fatalf("unmarshal reply %q: %v", rec.Body.String(), err)
+	}
+	return keys
+}
+
+func decodeSearchReply(t *testing.T, rec *httptest.ResponseRecorder) RegistrySearchResult {
+	t.Helper()
+	var body RegistrySearchResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal reply %q: %v", rec.Body.String(), err)
+	}
+	return body
+}
+
+func decodeSearchFailure(t *testing.T, rec *httptest.ResponseRecorder) RegistrySearchFailure {
+	t.Helper()
+	var body RegistrySearchFailure
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal failure %q: %v", rec.Body.String(), err)
+	}
+	return body
+}
+
+// The list a browser sees is not always the list that matched, and the reply
+// says so on both axes: a row past the limit sets truncated and is dropped,
+// and a row the install-capability filter removes is counted.
+func TestRegistryProxy_Search_reportsTruncationAndFilter(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "3" {
+			t.Errorf("upstream limit=%q, want 3", got)
+		}
+		// Three rows for a caller who asked for two: one installable, one
+		// pypi-only (filtered), and the sentinel.
+		_, _ = io.WriteString(w, `{"servers":[
+			{"server":{"name":"keep","remotes":[{"type":"sse","url":"https://keep"}]}},
+			{"server":{"name":"drop","packages":[{"registryType":"pypi","identifier":"drop"}]}},
+			{"server":{"name":"past","remotes":[{"type":"sse","url":"https://past"}]}}
+		]}`)
+	}))
+	defer upstream.Close()
+	_, mux := newProxyAgainst(t, upstream)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=x&limit=2", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeSearchReply(t, rec)
+	if len(body.Servers) != 1 || body.Servers[0].Name != "keep" {
+		t.Errorf("servers = %+v, want the one installable row", body.Servers)
+	}
+	if !body.Truncated {
+		t.Error("truncated = false with a row past the limit, want true")
+	}
+	if body.Filtered != 1 {
+		t.Errorf("filtered = %d, want 1 (the pypi-only row, never the sentinel)", body.Filtered)
+	}
+}
+
+// A 200 that is not a registry reply is a 502, and it is NOT cached: the
+// next request for the same query reaches upstream again. Both halves
+// matter, because `{"servers":[]}` is the one shape the browser must read
+// as "nothing there", and a cached wrong answer outlives the upstream fault
+// that produced it.
+func TestRegistryProxy_Search_unparseable200Is502AndUncached(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "malformed_json", body: `{broken`},
+		{name: "cdn_error_page", body: `<html><body>502 Bad Gateway</body></html>`},
+		{name: "renamed_top_level_key", body: `{"results":[{"server":{"name":"x"}}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				_, _ = io.WriteString(w, `{"servers":[]}`)
+			}))
+			defer upstream.Close()
+			_, mux := newProxyAgainst(t, upstream)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=drift", nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("first request status = %d body=%q, want 502: a body that is not a reply is not an empty result",
+					rec.Code, rec.Body.String())
+			}
+			if f := decodeSearchFailure(t, rec); f.Error != registryUnavailable || f.Reason != ReasonUnavailable {
+				t.Errorf("failure body = %+v, want the sentinel with reason %q", f, ReasonUnavailable)
+			}
+
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=drift", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("second request status = %d body=%q, want 200 once upstream is healthy", rec.Code, rec.Body.String())
+			}
+			if got := hits.Load(); got != 2 {
+				t.Errorf("upstream hit %d times, want 2: the unparseable body must not have been cached", got)
+			}
+		})
+	}
+}
+
+// One 502 whose body cannot say whether to wait or to change the query is
+// useless to the client, so a coarse reason and the upstream's Retry-After
+// interval ride beside the fixed sentinel text.
+func TestRegistryProxy_Search_classifiesUpstreamStatus(t *testing.T) {
+	cases := []struct {
+		name           string
+		retryAfter     string
+		wantReason     RegistryFailureReason
+		upstreamStatus int
+		wantRetryAfter int
+	}{
+		{
+			name: "429_is_rate_limited", upstreamStatus: http.StatusTooManyRequests, retryAfter: "37",
+			wantReason: ReasonRateLimited, wantRetryAfter: 37,
+		},
+		{
+			name: "429_without_header", upstreamStatus: http.StatusTooManyRequests,
+			wantReason: ReasonRateLimited,
+		},
+		{name: "400_is_rejected", upstreamStatus: http.StatusBadRequest, wantReason: ReasonRejected},
+		{name: "404_is_rejected", upstreamStatus: http.StatusNotFound, wantReason: ReasonRejected},
+		{
+			name: "503_is_unavailable", upstreamStatus: http.StatusServiceUnavailable, retryAfter: "120",
+			wantReason: ReasonUnavailable, wantRetryAfter: 120,
+		},
+		{name: "500_is_unavailable", upstreamStatus: http.StatusInternalServerError, wantReason: ReasonUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.upstreamStatus)
+				_, _ = io.WriteString(w, `{"error":"upstream detail that must not reach the browser"}`)
+			}))
+			defer upstream.Close()
+			_, mux := newProxyAgainst(t, upstream)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/mcp/registry/search?q=x", nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want 502", rec.Code)
+			}
+			f := decodeSearchFailure(t, rec)
+			if f.Error != registryUnavailable {
+				t.Errorf("error = %q, want the fixed sentinel %q", f.Error, registryUnavailable)
+			}
+			if f.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", f.Reason, tc.wantReason)
+			}
+			if f.RetryAfter != tc.wantRetryAfter {
+				t.Errorf("retry_after = %d, want %d", f.RetryAfter, tc.wantRetryAfter)
+			}
+			if _, ok := decodeReplyKeys(t, rec)["retry_after"]; tc.wantRetryAfter == 0 && ok {
+				t.Errorf("body %q names retry_after with no interval to name", rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "upstream detail") {
+				t.Errorf("body %q leaks upstream error text", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -236,18 +427,21 @@ func TestRegistryProxy_Search_limitClamping(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if seenLimit != fmt.Sprint(maxSearchLimit) {
-		t.Errorf("limit=9999 → upstream limit=%q, want %d", seenLimit, maxSearchLimit)
+	// The clamp bounds the CALLER's limit; upstream sees one more, the
+	// sentinel row, so the ask tops out at maxSearchLimit+1 = 25.
+	if seenLimit != fmt.Sprint(maxSearchLimit+1) {
+		t.Errorf("limit=9999 → upstream limit=%q, want %d", seenLimit, maxSearchLimit+1)
 	}
 
-	// Zero → clamps up to 1. Use q=b so this query maps to a distinct
-	// cache key (otherwise the first test's result is still cached).
+	// Zero → clamps up to 1, asked upstream as 2. Use q=b so this query
+	// maps to a distinct cache key (otherwise the first result is still
+	// cached).
 	req = httptest.NewRequest(http.MethodGet,
 		"/api/mcp/registry/search?q=b&limit=0", nil)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if seenLimit != "1" {
-		t.Errorf("limit=0 → upstream limit=%q, want 1", seenLimit)
+	if seenLimit != "2" {
+		t.Errorf("limit=0 → upstream limit=%q, want 2", seenLimit)
 	}
 }
 
@@ -376,15 +570,14 @@ func TestRegistryProxy_fetchSearch_coalescesConcurrentCallers(t *testing.T) {
 
 	type result struct {
 		err    error
-		body   []byte
 		cached bool
 	}
 	out := make(chan result, 2)
 
 	// Leader.
 	go func() {
-		b, c, e := p.fetchSearch(t.Context(), "q", 5)
-		out <- result{e, b, c}
+		_, c, e := p.fetchSearch(t.Context(), "q", 5)
+		out <- result{e, c}
 	}()
 
 	// Wait until the leader is past the lock + into the upstream
@@ -397,8 +590,8 @@ func TestRegistryProxy_fetchSearch_coalescesConcurrentCallers(t *testing.T) {
 
 	// Follower.
 	go func() {
-		b, c, e := p.fetchSearch(t.Context(), "q", 5)
-		out <- result{e, b, c}
+		_, c, e := p.fetchSearch(t.Context(), "q", 5)
+		out <- result{e, c}
 	}()
 	// Let the follower reach its select on bar.done. Correctness does
 	// not depend on this sleep: the final hits==1 assertion proves
@@ -612,7 +805,6 @@ func TestRegistryProxy_fetchSearch_triggersEvictAtCap(t *testing.T) {
 	for i := range maxCacheEntries {
 		p.cache.entries[fmt.Sprintf("seed%02d", i)] = registryCacheEntry{
 			insertedAt: now.Add(time.Duration(i) * time.Millisecond),
-			body:       []byte("x"),
 		}
 	}
 	p.cache.mu.Unlock()
@@ -732,23 +924,19 @@ func TestRegistryProxy_Search_queryBoundaries(t *testing.T) {
 // of the body-size guards: a response of exactly maxRegistryBody bytes
 // must be accepted (200). The caps are size > max on both the
 // Content-Length pre-check and the post-read length check, so a boundary
-// mutation (> to >=) on either would reject the exact-cap body.
+// mutation (> to >=) on either would reject the exact-cap body. The body
+// is a padded VALID reply, because the cap test has to reach the decoder
+// as a 200 and a run of letters is a decode failure.
 func TestRegistryProxy_doFetch_acceptsBodyAtExactCap(t *testing.T) {
+	const prefix, suffix = `{"servers":[],"pad":"`, `"}`
+	body := prefix + strings.Repeat("a", maxRegistryBody-len(prefix)-len(suffix)) + suffix
+	if len(body) != maxRegistryBody {
+		t.Fatalf("Setup: body is %d bytes, want exactly %d", len(body), maxRegistryBody)
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Length", strconv.Itoa(maxRegistryBody))
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
-		chunk := make([]byte, 32*1024)
-		for i := range chunk {
-			chunk[i] = 'a'
-		}
-		remaining := maxRegistryBody
-		for remaining > 0 {
-			n := min(len(chunk), remaining)
-			if _, err := w.Write(chunk[:n]); err != nil {
-				return
-			}
-			remaining -= n
-		}
+		_, _ = io.WriteString(w, body)
 	}))
 	defer upstream.Close()
 	_, mux := newProxyAgainst(t, upstream)

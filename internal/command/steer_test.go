@@ -396,9 +396,50 @@ func TestCmdSteer_RecordsTheReturnedIDAsTheUsersOwn(t *testing.T) {
 	}
 }
 
+// The ledger already answers "the user's" while the wire call is IN FLIGHT, and that
+// ordering is the whole fix for a race the client saw as a missing send-now arrow.
+//
+// KAS emits `steering_queued` BEFORE it answers `_session/steer`, and that
+// notification is folded on the bridge's own Forward goroutine, which nothing
+// serializes against this handler. So a ledger written after the response loses
+// whenever the fold is prompt, SteerOrigin answers `agent` for the user's own words,
+// and every surface keyed on origin misreports it — the arrow withheld, the transcript
+// note reading as a workflow report, and the boundary resend dropping the message
+// instead of carrying it. Measured before the write moved: 9 of 18 steers whose
+// queued-time origin is observable on disk were labelled the agent's.
+//
+// The mid-call read is what pins it. Asserting after CmdSteer returns passes either
+// way, which is why the defect survived the suite that already checks the recorded id.
+func TestCmdSteer_LedgerAnswersTheUsersOwnBeforeTheCallReturns(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	ledger := NewSteerLedger()
+
+	var duringCall vibekit.SteerOrigin
+	b := &recordingBridge{
+		result:    queuedResult("steer-m-1"),
+		sessionID: "sess-1",
+		duringCall: func() {
+			duringCall = ledger.SteerOrigin("c1", "steer-m-1")
+		},
+	}
+	host := newBridgeHost(store, b)
+
+	if _, err := CmdSteer(t.Context(), host, host, ledger, steerReq(t, "c1", "use tabs", "m-1")); err != nil {
+		t.Fatalf("CmdSteer: %v", err)
+	}
+
+	if duringCall != vibekit.SteerOriginUser {
+		t.Errorf("SteerOrigin during the wire call = %q, want %q — KAS's own steering_queued "+
+			"notification is emitted before this call returns, so a ledger written afterwards "+
+			"races it and the frame labels the user's words as the agent's",
+			duringCall, vibekit.SteerOriginUser)
+	}
+}
+
 // A refused steer records nothing: KAS never buffered it, so no frame will ever
 // arrive under its id, and an entry for one would hold a slot in a bounded map
-// until it expired.
+// until it expired. It is recorded BEFORE the call now (see the test above), so the
+// refusal paths have to take that entry back rather than simply never writing one.
 func TestCmdSteer_RecordsNothingWhenTheSteerWasDropped(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	b := &recordingBridge{

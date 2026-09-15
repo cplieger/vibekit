@@ -273,7 +273,10 @@ setSwitchMode((kind, slug, identifier, fields) => {
     // Any non-npm registry hit lands on the remote panel. `kind` is the
     // normalised vibekit transport ("http" or "sse", mapped from the
     // registry's remote type by supportedRemoteTypes server-side), so we
-    // preselect it in the panel's transport selector.
+    // preselect it in the panel's transport selector. That holds only because
+    // npm is the one package registry the server surfaces
+    // (supportedPackageRegistries in registry_proxy.go); a second one would
+    // arrive here as a package's registry_type and need its own arm.
     setMode("remote", null);
     fillRemoteForm(slug, identifier, fields, kind);
   }

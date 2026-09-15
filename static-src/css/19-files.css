@@ -242,16 +242,17 @@
     transform var(--dur-enter);
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) backwards;
 
-  /* Staggered list entry (design system): 30ms per row, capped at 8 by the
-     JS that sets --stagger-index. The `backwards` fill above is what holds a
-     delayed row invisible until its turn. */
-  animation-delay: calc(var(--stagger-index, 0) * 30ms);
+  /* Staggered list entry (design system): 30ms per row, capped at 8. The
+     `backwards` fill above is what holds a delayed row invisible until its turn.
+     `sibling-index()` is 1-based, so the `- 1` is what makes the first row 0. */
+  animation-delay: calc(min(sibling-index() - 1, 8) * 30ms);
 
-  /* The last row drops the separator's COLOUR, not the edge itself. `none`
-     would zero the used width, and since 70-selection.css reserves a 1px edge
-     on all four sides of every row, that would make the last row 1px shorter
-     than its neighbours and leave a SELECTED last row unable to draw its bottom
-     border at all. */
+  /* The last row drops the separator's COLOUR, not the edge itself. `none` would
+     zero the used width, and since 70-selection.css reserves a 1px edge on all
+     four sides of every row, that would make the last row 1px shorter than its
+     neighbours. It used to have a second reason — a selected row drew all four
+     sides in the selected tint and `none` would have cost the last one its bottom
+     edge — and that half expired with the selected edge channel. */
   &:last-child {
     border-block-end-color: transparent;
   }
@@ -372,8 +373,7 @@
      24px coarse-narrow. These two declarations score (0,1,0) against the floor's
      zero-specificity `:where()`, so this control is invisible to it and the
      expander carries the target instead — the mechanism the floor's own comment
-     names, with `.status-dot` (10-shell-app.css) and `.shell-resize`
-     (21-shell-panel.css) as its other members.
+     names, with `.shell-resize` (21-shell-panel.css) as its other member.
 
      ASYMMETRIC, away from `.fb-name`. The letter sits between the name (which
      opens the file) and the metadata (inert), and the row's gap is --sp-2, so a
@@ -398,13 +398,6 @@
   &:hover {
     background: var(--c-bg-tertiary);
   }
-}
-
-/* The attribution filter DIMS; it never hides. A hidden row would make the
-   listing lie about what is on disk, and a folder whose only changed child was
-   filtered out would read as empty. */
-.fb-row-unattributed {
-  opacity: 0.4;
 }
 
 /* THE BOTTOM CLEARANCE PAYS THE LARGER OF THE HOUSE PADDING OR THE DEVICE INSET,

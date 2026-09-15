@@ -496,7 +496,7 @@ def rule_deep_forward(report):
     `return rt.bus.fanout.Bounds()` is the shape: a method that exists so a caller
     can avoid writing one field access. The shallow forward sweep (a script over
     the AST looking for `recv.field.method()`) does not match it, which is how
-    Runtime.replayBounds survived — a one-line forward to the shared webhttp/sse
+    Runtime.replayBounds survived — a one-line forward to the shared cplieger/sse
     hub, kept alive by tests after the library started handing production the same
     pair through its OnConnect callback.
 

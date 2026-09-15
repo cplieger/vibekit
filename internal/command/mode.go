@@ -43,7 +43,7 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 	// Whether anything changed, and nothing more: a refused write is reported by
 	// Mutate's error, not by this flag.
 	var changed bool
-	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			// New chat whose first prompt hasn't been sent — auto-create
 			// so the picked mode survives to session/new via

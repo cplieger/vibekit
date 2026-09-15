@@ -67,6 +67,7 @@
   tab-size: 4;
   color: var(--c-text-secondary);
   text-align: end;
+  -webkit-user-select: none;
   user-select: none;
   border-inline-end: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
@@ -255,6 +256,35 @@
   100% {
     opacity: 0;
   }
+}
+
+/* The in-file find's current hit over SOURCE, the flash's sibling: one box,
+   placed by editor-scroll.ts from the same line arithmetic plus a measured
+   inline extent, moved to each step. The read surface cannot hold a <mark>
+   (renderHighlight owns #editor-code's innerHTML and would wipe it), and the
+   textarea cannot hold one at all — and Chromium paints no selection in a
+   textarea that does not have focus, which the find box keeps.
+
+   The transcript's current mark (24-find.css) is OPAQUE accent under its own
+   text; this box sits OVER the glyphs, so it takes the resting mark's
+   translucent fill and keeps only the ring to say "current". */
+.editor-find-mark {
+  position: absolute;
+  pointer-events: none;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--c-accent) 32%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
+}
+
+/* The measuring twin: a hidden `.editor-highlight` the find appends for one
+   layout read and removes, so the span it measures is set in the surface's own
+   font, padding and tab stops. Out of flow so it never moves the grid. */
+.editor-find-probe {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* --- Unified (single-column) diff --------------------------------------------

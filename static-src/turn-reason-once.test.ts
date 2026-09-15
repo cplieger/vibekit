@@ -242,6 +242,54 @@ describe("a failed turn's reason", () => {
     }
   });
 
+  it("mounts the FOLDED card's notice after its face, not between body and face", () => {
+    // The order is load-bearing twice over, and neither half had a guard.
+    // READING: the notice says why the turn stopped, so it belongs after what the
+    // turn produced — before it, the error sat above the answer. CASCADE: the
+    // hidden body is still in the DOM at `block-size: 0`, so a notice adjacent to
+    // it matches 29-turns.css's divider-is-the-frame rules, which suppress the
+    // notice's own top rule — and the face's fill IS the body's, so with that rule
+    // suppressed nothing at all would mark the edge between the answer and the
+    // reason. (It used to read "the header has already dropped its bottom border on
+    // the promise that the element below draws one"; that seam is gone outright now
+    // — 29-turns.css's file header — and the consequence of the wrong order is the
+    // same either way.)
+    //
+    // What decides it is `syncTurnFace`'s ANCHOR, not the call order: the face has
+    // five call sites against the notice's two, and the fold toggle plus the fold
+    // pass mount a face without touching the notice — so a face anchored on the
+    // footer lands wherever the notice is not. Which is why this drives the real
+    // paint AND the reader's own toggle rather than any one sync function.
+    // Painted OPEN first and then folded, so the body is still mounted when the
+    // face arrives: that is the shape the cascade half is about, and a card born
+    // folded builds no body at all (`mountTurn` skips it), which would pass the
+    // ordering assertion without ever putting a body beside a notice.
+    const chat = "folded-order";
+    const REGIONS = ["turn-body", "turn-face", "turn-notice", "turn-footer"];
+    setTurnOpen(chat, BROKEN_TURN, true);
+    const [card] = mount(chat, brokenThenClean());
+    if (card === undefined) {
+      throw new Error("no card");
+    }
+    expect(
+      card.querySelector(":scope > .turn-body"),
+      "premise: the open card has a body for the face to be inserted after",
+    ).not.toBeNull();
+
+    // The reader's own gesture, not another paint: `setTurnOpen` is consulted by
+    // the fold pass, and a second `mount` of the same chat does not re-run it.
+    card.querySelector<HTMLButtonElement>(":scope > .turn-header .turn-fold-toggle")?.click();
+    expect(card.hasAttribute("data-folded"), "the subject card is folded").toBe(true);
+
+    const kinds = [...card.children]
+      .map((c) => REGIONS.find((k) => c.classList.contains(k)))
+      .filter((k) => k !== undefined);
+    expect(kinds, "the notice is the last region before the ledger").toEqual(
+      REGIONS.filter((k) => kinds.includes(k)),
+    );
+    expect(kinds, "and the face is on screen for it to follow").toContain("turn-face");
+  });
+
   it("renders no notice at all for a turn that ended cleanly", () => {
     // The negative control for both cases above.
     const chat = "clean";

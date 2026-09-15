@@ -10,7 +10,7 @@
 import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import type { Message, Session } from "./types.js";
 import type { Turn } from "./turns.js";
-import type { SearchHit } from "./chat-search.js";
+import type { Hit } from "./wire/types.gen.js";
 
 // The SERVER's search answer is the only thing stubbed for the navigation cases:
 // `chat-search.ts`, the reveal it injects, the renderer and the scroller all run for
@@ -258,14 +258,19 @@ function bodyRows(turnID: string): HTMLElement[] {
 // ANSWER is staged.
 // ---------------------------------------------------------------------------
 
-/** The server's hit list, for any search these cases run. Everything else
- *  `api-client.js` serves keeps its real behaviour. */
-function stageServerHits(hits: SearchHit[]): void {
-  vi.mocked(api.apiGet).mockImplementation(((path: string) =>
-    Promise.resolve(path.includes("/search?q=") ? { hits } : null)) as typeof api.apiGet);
+/** The server's search reply, for any search these cases run, run through the
+ *  caller's own decoder so the staged bytes are held to the wire shape. Everything
+ *  else `api-client.js` serves keeps its real behaviour. */
+function stageServerHits(hits: Hit[]): void {
+  vi.mocked(api.apiGetTyped).mockImplementation(((path: string, decode: (v: unknown) => unknown) =>
+    Promise.resolve(
+      path.includes("/search?q=")
+        ? decode({ matches: hits, scanned: 1, matched: hits.length, truncated: false })
+        : null,
+    )) as typeof api.apiGetTyped);
 }
 
-function hitOn(messageID: string, turnID: string, text: string, at: number): SearchHit {
+function hitOn(messageID: string, turnID: string, text: string, at: number): Hit {
   return {
     message_id: messageID,
     turn_message_id: turnID,
@@ -295,8 +300,10 @@ async function findAndStep(query: string): Promise<void> {
     );
   };
   enter();
+  // The server answer landed and the counter carries its figure — beside the marks
+  // when there are some, as the empty state when the walker has nothing.
   await vi.waitFor(() => {
-    expect(countText()).toContain("in chat");
+    expect(countText()).toMatch(/in chat|matched, not shown here/);
   });
   // The counter is painted synchronously by the query callback; the shell's render,
   // which records the navigable hits, lands a few microtask hops later.
@@ -416,6 +423,8 @@ describe("a cold load of a 700-block turn mounts a WINDOW", () => {
     const current = document.querySelector("mark.find-hit-current");
     // ON the block the hit named — not the notice, and not a neighbouring block.
     expect(current?.closest("[data-block-index]")?.getAttribute("data-block-index")).toBe("200");
+    // The position in the server's one-row list, with no whole-chat figure beside
+    // it: the list holds every occurrence, so there is nothing more to say.
     expect(countText()).toBe("1 of 1");
     toggleChatFind();
   });

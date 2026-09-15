@@ -1,139 +1,94 @@
 // ---------------------------------------------------------------------------
-// The cross-language pin for the SearchHit wire shape.
+// The cross-language pin for the in-chat search reply.
 //
-// chat.SearchHit is deliberately NOT wiregen-registered (the generated
-// namespace's SearchHit name is taken by the tools type), so the mirror in
-// chat-search.ts is hand-maintained. This runs against the same fixture Go's
-// TestSearchHitWireContract produces from a REAL Search() run, so the two
-// spellings cannot drift silently: a field the server renames or adds shows up
-// here as an unknown or missing key, and a field the mirror renames breaks the
-// typed construction below at typecheck (`npm run typecheck:tests`).
+// chat.SearchResult and chat.Hit are wiregen-registered, so the TypeScript types
+// and decoders are GENERATED from the Go structs; what this pins is the ENCODER.
+// Go's TestSearchWireContract writes the fixture from a real scan, and every reply
+// in it is decoded here through the generated decodeSearchResult: a field the
+// server renames, drops or re-types fails the decode, and a value outside a
+// registered enum fails it too.
 //
-// Node placement because the fixture is a disk read; the module import is
-// type-only, so nothing browser-shaped loads.
+// Node placement because the fixture is a disk read; the decoder module is pure,
+// so nothing browser-shaped loads.
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import type { SearchHit, SegmentKind } from "./chat-search.js";
+import { decodeSearchResult } from "./wire/decoders.gen.js";
+import type { Hit, SearchResult } from "./wire/types.gen.js";
 
 const FIXTURE_PATH = "../internal/chat/testdata/search_hits.json";
+const GO_SEARCH_PATH = "../internal/chat/search.go";
+const CLIENT_FIND_PATH = "./find-in-chat.ts";
 
-interface HitsFixture {
+interface SearchFixture {
   queries: {
     name: string;
     query: string;
     case_sensitive: boolean;
-    hits: unknown[];
+    result: unknown;
   }[];
 }
 
-/** Every member of the mirror's SegmentKind union. A `Record` over the union,
- *  so adding or renaming a kind in chat-search.ts fails typecheck here until
- *  this list (and the fixture) learn it. */
-const KIND_LISTED: Record<SegmentKind, true> = {
-  content: true,
-  reasoning: true,
-  tool_title: true,
-  tool_output: true,
-  message: true,
-};
-const SEGMENT_KINDS = Object.keys(KIND_LISTED);
-
-/** Every field of the mirror, split by optionality (the Go side's omitempty).
- *  Keyed over `keyof SearchHit`, so the mirror cannot gain, lose, or rename a
- *  field without this table failing typecheck. */
-const MIRROR_FIELDS: Record<keyof SearchHit, "required" | "optional"> = {
-  block_index: "optional",
-  message_id: "required",
-  turn_message_id: "required",
-  excerpt: "required",
-  role: "required",
-  segment_kind: "required",
-  agent_subtask_id: "optional",
-  turn: "required",
-  offset: "required",
-  segment_len: "required",
-};
-
-function loadFixture(): HitsFixture {
+function loadFixture(): SearchFixture {
   const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");
-  return JSON.parse(raw) as HitsFixture;
+  return JSON.parse(raw) as SearchFixture;
 }
 
-/** Decode one fixture hit through the mirror: every unknown key is drift from
- *  the Go side, every missing required key is drift from the mirror side, and
- *  the typed construction at the end is what ties the runtime checks to the
- *  mirror's actual spelling. */
-function decodeHit(raw: unknown): SearchHit {
-  expect(raw !== null && typeof raw === "object" && !Array.isArray(raw)).toBe(true);
-  const o = raw as Record<string, unknown>;
-  for (const key of Object.keys(o)) {
-    expect(
-      Object.keys(MIRROR_FIELDS),
-      `wire field ${key} is unknown to the chat-search.ts mirror — update the mirror and this table together`,
-    ).toContain(key);
-  }
-  for (const [key, need] of Object.entries(MIRROR_FIELDS)) {
-    if (need === "required") {
-      expect(o[key], `required mirror field ${key} missing from the fixture`).toBeDefined();
-    }
-  }
-  expect(SEGMENT_KINDS).toContain(o["segment_kind"]);
-  const hit: SearchHit = {
-    message_id: o["message_id"] as string,
-    turn_message_id: o["turn_message_id"] as string,
-    excerpt: o["excerpt"] as string,
-    role: o["role"] as string,
-    segment_kind: o["segment_kind"] as SegmentKind,
-    turn: o["turn"] as number,
-    offset: o["offset"] as number,
-    segment_len: o["segment_len"] as number,
-  };
-  if (o["block_index"] !== undefined) {
-    expect(typeof o["block_index"]).toBe("number");
-    hit.block_index = o["block_index"] as number;
-  }
-  if (o["agent_subtask_id"] !== undefined) {
-    expect(typeof o["agent_subtask_id"]).toBe("string");
-    hit.agent_subtask_id = o["agent_subtask_id"] as string;
-  }
-  for (const key of ["message_id", "turn_message_id", "excerpt", "role"] as const) {
-    expect(typeof hit[key], key).toBe("string");
-  }
-  for (const key of ["turn", "offset", "segment_len"] as const) {
-    expect(typeof hit[key], key).toBe("number");
-  }
-  return hit;
+/** One declared constant, read out of a source file as TEXT.
+ *
+ *  Text rather than an import on both sides: the Go value is unexported, and the
+ *  client's lives in a DOM module this node project cannot load. Which is also why
+ *  the pair needs a test at all — there is no wire field carrying the radius and no
+ *  codegen on either side, so nothing else holds the two numbers together. */
+function declaredNumber(rel: string, pattern: RegExp): number {
+  const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+  const m = pattern.exec(src);
+  expect(m?.[1], `${rel} declares nothing matching ${pattern.source}`).toBeDefined();
+  return Number(m?.[1]);
 }
 
-describe("the SearchHit wire contract shared with the Go implementation", () => {
+describe("the in-chat search reply shared with the Go implementation", () => {
   const fx = loadFixture();
-  // Per test rather than at describe scope, so a drifted fixture fails the
-  // named per-hit case below instead of aborting collection.
-  const decodeAll = (): SearchHit[] => fx.queries.flatMap((q) => q.hits.map((h) => decodeHit(h)));
+  // Decoded per test rather than at describe scope, so a drifted fixture fails
+  // the named case below instead of aborting collection.
+  const decodeAll = (): SearchResult[] => fx.queries.map((q) => decodeSearchResult(q.result));
+  const allHits = (): Hit[] => decodeAll().flatMap((r) => r.matches);
 
   it("carries queries and hits (an empty fixture would pass forever)", () => {
     expect(fx.queries.length).toBeGreaterThan(0);
-    for (const q of fx.queries) {
-      expect(q.hits.length, q.name).toBeGreaterThan(0);
+    for (const r of decodeAll()) {
+      expect(r.matches.length).toBeGreaterThan(0);
     }
   });
 
-  it.each(fx.queries.flatMap((q) => q.hits.map((h, i) => [`${q.name} #${String(i)}`, h] as const)))(
-    "decodes %s through the mirror with no unknown fields",
+  it.each(fx.queries.map((q) => [q.name, q.result] as const))(
+    "decodes %s through the generated decoder",
     (_name, raw) => {
-      decodeHit(raw);
+      expect(() => decodeSearchResult(raw)).not.toThrow();
     },
   );
 
-  it("covers every segment kind, so a regeneration cannot silently drop one", () => {
-    const seen = new Set(decodeAll().map((h) => h.segment_kind));
-    expect([...seen].sort()).toEqual([...SEGMENT_KINDS].sort());
+  it("carries the tally beside the hits: every message read, every occurrence counted", () => {
+    for (const r of decodeAll()) {
+      // The fixture's message set is four messages, all read whatever matched.
+      expect(r.scanned).toBe(4);
+      // Nothing in the fixture reaches the cap, so the count IS the list.
+      expect(r.matched).toBe(r.matches.length);
+      expect(r.truncated).toBe(false);
+    }
+  });
+
+  it("refuses a hit whose segment kind the client has no arm for", () => {
+    // The enum is registered, so the decoder is strict: an unknown kind fails the
+    // whole reply rather than reaching the navigation as a span it cannot resolve.
+    const r = fx.queries[0]?.result as { matches: Record<string, unknown>[] };
+    const forged = { ...r, matches: [{ ...r.matches[0], segment_kind: "footnote" }] };
+    expect(() => decodeSearchResult(forged)).toThrow(/segment_kind/);
   });
 
   it("keeps the message-kind contract: offset 0, zero length, no block, no subtask", () => {
-    const messages = decodeAll().filter((h) => h.segment_kind === "message");
+    const messages = allHits().filter((h) => h.segment_kind === "message");
     expect(messages.length).toBeGreaterThan(0);
     for (const h of messages) {
       expect(h.offset).toBe(0);
@@ -147,28 +102,46 @@ describe("the SearchHit wire contract shared with the Go implementation", () => 
     // The fixture's legacy message reads "… The naïve loop calls retry twice."
     // — the second occurrence sits behind "naïve", whose ï is two UTF-8 bytes,
     // so a server regression to byte offsets would regenerate this as 57.
-    const legacy = decodeAll().filter((h) => h.message_id === "u1");
+    //
+    // Scoped to that message's CONTENT segment: the same message also carries an
+    // attachment, whose own segment is a different span with its own offsets.
+    const legacy = allHits().filter((h) => h.message_id === "u1" && h.segment_kind === "content");
     expect(legacy.map((h) => h.offset)).toEqual([15, 56]);
     // And segment-relative rather than message-relative: the tool output is
     // block 2 of a longer message, yet its match indexes the OUTPUT alone
     // ("func retry…" → 5).
-    const output = decodeAll().find((h) => h.segment_kind === "tool_output");
+    const output = allHits().find((h) => h.segment_kind === "tool_output");
     expect(output?.offset).toBe(5);
     expect(output?.segment_len).toBe(37);
   });
 
   it("addresses blocks: tool title and output share an index, the delegate names its subtask", () => {
-    const allHits = decodeAll();
-    const title = allHits.find((h) => h.segment_kind === "tool_title");
-    const output = allHits.find((h) => h.segment_kind === "tool_output");
+    const hits = allHits();
+    const title = hits.find((h) => h.segment_kind === "tool_title");
+    const output = hits.find((h) => h.segment_kind === "tool_output");
     expect(title?.block_index).toBe(2);
     expect(output?.block_index).toBe(2);
-    const delegate = allHits.find((h) => h.agent_subtask_id !== undefined);
+    const delegate = hits.find((h) => h.agent_subtask_id !== undefined);
     expect(delegate?.agent_subtask_id).toBe("sub-1");
     expect(delegate?.block_index).toBe(3);
     expect(delegate?.segment_kind).toBe("content");
-    // Legacy blockless hits stay unaddressed — the mirror's optionality is
-    // load-bearing, not decorative.
-    expect(allHits.some((h) => h.block_index === undefined)).toBe(true);
+    // Legacy blockless hits stay unaddressed — the optionality is load-bearing,
+    // not decorative.
+    expect(hits.some((h) => h.block_index === undefined)).toBe(true);
+  });
+});
+
+describe("the excerpt radius the ranker compares against", () => {
+  it("is the same number on both sides", () => {
+    // The server slices `searchExcerptRadius` runes either side of a hit into its
+    // excerpt; the client slices the same amount of RENDERED text around a candidate
+    // mark before scoring the two against each other (`contextAround`). A wider
+    // window on one side feeds tokens the other never saw into a Dice coefficient
+    // with a similarity FLOOR, so the two numbers drifting apart does not break a
+    // build — it quietly moves which occurrence a hit lands on, and pushes a thin
+    // match below the floor into the "not in rendered text" notice.
+    const go = declaredNumber(GO_SEARCH_PATH, /^const searchExcerptRadius = (\d+)$/m);
+    const client = declaredNumber(CLIENT_FIND_PATH, /^const EXCERPT_RADIUS = (\d+);$/m);
+    expect(client, "find-in-chat.ts EXCERPT_RADIUS must equal chat.searchExcerptRadius").toBe(go);
   });
 });

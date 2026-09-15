@@ -32,6 +32,7 @@ import { describe, it, expect } from "vitest";
 
 import { projectTurns } from "./turns.js";
 import { markerLabel } from "./rail-labels.js";
+import { padBlock } from "./block-pad.js";
 import type { Block, Message } from "./types.js";
 
 let seq = 0;
@@ -140,6 +141,51 @@ describe("a chat-parented workflow step folding onto its launching chat", () => 
     expect(turns).toHaveLength(2);
     expect(turns[0]?.body).toHaveLength(1);
     expect(turns[1]?.body.map((m) => m.content)).toEqual(["step ran"]);
+  });
+});
+
+describe("a step message holding a slot whose own frame has not arrived", () => {
+  /** A step's blocks with a RESERVED slot among them, in the shape the store leaves
+   *  behind. Built by hand — this file drives no store — but the pad itself is the
+   *  production one, so the fixture cannot drift from what `padBlocks` writes.
+   *
+   *  The pad carries NO subtask id, and that state is reached rather than contrived: a
+   *  `tool_call` frame may arrive before the server has attached its
+   *  `agent_subtask_id` (`store.ts` calls that a late identity attachment), so the pads
+   *  it reserves have no id to inherit and the update that brings the id writes only the
+   *  tool_use block. */
+  function steppedWithReservedSlot(): Message {
+    seq += 1;
+    const step = (text: string): Block => ({
+      type: "text",
+      text,
+      agent_subtask_id: "wf:w1:root",
+    });
+    return {
+      id: `a${String(seq)}`,
+      role: "assistant",
+      content: "step output",
+      ts: seq * 1000,
+      blocks: [step("the step's first block"), padBlock(undefined), step("the step's last")],
+    };
+  }
+
+  it("opens exactly one turn for a capped step snapshot plus a live chunk beyond the cap", () => {
+    // A pad is a placeholder for a block the client has not RECEIVED, so counting it as
+    // parent-agent content makes a step message look like the chat's own work: one
+    // reservation flips `isStepMessage`, which flips `opensHeaderlessTurn`, and the step's
+    // output gets a headerless "Agent-initiated turn" card of its own.
+    const turns = projectTurns(
+      [
+        user("run the release workflow"),
+        assistant({ outcome: "completed" }),
+        steppedWithReservedSlot(),
+      ],
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns.every((t) => t.trigger !== undefined)).toBe(true);
   });
 });
 

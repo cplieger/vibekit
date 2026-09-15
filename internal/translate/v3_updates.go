@@ -54,11 +54,20 @@ type sessionInfoKiroBlock struct {
 	} `json:"contextUsage"`
 	// Focus is the kind=="focus_update" block (see focus.go).
 	Focus *focusUpdate `json:"focus"`
+	// Hook is the kind=="hook_update" block, one per hook execution (see hook_status.go).
+	Hook *hookUpdateBlock `json:"hook"`
 	// TurnStart and TurnEnd are the wire's own turn bracket, emitted for EVERY
 	// turn including one vibekit never prompted. Pointers because KAS gives
 	// turn_end a nested object and turn_start a flat `true`.
 	TurnStart *bool         `json:"turnStart"`
 	TurnEnd   *turnEndBlock `json:"turnEnd"`
+	// UserMessageID is KAS's own record id for the user message it has just
+	// persisted, on the `user_message_id_assigned` kind. It arrives ONCE per
+	// non-agent-initiated session/prompt, immediately after the append and before
+	// the model runs, and it is the only channel carrying that id — the live
+	// `user_message_chunk` echo is addressed away from the caller, so a
+	// single-client stdio connection never receives it. Measured on kiro-cli 2.21.4.
+	UserMessageID string `json:"userMessageId"`
 	// The steering sub-kinds' fields, FLAT beside Kind because KAS's
 	// legacyFields() returns {} for all three: there is no nested object to key
 	// off, so these three must dispatch on the kind STRING (handleSteeringUpdate).
@@ -153,6 +162,17 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 	if attr.SubSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
+	if h := u.Meta.Kiro.Hook; h != nil {
+		t.handleHookUpdate(ctx, chatID, h, attr)
+		return
+	}
+	// After the attribution gate for the same reason the bracket is: a workflow
+	// step's answer prompts on the STEP's session, so its own assigned id must not
+	// be stamped onto the launching chat's newest prompt row.
+	if id := u.Meta.Kiro.UserMessageID; id != "" {
+		t.handleUserMessageID(ctx, chatID, id)
+		return
+	}
 	// After the attribution gate deliberately: pre-gate, every workflow step's
 	// turn_start would close the launching chat's live turn.
 	if u.Meta.Kiro.TurnStart != nil {
@@ -177,14 +197,16 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID vibekit
 		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
 		return
 	}
-	// The context-usage channel that actually arrives; usageUpdate records why the
-	// standalone frame is only a fallback.
-	pct := u.Meta.Kiro.ContextUsage.UsagePercentage
+	t.handleContextUsage(ctx, chatID, &u.Meta.Kiro)
+}
+
+// handleContextUsage is the cascade's last arm: the context-usage channel that
+// actually arrives (usageUpdate records why the standalone frame is only a
+// fallback), and the report for a frame nothing consumed.
+func (t *Translator) handleContextUsage(ctx context.Context, chatID vibekit.ChatID, k *sessionInfoKiroBlock) {
+	pct := cmp.Or(k.ContextUsage.UsagePercentage, k.UsagePercentage)
 	if pct == nil {
-		pct = u.Meta.Kiro.UsagePercentage
-	}
-	if pct == nil {
-		logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
+		logUnconsumedInfoKind(chatID, k.Kind)
 		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
@@ -214,14 +236,14 @@ func (t *Translator) handleWireTurnEnd(ctx context.Context, chatID vibekit.ChatI
 // It tells a sub-kind vibekit deliberately ignores from one KAS added since this
 // was written; membership implies nothing about consumption.
 var knownSessionInfoKinds = map[string]struct{}{
-	// turn_start and turn_end are ABSENT because both are consumed, so a bracket
-	// kind reaching this table means its sub-block did not decode.
+	// turn_start, turn_end, user_message_id_assigned and hook_update are ABSENT because
+	// all four are consumed, so one reaching this table means its sub-block did not decode.
 	"turn_completion": {},
 	"context_usage":   {}, "summarization_separator": {}, "summary_message": {},
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
-	"user_message_id_assigned": {}, "focus_update": {}, "display_error": {},
+	"focus_update": {}, "display_error": {},
 	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
-	"steering_inclusion": {}, "queued": {}, "hook_update": {}, "repositories_update": {},
+	"steering_inclusion": {}, "queued": {}, "repositories_update": {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update that reached the end of the
@@ -329,7 +351,7 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 // per model response, so an exact-inequality gate turned one 20-tool-call turn
 // into dozens of full-transcript rewrites.
 func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
-	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -427,7 +449,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 		return
 	}
 	t.catalog.SetModels(cat.models)
-	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

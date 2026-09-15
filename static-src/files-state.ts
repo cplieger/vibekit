@@ -6,8 +6,8 @@
 import { FB_ROOT, type FileEntry } from "./files-shared.js";
 
 export class FileBrowserState {
-  currentPath = FB_ROOT;
-  history: string[] = [FB_ROOT];
+  currentPath: string;
+  history: string[];
   historyIdx = 0;
   selected = new Set<string>();
   lastClickedName = "";
@@ -19,6 +19,20 @@ export class FileBrowserState {
   entryMap = new Map<string, FileEntry>();
   dirWritable = true;
   sortedNames: string[] = [];
+
+  /** True until this browser's ORIGIN folder loads, so an unreachable one falls back
+   *  to the mounts listing ONCE and a later failure keeps the error row. Per browser
+   *  rather than per module: N browsers share one fetch holder, so a shared arm would
+   *  be spent by another tab's first transient error. */
+  pendingRestore = true;
+
+  /** A browser opened at `at`, with both nav buttons DISABLED by construction. The
+   *  alternative is `navigate`, which PUSHES, so a fresh tab would render with Back
+   *  enabled and walk to a mounts listing it was never at. */
+  constructor(at: string = FB_ROOT) {
+    this.currentPath = at;
+    this.history = [at];
+  }
 
   navigate(path: string): void {
     this.currentPath = path;
@@ -52,6 +66,29 @@ export class FileBrowserState {
     return true;
   }
 
+  /** Point this browser at a directory named from OUTSIDE its own trail: a document
+   *  history entry, or a pasted deep link.
+   *
+   *  Adjacent-first, because while the browser is active the two trails are one: a
+   *  document Back steps `historyIdx` back rather than pushing, so repeated presses
+   *  cannot grow `history` without bound. Anything else pushes. */
+  pointTo(dir: string): void {
+    if (dir === this.currentPath) {
+      return;
+    }
+    if (this.history[this.historyIdx - 1] === dir) {
+      this.goBack();
+      return;
+    }
+    if (this.history[this.historyIdx + 1] === dir) {
+      this.goForward();
+      return;
+    }
+    this.navigate(dir);
+  }
+
+  /** Back to the mounts listing, NOT to the tab's origin: the one caller is the
+   *  auto-heal, and a heal back to an unreachable origin would loop. */
   reset(): void {
     this.currentPath = FB_ROOT;
     this.history.length = 0;

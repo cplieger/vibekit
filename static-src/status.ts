@@ -151,11 +151,17 @@ function renderMetering(items: MeteringItem[]): void {
 // same status, the repeat is the honest signal.
 let statusAnnounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** Maps each ConnectionStatus to its CSS class and custom property color. */
-const STATUS_STYLES: Readonly<Record<ConnectionStatus, { cls: string | null; color: string }>> = {
-  connected: { cls: "connected", color: "var(--c-green)" },
-  disconnected: { cls: "error", color: "var(--c-red)" },
-  connecting: { cls: null, color: "var(--c-yellow)" },
+/** Maps each ConnectionStatus to its CSS class, custom property colour, and the
+ *  phrase the TRIGGER publishes as its description.
+ *
+ *  A third field rather than a second table beside this one: three facts about one
+ *  status, so two tables keyed on the same enum could disagree. */
+const STATUS_STYLES: Readonly<
+  Record<ConnectionStatus, { cls: string | null; color: string; tip: string }>
+> = {
+  connected: { cls: "connected", color: "var(--c-green)", tip: "Connected" },
+  disconnected: { cls: "error", color: "var(--c-red)", tip: "Disconnected" },
+  connecting: { cls: null, color: "var(--c-yellow)", tip: "Connecting…" },
 };
 
 export function setStatus(s: ConnectionStatus): void {
@@ -169,7 +175,16 @@ export function setStatus(s: ConnectionStatus): void {
   // is the dot's sibling, not its child (15-input.css .pill-slot), so the
   // value lands on the card: on the dot it would reach nothing.
   $.statusCard.style.setProperty("--status-color", style.color);
-  dot.setAttribute("aria-label", `Connection: ${s}`);
+  // THE STATE IS THE DESCRIPTION, NEVER THE NAME. The dot used to carry
+  // `aria-label: "Connection: <s>"`, which is a FLIPPING NAME on what is now a
+  // disclosure trigger — the APG rule the pointer-mode toggle already follows. The
+  // trigger's name comes from its contents (the address plus the `.sr-only`
+  // subject) and stays that shape in every state; this is the state channel beside
+  // it. `tooltip.ts` (over @cplieger/ui-primitives, configured with
+  // `attribute: "data-tooltip"`) republishes it as `aria-describedby` on show with
+  // a `:focus-visible` focus trigger, so a keyboard user hears it and a
+  // programmatic focus pops nothing.
+  $.accountBtn.dataset["tooltip"] = style.tip;
   lastStatus = s;
   paintConnectionLine();
 

@@ -220,7 +220,16 @@ class TabDragController {
     const list = this.dragEl.parentElement;
 
     if (this.dragIndicator !== null && list !== null) {
-      list.insertBefore(this.dragEl, this.dragIndicator);
+      // Guarded on POSITION, because re-inserting an attached row destroys and recreates
+      // every animation in it: a tab's status dot restarts its `vk-dot-beat`, and
+      // `beat-phase.ts` re-stamps the phase off that restart, so an unguarded move
+      // spends a re-seat plus a re-stamp on a drop that changed nothing. The indicator is
+      // seated immediately after the dragged row at drag start, so a drag released
+      // without crossing a neighbour lands here with the row already in place. A drop
+      // that DID move the row still moves it; that one is the point of the gesture.
+      if (this.dragEl.nextSibling !== this.dragIndicator) {
+        list.insertBefore(this.dragEl, this.dragIndicator);
+      }
       this.dragIndicator.remove();
       this.dragIndicator = null;
     }

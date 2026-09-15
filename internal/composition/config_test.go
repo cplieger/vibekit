@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp/v3"
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {
@@ -389,12 +390,17 @@ func TestBundledToolsFiles(t *testing.T) {
 // couple of them; and the warning is the only trace a grant was dropped, so it
 // must fire when one was and stay quiet when none was — a warning on a clean
 // list is how an operator ends up hunting for a typo they did not make.
+//
+// The uploads directory is one of the standard mounts, and the assertion is
+// positional on purpose: an upload with no "dir" resolves against the granted set
+// and is REFUSED outright when that mount is missing, so dropping it here is a
+// composer that answers 403 for the container's life.
 func TestBrowseRoots(t *testing.T) {
 	t.Run("several valid extras all survive alongside the standard mounts", func(t *testing.T) {
 		logs := captureDefaultLogger(t)
 
 		got := browseRoots("/work", "/config", "/srv/a:/srv/b:/srv/c")
-		want := []string{"/work", "/config", "/srv/a", "/srv/b", "/srv/c"}
+		want := []string{"/work", "/config", vibekit.DefaultUploadDir, "/srv/a", "/srv/b", "/srv/c"}
 		if !slices.Equal(got, want) {
 			t.Errorf("browseRoots() = %v, want %v", got, want)
 		}
@@ -407,7 +413,7 @@ func TestBrowseRoots(t *testing.T) {
 		logs := captureDefaultLogger(t)
 
 		got := browseRoots("/work", "/config", "relative/path:/srv/ok")
-		want := []string{"/work", "/config", "/srv/ok"}
+		want := []string{"/work", "/config", vibekit.DefaultUploadDir, "/srv/ok"}
 		if !slices.Equal(got, want) {
 			t.Errorf("browseRoots() = %v, want %v", got, want)
 		}

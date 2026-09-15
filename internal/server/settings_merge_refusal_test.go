@@ -120,7 +120,7 @@ func TestSettingsWrite_RefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
 
 			req := httptest.NewRequest(tc.method, "/api/settings", bytes.NewReader([]byte(`{"fb_path":"/workspace/src"}`)))
 			rec := httptest.NewRecorder()
-			s.handleSettingsWrite(rec, req, path)
+			s.handleSettingsWrite(rec, req)
 
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("%s /api/settings = %d, want %d", tc.method, rec.Code, http.StatusInternalServerError)
@@ -166,7 +166,7 @@ func TestSettingsWrite_StillMergesAReadableDocument(t *testing.T) {
 
 			req := httptest.NewRequest(method, "/api/settings", bytes.NewReader([]byte(`{"last_model":"opus"}`)))
 			rec := httptest.NewRecorder()
-			s.handleSettingsWrite(rec, req, path)
+			s.handleSettingsWrite(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("%s /api/settings = %d, want %d; body %s", method, rec.Code, http.StatusOK, rec.Body)
@@ -203,13 +203,13 @@ func TestExistingSettingsForMerge_AbsentFileIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestExistingSettingsForMerge_DoesNotBlockOnAFIFO is item 3's own case, and the
-// reason the read side of this file was hardened for it first.
-//
-// handleSettingsWrite takes s.settingsMu BEFORE this read, so a read that blocks
-// in open(2) does not fail one request — it holds the mutex for the life of the
-// process and every later settings write queues behind it. /config is a granted
-// browse mount and the agent has a shell there, so one mkfifo is the whole attack.
+// TestExistingSettingsForMerge_DoesNotBlockOnAFIFO is the read side's own case.
+// os.Open on a FIFO blocks in open(2) with no context deadline to rescue it, so
+// one mkfifo at config.json strands a handler goroutine per GET. /config is a
+// granted browse mount and the agent has a shell there, so one mkfifo is the whole
+// attack. The write side's own version of this — where the wedge is the settings
+// LOCK rather than one goroutine — lives beside the primitive that holds it, in
+// internal/settings.
 //
 // Bounded rather than direct, because reverting the fix does not make this test
 // fail, it makes it HANG: os.Open on a FIFO with no writer waits forever and no
@@ -243,6 +243,6 @@ func TestExistingSettingsForMerge_DoesNotBlockOnAFIFO(t *testing.T) {
 			t.Errorf("readStoredSettings over a FIFO = %v, want atomicfile.ErrNotRegular", got.err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("readStoredSettings blocked on a FIFO at config.json; it holds s.settingsMu, so every later settings write is wedged")
+		t.Fatal("readStoredSettings blocked on a FIFO at config.json; every settings GET would strand a goroutine there")
 	}
 }

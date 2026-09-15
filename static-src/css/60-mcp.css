@@ -185,6 +185,7 @@
      in light mode — under AA for a line number the reader uses to carry their
      place across a click. The hint ink alone is 4.771 / 4.719 and reads the same. */
   color: var(--c-text-tertiary);
+  -webkit-user-select: none;
   user-select: none;
   /* NO background. It used to paint `--c-bg-secondary`, which is the pane's own
      background — a no-op on a context row and a hole punched in the tint of a
@@ -210,6 +211,7 @@
      search below AA. The row background carries the hue; the glyph carries the
      channel that does not depend on it. */
   color: var(--c-text-secondary);
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -822,9 +824,19 @@
   text-overflow: ellipsis;
   overflow: hidden;
 
-  &:not(.active):hover {
-    background: var(--c-hover);
+  /* The tab family's shared tinted wash, gated like its siblings, with the press
+     opting out of 03-base.css's floor exactly as `.settings-tab` does. */
+  @media (any-hover: hover) {
+    &:not(.active):hover {
+      background: var(--c-hover-select);
+      color: var(--c-text-primary);
+    }
+  }
+
+  &:not(.active):active {
+    background: var(--c-press-select);
     color: var(--c-text-primary);
+    box-shadow: none;
   }
 
   /* Selected: 70-selection.css. A fourth copy of the segmented control that

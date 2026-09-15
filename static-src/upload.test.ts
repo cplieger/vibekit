@@ -15,14 +15,14 @@ function fileList(...names: string[]): FileList {
 
 describe("resolvePaths", () => {
   it("prefixes the target directory, which is the attachment path", () => {
-    expect(resolvePaths("/workspace/uploads", ["a.png", "b.txt"])).toEqual([
-      "/workspace/uploads/a.png",
-      "/workspace/uploads/b.txt",
+    expect(resolvePaths("/uploads", ["a.png", "b.txt"])).toEqual([
+      "/uploads/a.png",
+      "/uploads/b.txt",
     ]);
   });
 
   it("does not double the separator on a trailing slash", () => {
-    expect(resolvePaths("/workspace/uploads/", ["a.png"])).toEqual(["/workspace/uploads/a.png"]);
+    expect(resolvePaths("/uploads/", ["a.png"])).toEqual(["/uploads/a.png"]);
   });
 
   it("keeps a browser-listing target absolute, because the path becomes an attachment", () => {

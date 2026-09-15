@@ -34,7 +34,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

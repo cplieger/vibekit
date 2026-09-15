@@ -19,7 +19,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // governanceWarmTimeout bounds the cold GET /api/governance path: starting

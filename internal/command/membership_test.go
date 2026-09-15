@@ -872,7 +872,7 @@ func (f *flakyTabs) Open(ctx context.Context, spec vibekit.OpenTab) (vibekit.Tab
 // transcript a rewind can revert to.
 func seedRecord(t *testing.T, store *testsupport.InMemoryChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(id)
 		return true
 	}); err != nil {

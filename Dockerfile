@@ -102,6 +102,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # Fetch @cplieger/web-terminal-engine TS source (same TS-only pattern). shell.ts
 # imports `render` from it (the reset primitives), and it is the peer the UI
 # package builds on; bundled into app.js by cmd/bundle.
+# 5.2.0 is the floor web-terminal-ui 7.2.2 declares as its peer (^5.2.0).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
@@ -115,6 +116,12 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # compiling the UI's `@cplieger/web-terminal-engine` import. Bundled into
 # app.js by cmd/bundle; its css/ bundle (MANIFEST.touch) is concatenated into
 # style.css by the same tool.
+#
+# 7.2.2 is a FLOOR, not housekeeping: the terminal's cell background is the run
+# elements' `padding-block: 1px` in css/02-terminal.css from that release. The
+# 7.0.7 mechanism was `ascent-override`/`descent-override` on the @font-face
+# rules, which WebKit treats as preview and ignores, so every row boundary shows
+# an unpainted stripe on iOS and a solid column of background renders as dashes.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.2.2
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
@@ -148,6 +155,94 @@ ARG CPLIEGER_KEYENC_VERSION=1.0.7
 RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
+
+# @cplieger/sse is the resumable Server-Sent-Events client: the per-profile
+# SharedWorker host, the per-tab stream fallback, the version map and the digest
+# client that sse-adapter.ts composes. This ARG and static-src/package.json's
+# @cplieger/sse pin track the same exact version.
+# renovate: datasource=npm depName=@cplieger/sse
+ARG CPLIEGER_SSE_VERSION=1.0.0
+RUN mkdir -p static-src/node_modules/@cplieger/sse && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
+
+# The terminal's two web fonts, fetched into static/vendor/fonts/ so they land
+# in the //go:embed static tree. Every URL is TAG-PINNED: releases/latest/download
+# is mutable, so a sha gate over it would break on every upstream release with no
+# version bump in this file to explain it.
+#
+# Monaspace Neon NF is the text face static-src/css/00-fonts.css declares. Its
+# LICENSE travels with the faces: the SIL Open Font License 1.1 requires the
+# copyright notice and the licence text to accompany every copy of the font,
+# and serving the four woff2 files IS a copy.
+# renovate: datasource=github-tags depName=githubnext/monaspace
+ARG MONASPACE_VERSION=v1.400
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/LICENSE dest=MonaspaceNeonNF-LICENSE
+ARG MONASPACE_LICENSE_SHA256=0e84e5f7dd6f05e74a00f2fb828ca43e489d954f5509ff0fa439ea18c0d35fe9
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-Regular.woff2
+ARG MONASPACE_REGULAR_SHA256=8063ea45b6997c658035a4d876f996ecfa306c88fd0541d35d533fb1f9400c84
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-Bold.woff2
+ARG MONASPACE_BOLD_SHA256=45f56dceff8e569d61b6e3168fe208432e7bf0bc3e56e41b4d754cc575a063bd
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-Italic.woff2
+ARG MONASPACE_ITALIC_SHA256=3d77eb9a5ec9e32c5ac7ea49c4325e5d6c8e5fefda7317527de905130a88f3cf
+# repin: dep=githubnext/monaspace url=https://raw.githubusercontent.com/githubnext/monaspace/{version}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-BoldItalic.woff2
+ARG MONASPACE_BOLDITALIC_SHA256=5dffc9465be18eb63263671f1f3ba266ede49043cb6b3edcd65ea993c909b3aa
+
+# cplieger/web-terminal-glyphs is the tiling-glyph overlay: box drawing, block
+# elements, shades, braille, Powerline and the Unicode mosaic blocks, drawn for
+# Monaspace Neon NF's 1240/2000 em advance at 14px on a 17px row. It carries no
+# letters, no digits and no space, which is why 00-fonts.css lists it FIRST in
+# font-family and the text face behind it keeps its metrics and its look.
+#
+# LICENSE and NOTICE are served beside the font: this repo is public and the
+# font file is redistributed under Apache-2.0, whose section 4 requires both to
+# travel with it. Every licence file lands under the name of the family it
+# covers, because two differently-licensed families share this directory and a
+# bare LICENSE beside five woff2 files names neither.
+# renovate: datasource=github-releases depName=cplieger/web-terminal-glyphs
+ARG WEB_TERMINAL_GLYPHS_VERSION=v1.0.0
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/WebTerminalGlyphs.woff2
+ARG WEB_TERMINAL_GLYPHS_SHA256=96985da8241efdad06fc3d9e95030bb3c3e0fe93733f2885e81e538f7865dc9c
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/LICENSE dest=WebTerminalGlyphs-LICENSE
+ARG WEB_TERMINAL_GLYPHS_LICENSE_SHA256=c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c
+# repin: dep=cplieger/web-terminal-glyphs url=https://github.com/cplieger/web-terminal-glyphs/releases/download/{version}/NOTICE dest=WebTerminalGlyphs-NOTICE
+ARG WEB_TERMINAL_GLYPHS_NOTICE_SHA256=fceae1c7790ae9ae77e0dd0e4241c342bde487b2f50a4a09576b779c34c7b2a9
+
+# `set -e` plus a per-iteration `sha256sum -c` is the whole gate: a for-loop's
+# exit status is only its LAST iteration's, so verifying after the loop would
+# accept every earlier face unchecked. The `*)` arm fails the build when a face
+# has no matching sha ARG, so adding a face without its pin cannot ship
+# unverified bytes.
+RUN set -e; mkdir -p static/vendor/fonts; \
+    for face in Regular Bold Italic BoldItalic; do \
+      case "$face" in \
+        Regular) face_sha="$MONASPACE_REGULAR_SHA256" ;; \
+        Bold) face_sha="$MONASPACE_BOLD_SHA256" ;; \
+        Italic) face_sha="$MONASPACE_ITALIC_SHA256" ;; \
+        BoldItalic) face_sha="$MONASPACE_BOLDITALIC_SHA256" ;; \
+        *) echo "ERROR font-sha-missing: no sha256 ARG for Monaspace face $face" >&2; exit 1 ;; \
+      esac; \
+      curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+        -o "static/vendor/fonts/MonaspaceNeonNF-${face}.woff2" \
+        "https://raw.githubusercontent.com/githubnext/monaspace/${MONASPACE_VERSION}/fonts/Web%20Fonts/NerdFonts%20Web%20Fonts/Monaspace%20Neon/MonaspaceNeonNF-${face}.woff2"; \
+      printf '%s  static/vendor/fonts/MonaspaceNeonNF-%s.woff2\n' "$face_sha" "$face" | sha256sum -c -; \
+    done; \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+      -o static/vendor/fonts/MonaspaceNeonNF-LICENSE \
+      "https://raw.githubusercontent.com/githubnext/monaspace/${MONASPACE_VERSION}/LICENSE"; \
+    printf '%s  static/vendor/fonts/MonaspaceNeonNF-LICENSE\n' "$MONASPACE_LICENSE_SHA256" | sha256sum -c -; \
+    for asset in WebTerminalGlyphs.woff2 LICENSE NOTICE; do \
+      case "$asset" in \
+        WebTerminalGlyphs.woff2) asset_sha="$WEB_TERMINAL_GLYPHS_SHA256"; dest=WebTerminalGlyphs.woff2 ;; \
+        LICENSE) asset_sha="$WEB_TERMINAL_GLYPHS_LICENSE_SHA256"; dest=WebTerminalGlyphs-LICENSE ;; \
+        NOTICE) asset_sha="$WEB_TERMINAL_GLYPHS_NOTICE_SHA256"; dest=WebTerminalGlyphs-NOTICE ;; \
+        *) echo "ERROR font-sha-missing: no sha256 ARG for glyph asset $asset" >&2; exit 1 ;; \
+      esac; \
+      curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL \
+        -o "static/vendor/fonts/${dest}" \
+        "https://github.com/cplieger/web-terminal-glyphs/releases/download/${WEB_TERMINAL_GLYPHS_VERSION}/${asset}"; \
+      printf '%s  static/vendor/fonts/%s\n' "$asset_sha" "$dest" | sha256sum -c -; \
+    done
 
 # Build the browser client, then the Go server (static files embedded via
 # go:embed). BUILD_VERSION is stamped into internal/version.Build via
@@ -328,6 +423,22 @@ ENV KIRO_HOME="/config/home/.kiro"
 # image on musl would make the line a claim the image cannot honour.
 ENV LANG="C.UTF-8"
 RUN mkdir -p /config/home/.kiro && chmod 777 /config/home /config/home/.kiro
+
+# Where a composer upload lands (vibekit.DefaultUploadDir). Created at BUILD
+# time, as root, because the runtime uid is the operator's to choose — the public
+# compose example sets `user: "${PUID:-1000}:${PGID:-1000}"`, and a non-root uid
+# cannot create a directory at / (root-owned, 0755), so the server's own
+# boot-time mkdir only succeeds for root.
+#
+# 1777 rather than 0777: the runtime uid is unknown here, and sticky is the right
+# shape for a world-writable directory (the /tmp convention) — it stops one
+# principal renaming or unlinking another's file.
+#
+# It sits in the image layer rather than on a volume, so its CONTENTS do not
+# survive a container recreate. An operator who wants them to mounts a volume
+# here, which SHADOWS this directory and must therefore be owned by the runtime
+# uid; the README says so.
+RUN mkdir -p /uploads && chmod 1777 /uploads
 
 # Repoint root's pw_dir to /config/home so OpenSSH (which resolves "~"
 # via getpwuid, NOT $HOME) reads and writes ~/.ssh/known_hosts under

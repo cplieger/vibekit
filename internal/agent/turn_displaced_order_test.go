@@ -19,7 +19,7 @@ import (
 // the model read mid-turn.
 func appendSteerRow(t *testing.T, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = append(c.Messages, vibekit.Message{
 			ID:          newMessageID(),
 			Role:        vibekit.RoleUser,

@@ -370,8 +370,7 @@ export function disposeChatView(chatID: string): void {
 
 /** Pause one message: dispose its live-binding effects, finish its reveals, and
  *  suspend its run cards and tool-card effects through the owning view's composite
- *  keys — which also stops the duration ticker. `renders` maps, DOM and
- *  message-lifetime bookkeeping stay. */
+ *  keys. `renders` maps, DOM and message-lifetime bookkeeping stay. */
 function pauseMessage(view: ChatView, m: Message): void {
   disposeStreamingEffect(m.id);
   pauseAssistantBody(m.id);
@@ -558,12 +557,6 @@ function disposeBlockEffects(id: string, indices: Iterable<number>): void {
 const appendNewIds = new Set<string>();
 let lastNewestId: string | undefined;
 let lastActiveId: string | undefined;
-
-/** Per-paint stagger index for messages mounted in a single reconcile
- *  pass (chat-switch). Indexed from the bottom so the most-recent
- *  messages animate first, with a cap at 8 to prevent the cascade
- *  from looking laggy on long histories. */
-const staggerIndex = new Map<string, number>();
 
 function svgTemplate(markup: string): () => Node {
   const tpl = document.createElement("template");
@@ -1112,7 +1105,6 @@ function paint(): void {
   // those get the entry animation. Chat-switches, paginated prepends and
   // refetched windows are silent (no animation).
   appendNewIds.clear();
-  staggerIndex.clear();
   // A FETCHED window is a replay whatever its rows look like, and only the paint's CAUSE
   // can say so: a cold open paints on `setActive` before `loadMessages` resolves, so its
   // post-fetch paint is not a chat switch and recorded no tail — indistinguishable from
@@ -1142,16 +1134,6 @@ function paint(): void {
         if (id !== undefined) {
           appendNewIds.add(id);
         }
-      }
-    }
-  } else if (isChatSwitch) {
-    // Cascade the last 8 on chat-switch so they stagger rather than flashing in
-    // together. Not for a fetched window, whose rows replace ones already on screen.
-    const total = session.messages.length;
-    for (let i = Math.max(0, total - 8); i < total; i++) {
-      const id = session.messages[i]?.id;
-      if (id !== undefined) {
-        staggerIndex.set(id, total - 1 - i);
       }
     }
   }
@@ -1448,10 +1430,6 @@ const turnSpec: ReconcileSpec<Turn> = {
     if (appendNewIds.has(t.id)) {
       card.setAttribute("data-chat-entry", "");
     }
-    const stagger = staggerIndex.get(t.id);
-    if (stagger !== undefined && stagger > 0) {
-      card.style.setProperty("--stagger-index", String(stagger));
-    }
     return card;
   },
   update: updateTurn,
@@ -1539,10 +1517,6 @@ const bodyRowSpec: ReconcileSpec<BodyRow> = {
     // appendNewIds is populated.
     if (appendNewIds.has(m.id)) {
       node.setAttribute("data-chat-entry", "");
-    }
-    const stagger = staggerIndex.get(m.id);
-    if (stagger !== undefined && stagger > 0) {
-      node.style.setProperty("--stagger-index", String(stagger));
     }
     // isLikelyLiveStreaming already returns false for non-assistant roles.
     const liveStreaming = isLikelyLiveStreaming(m);
@@ -1762,7 +1736,7 @@ function applyFoldPass(
   const hits = new Map<string, number>();
   const byID = new Map<string, Turn>();
   for (const t of turns) {
-    // `countsByTurn` is keyed by `SearchHit.turn`, which the server computes over the
+    // `countsByTurn` is keyed by `Hit.turn`, which the server computes over the
     // WHOLE message array — so this join is only honest now that `t.n` is
     // session-absolute. Window-local, it looked up an absolute key and a folded row's
     // match count read 0 (or another turn's) on any chat long enough to page.
@@ -2172,9 +2146,21 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
   // A card-level child in the body's slot, NOT inside the footer: the footer
   // keeps its open-state grid (ledger, Rewind, file rows) untouched, and a
   // turn with no footer at all still gets its face.
-  const footer = card.querySelector<HTMLElement>(":scope > .turn-footer");
-  if (footer !== null) {
-    footer.before(face);
+  //
+  // ANCHORED ON THE NOTICE WHEN THERE IS ONE, and the footer only otherwise. Both
+  // regions live in the slot between the body and the ledger, so "before the
+  // footer" is not an order — it is whichever of the two mounted last, and the
+  // face has FIVE call sites against the notice's two: the fold toggle and the
+  // fold pass mount a face without touching the notice, so a reader folding a
+  // broken card put its reason ABOVE the answer, and left the notice adjacent to
+  // the collapsed body, where 29-turns.css's divider-is-the-frame rules suppress
+  // the one line the folded header drops its own border for. The anchor is what
+  // makes the order a property of the face rather than of the call order.
+  const anchor =
+    card.querySelector<HTMLElement>(":scope > .turn-notice") ??
+    card.querySelector<HTMLElement>(":scope > .turn-footer");
+  if (anchor !== null) {
+    anchor.before(face);
   } else {
     card.appendChild(face);
   }
@@ -2188,7 +2174,15 @@ function syncTurnFace(card: HTMLElement, t: Turn): void {
  *  keyed reconcile over MESSAGES, a tier-3 stub has no body element, and the notice
  *  must survive residency. One mount point serves both fold states, because
  *  `syncTurnFace` early-returns for an unfolded card. Tinted by SEVERITY, so a
- *  cancel reads as `stopped` rather than as a failure. Idempotent. */
+ *  cancel reads as `stopped` rather than as a failure. Idempotent.
+ *
+ *  THE LAST REGION BEFORE THE LEDGER in both fold states, which is `syncTurnFace`'s
+ *  anchor rather than this function's insertion point: two things ride on the
+ *  order, and neither is about where the notice goes. Why the turn stopped reads
+ *  after what it produced. And it keeps `.turn-body + .turn-notice` an OPEN-card
+ *  adjacency: the hidden body is still in the DOM at `block-size: 0`, so a notice
+ *  sitting next to it matches 29-turns.css's divider-is-the-frame rules and loses
+ *  the one line the folded header drops its own border for. */
 function syncTurnNotice(card: HTMLElement, t: Turn): void {
   const text = turnFailureText(t);
   const existing = card.querySelector<HTMLElement>(":scope > .turn-notice");
@@ -2263,7 +2257,8 @@ function buildTurn(t: Turn): HTMLElement {
 
   mountTurnFooter(card, t);
   // After the footer: Rewind lives inside it, so it must exist first — and the
-  // face goes into the footer, so a card born folded builds it here.
+  // face goes into the slot above it, so a card born folded builds it here. The
+  // two calls are order-INDEPENDENT: `syncTurnFace` anchors on the notice.
   mountRewind(card, t);
   syncTurnNotice(card, t);
   syncTurnFace(card, t);
@@ -2829,19 +2824,6 @@ function mountRewind(card: HTMLElement, t: Turn): void {
   );
 }
 
-/** How long after the previous turn's start this one began, from the projection the
- *  current paint is reconciling.
- *
- *  UNDEFINED when this window holds no predecessor, which is a different fact from a
- *  gap of zero and must not be folded into it: the rail draws its seam from the same
- *  pair, and a turn opening a paged window genuinely has no measurable gap. Clamped
- *  at zero because a clock that ran backwards is not a negative pause. */
-function gapBefore(t: Turn): number | undefined {
-  const i = lastTurns.findIndex((x) => x.id === t.id);
-  const prev = i > 0 ? lastTurns[i - 1] : undefined;
-  return prev === undefined ? undefined : Math.max(0, t.ts - prev.ts);
-}
-
 /** Mount / refresh the turn's outcome ledger as the card's last child.
  *
  *  Turn-scoped rather than message-scoped: a turn can hold more than one
@@ -2849,13 +2831,10 @@ function gapBefore(t: Turn): number | undefined {
  *  describes the TURN, so it sums across them and renders once. */
 function mountTurnFooter(card: HTMLElement, t: Turn): void {
   const led = turnLedger(t);
-  const since = gapBefore(t);
   const data: TurnSummaryData = {
     credits: led.credits,
     elapsedMs: led.elapsedMs,
     changedFiles: led.changedFiles,
-    commands: led.commands,
-    reads: led.reads,
     models: led.models,
     outcome: t.outcome,
     toolMs: led.toolMs,
@@ -2866,10 +2845,6 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     endedAt: led.endedAt,
     stopReasonRaw: led.stopReasonRaw,
     truncated: led.truncated,
-    // Spread rather than assigned, because `exactOptionalPropertyTypes` separates an
-    // absent field from one holding `undefined` — which is the distinction above.
-    // LAST, so the conditional spread cannot be overwritten by a later key.
-    ...(since === undefined ? {} : { sinceMs: since }),
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
   // ONE predicate, in the footer's own module: the two extra reasons a turn card's

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // clientPolicyPath is the TypeScript module holding the composer's copy of the
@@ -18,7 +20,7 @@ var (
 	clientBytesRe = regexp.MustCompile(
 		`MAX_UPLOAD_BYTES\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;`,
 	)
-	// UPLOADS_DIR = "/workspace/uploads";
+	// UPLOADS_DIR = "/uploads";
 	clientDirRe = regexp.MustCompile(`UPLOADS_DIR\s*=\s*"([^"]*)"\s*;`)
 	// MULTIPART_RESERVE_BYTES = 1024 * 1024;
 	clientReserveRe = regexp.MustCompile(
@@ -116,10 +118,10 @@ func TestUploadPolicyMatchesClient(t *testing.T) {
 		// own (it doubles as the attachment path prefix), so compare the
 		// cleaned forms rather than the raw strings.
 		got := filepath.Clean("/" + string(m[1]))
-		want := filepath.Clean("/" + defaultUploadDir)
+		want := filepath.Clean("/" + vibekit.DefaultUploadDir)
 		if got != want {
-			t.Errorf("UPLOADS_DIR in %s = %q (cleans to %q), want defaultUploadDir %q (cleans to %q)",
-				clientPolicyPath, m[1], got, defaultUploadDir, want)
+			t.Errorf("UPLOADS_DIR in %s = %q (cleans to %q), want vibekit.DefaultUploadDir %q (cleans to %q)",
+				clientPolicyPath, m[1], got, vibekit.DefaultUploadDir, want)
 		}
 	})
 }

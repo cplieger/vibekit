@@ -291,9 +291,8 @@ export function iconVariantHref(href: string, variant: string): string | null {
  *  It HAS to be remembered, and the reason reaches vibekit by a different route
  *  than the reference. `turn_done`, `turn_failed` and `agent_status` are client
  *  latches rebuilt from server state: `handlers/system.ts` refetches the active
- *  chat on `transport:gap`, the SSE connect replay re-delivers a `turn_state`
- *  per busy chat, and the connect handshake re-pushes every unanswered decision
- *  (which is what makes `input` true again). Without this, a dismissed cue came
+ *  chat on `transport:gap`, the connect handshake names every busy chat and
+ *  re-pushes every unanswered decision (which is what makes `input` true again). Without this, a dismissed cue came
  *  back on the next page load — and, since the replay runs on every reconnect,
  *  on a phone simply returning to a backgrounded page.
  *

@@ -88,7 +88,7 @@ RECEIVER = {
 # Identifiers that named a type or package this module has renamed away from.
 # Retired vocabulary, PER MODULE. These record one repo's rename history, so
 # applying them to another repo is a category error: subflux never had an
-# internal/hub, and every "hub" in it is the shared webhttp/sse library's type —
+# internal/hub, and every "hub" in it is the shared cplieger/sse library's type —
 # 28 findings, none of them real, the first time the rules were pointed at it.
 STALE_BY_MODULE = {
     "github.com/cplieger/vibekit": {
@@ -97,9 +97,9 @@ STALE_BY_MODULE = {
     },
 }
 
-# The shared webhttp/sse hub is a LIBRARY type; prose naming it is correct.
+# The shared cplieger/sse hub is a LIBRARY type; prose naming it is correct.
 STALE_EXEMPT = re.compile(
-    r"sse\.Hub|sseHub|webhttp/sse|GitHub|github|[Ss][Ss][Ee] hub|shared sse",
+    r"sse\.Hub|sseHub|cplieger/sse|GitHub|github|[Ss][Ss][Ee] hub|shared sse",
     re.IGNORECASE,
 )
 

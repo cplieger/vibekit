@@ -31,7 +31,7 @@ func TestTabKind_ValidAndSingletonAgreeOnEveryMember(t *testing.T) {
 		{desc: "run, one tab per workflow run", kind: vibekit.TabKindRun, wantValid: true},
 		{desc: "settings", kind: vibekit.TabKindSettings, wantValid: true, wantSingleton: true},
 		{desc: "git", kind: vibekit.TabKindGit, wantValid: true, wantSingleton: true},
-		{desc: "files, the browser itself rather than one file", kind: vibekit.TabKindFiles, wantValid: true, wantSingleton: true},
+		{desc: "files, one tab per folder the browser was opened at", kind: vibekit.TabKindFiles, wantValid: true},
 		{desc: "history", kind: vibekit.TabKindHistory, wantValid: true, wantSingleton: true},
 		{desc: "docs", kind: vibekit.TabKindDocs, wantValid: true, wantSingleton: true},
 		{desc: "plan, deleted from the client on 2026-08-25 and deliberately absent here", kind: "plan"},

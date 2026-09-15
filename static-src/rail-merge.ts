@@ -93,8 +93,13 @@ export function validateTurnIndex(raw: unknown): ValidatedIndex {
   return { turns: rows, dropped };
 }
 
-/** Sit an unreadable `ts` on a neighbour, so the row opens no seam of its own and
- *  the real pause between the rows around it survives. */
+/** Sit an unreadable `ts` on a neighbour rather than leaving it at the epoch, so the
+ *  decoded row carries a plausible start time.
+ *
+ *  NOTHING READS `TurnSummary.ts` any more: the rail's pause reporting was its one
+ *  consumer and it is deleted (2026-09). This stays because `ts` is still the wire's
+ *  field and answering for a malformed one is the validator's job, not because a surface
+ *  renders it. */
 function fillBadTimestamps(rows: TurnSummary[], bad: readonly number[]): void {
   if (bad.length === 0) {
     return;

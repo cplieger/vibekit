@@ -63,7 +63,11 @@ vi.mock("../actions/runs.js", () => ({
   answerRunInput: { dispatch: vi.fn() },
   continueRunStep: { dispatch: vi.fn() },
 }));
-vi.mock("../notify.js", () => ({ notifyIfHidden: vi.fn(), NOTIFY_TITLE: "Vibekit" }));
+vi.mock("../notify.js", () => ({
+  notifyIfHidden: vi.fn(),
+  closeNotificationsFor: vi.fn(() => Promise.resolve()),
+  NOTIFY_TITLE: "Vibekit",
+}));
 
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
@@ -89,7 +93,7 @@ import {
   dropTurnDecisions,
 } from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { notifyIfHidden } from "../notify.js";
+import { closeNotificationsFor, notifyIfHidden } from "../notify.js";
 
 const invalidate = vi.mocked(invalidateRun);
 const invalidateControls = vi.mocked(invalidateRunControls);
@@ -112,6 +116,7 @@ const launchingChat = vi.mocked(runChatID);
 const answer = vi.mocked(answerRunInput.dispatch);
 const waive = vi.mocked(continueRunStep.dispatch);
 const notify = vi.mocked(notifyIfHidden);
+const closeNotifications = vi.mocked(closeNotificationsFor);
 
 /** Every toast raised, in order, whatever its level. */
 function toasts(): string[] {
@@ -656,7 +661,10 @@ describe("a step's question", () => {
 
   it("pushes a notification, because this ask blocks a run indefinitely", () => {
     ask();
-    expect(notify).toHaveBeenCalledWith("Vibekit", "A workflow step is waiting for your answer");
+    expect(notify).toHaveBeenCalledWith("Vibekit", "A workflow step is waiting for your answer", {
+      kind: "run",
+      workflowID: "wf_1",
+    });
   });
 
   it("refetches nothing: the question is on no endpoint", () => {
@@ -736,13 +744,14 @@ describe("a step's question", () => {
     });
   });
 
-  it("retires the card on the settle frame", () => {
+  it("retires the card on the settle frame, and the banner tagged with the run", () => {
     send("run_input_settled", {
       workflow_id: "wf_1",
       ask_id: "notify:7",
       settled_by: "user",
     });
     expect(retireAsk).toHaveBeenCalledWith("wf_1", "notify:7", "user");
+    expect(closeNotifications).toHaveBeenCalledWith({ kind: "run", workflowID: "wf_1" });
     // Not an invalidation either: the run's own status never described the ask.
     expect(invalidate).not.toHaveBeenCalled();
   });

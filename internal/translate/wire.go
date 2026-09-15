@@ -53,8 +53,9 @@ type ACPToolCallContentBlock struct {
 // carry the same id.
 //
 // Kiro.HookAsk is non-empty only on the synthetic kind:"other" tool call KAS emits for
-// a pre-tool-use hook's ask gate — there is no ToolKind "hook" — so its presence, not
-// the kind, is what suppresses hook cards when hooks.showStatus is off.
+// a pre-tool-use hook's ask gate — KAS puts no ToolKind "hook" on the wire — so its
+// presence, not the kind, is what marks the ask card for the client. It gates nothing:
+// a hook that needs approval always reaches the transcript.
 type ACPKiroMeta struct {
 	Kiro ACPKiroBlock `json:"kiro"`
 }
@@ -82,6 +83,23 @@ type ACPKiroBlock struct {
 	// Unlike Title it is not model- or locale-composed, which is what makes it safe to
 	// key the internal-tool suppression on.
 	ToolID string `json:"toolId"`
+	// WorkflowID names the run a `run_workflow` invocation started, and on a REPLAY it is
+	// the only channel carrying it: the replayed `rawOutput` is the tool_result's prose
+	// sentence rather than the live object (measured, kiro-cli 2.21.4). Persisted on 207
+	// records over 797 session logs, every one of them a census miss until this field.
+	WorkflowID string `json:"workflowId"`
+	// ReplayID is the id KAS will report as this message's `messageId` when the session
+	// is REPLAYED, and it arrives on the LIVE frame ONLY — a replayed frame carries
+	// `messageId` instead and never this one (measured on kiro-cli 2.21.4: `<uuid>-say`
+	// under both spellings). The AGENT's id space like MessageID below, never vibekit's
+	// own Message.ID.
+	ReplayID string `json:"replayId"`
+	// UserMessageTag marks a user row KAS filed under a PROMPT rather than as steering.
+	// Read for its PRESENCE only and never parsed: 626 of 627 measured tags read
+	// `prompt_<uuid>` and the 627th was a probe's own messageId echoed back, so the value
+	// can be client-supplied text and a rule keyed on the prefix would rest on a shape KAS
+	// does not own.
+	UserMessageTag string `json:"userMessageTag"`
 	// MessageID and Timestamp are KAS's own identity for the message record a frame
 	// belongs to; Timestamp is RFC3339 with milliseconds.
 	//
@@ -130,7 +148,11 @@ func (b *ACPKiroBlock) UnmarshalJSON(data []byte) error {
 	}
 	// `preview` is skipped on purpose (it repeats the checkpoint URIs and adds both
 	// file bodies in full), so reporting it would be noise on every file write.
-	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](), "preview")
+	// `replay` is skipped because it is ALREADY READ, on ACPSessionUpdateBase's own
+	// inline kiro block, which is the struct the replay gate decodes; the census
+	// reports it only because its target type is this shadow, a different type. A
+	// second owner for one wire fact invites a handler to gate on the wrong one.
+	censusMeta("_meta.kiro", data, reflect.TypeFor[acpKiroBlockShadow](), "preview", "replay")
 	return nil
 }
 

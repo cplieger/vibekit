@@ -39,6 +39,7 @@ import { refreshForges, type ForgesListResponse } from "./forge-store.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { signal, effect, el, touch } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
 import { getToolsStatus } from "./actions/tools.js";
@@ -493,13 +494,16 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   li.classList.toggle("forge-account-row-error", !a.connected);
   li.classList.toggle("forge-account-row-missing", a.cli_missing === true);
 
-  // Top row: identity + actions.
-  const newTop = renderAccountTopRow(a);
+  // Top row: identity + actions, guarded because it holds Manage and Sign out and a
+  // probe confirming the account is still connected changes nothing here. Scoped to
+  // the top row: the repos disclosure below patches in place through
+  // `updateAccountReposDetails` whether or not the account's fields moved.
   const oldTop = li.querySelector<HTMLElement>(":scope > .forge-account-row-top");
-  if (oldTop !== null) {
-    oldTop.replaceWith(newTop);
-  } else {
-    li.appendChild(newTop);
+  if (oldTop === null) {
+    li.appendChild(renderAccountTopRow(a));
+    sigChanged(li, [wireSignature(a)]);
+  } else if (sigChanged(li, [wireSignature(a)])) {
+    oldTop.replaceWith(renderAccountTopRow(a));
   }
 
   // Repos details (only when connected and we have repo data).

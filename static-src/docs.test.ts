@@ -30,6 +30,19 @@ vi.mock("./editor-openers.js", () => ({
   openFileDiff: undefined,
   openFile: vi.fn(),
 }));
+
+const DOCS_PATH = "/api/workspace/kiro-docs";
+
+/** The page's two GETs, served off the one `apiGetTyped` mock. The inventory reply
+ *  goes through the caller's own decoder so a staged reply is held to the wire
+ *  shape; the hook list is answered empty. `mockReset` runs between tests, so
+ *  every case re-arms this. */
+function serveDocsPage(
+  inventory: Promise<unknown> | unknown = { docs: [], truncated: false },
+): (path: string, decode: (v: unknown) => unknown) => Promise<unknown> {
+  return (path, decode) =>
+    path === DOCS_PATH ? Promise.resolve(inventory).then(decode) : Promise.resolve({ hooks: [] });
+}
 // toggleDocsView RUNS its onShow callback, because that callback is what wires
 // the page (initDocsView) and loads it. A mock that swallowed it would leave the
 // SSE cases below asserting against a page that was never opened.
@@ -42,8 +55,8 @@ vi.mock("./tabs.js", () => ({
   openRunTab: undefined,
   setGitTab: undefined,
   setSettingsTab: undefined,
-  toggleGitView: undefined,
-  toggleSettingsView: undefined,
+  openGitView: undefined,
+  openSettingsView: undefined,
   // Reached through run-view.js → run-dots.js, the run tab's dot and its name.
   hasTab: undefined,
   tabIdFor: undefined,
@@ -830,13 +843,12 @@ describe("the Hooks tab: staying current", () => {
       configurable: true,
     });
 
-    const { apiGet, apiGetTyped } = await import("./api-client.js");
-    vi.mocked(apiGet).mockResolvedValue({ docs: [] });
-    vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
+    const { apiGetTyped } = await import("./api-client.js");
+    vi.mocked(apiGetTyped).mockImplementation(serveDocsPage());
     const { onSSE } = await import("./bus.js");
     // The three jobs the retired `loadDocsView` conflated, spelled apart: the
     // activation's one-shot init, the router's sub-tab correction, and the fetch.
-    // Not `showDocsView`, which only TOGGLES the tab.
+    // Not `toggleDocsView`, which only TOGGLES the tab.
     const { showDocsTab, forceDocsTab, refreshDocsView } = await import("./docs.js");
     showDocsTab();
     forceDocsTab("hooks");
@@ -852,15 +864,18 @@ describe("the Hooks tab: staying current", () => {
   it("refetches BOTH halves when a hook file changes underneath it", async () => {
     // Both, because a hand edit can change either: the body (the inventory's) or
     // the enabled flag (the endpoint's).
-    const { apiGet, apiGetTyped } = await import("./api-client.js");
+    const { apiGetTyped } = await import("./api-client.js");
     // Re-arm after clearing: this project's vitest resets the implementation with
     // the call log, and an unresolved fetch throws inside the handler.
-    vi.mocked(apiGet).mockClear().mockResolvedValue({ docs: [] });
-    vi.mocked(apiGetTyped).mockClear().mockResolvedValue({ hooks: [] });
+    vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage());
 
     sseHandlers.get("hooks_changed")?.();
 
-    expect(vi.mocked(apiGet)).toHaveBeenCalledWith("/api/workspace/kiro-docs", expect.anything());
+    expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith(
+      DOCS_PATH,
+      expect.anything(),
+      expect.anything(),
+    );
     expect(vi.mocked(apiGetTyped)).toHaveBeenCalledWith("/api/hooks", expect.anything());
   });
 
@@ -871,7 +886,7 @@ describe("the Hooks tab: staying current", () => {
     // The handler chains into loadHookState on success, so its fetch has to be
     // armed too or the reconcile refetch rejects after the assertion has passed.
     const { apiGetTyped } = await import("./api-client.js");
-    vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
+    vi.mocked(apiGetTyped).mockImplementation(serveDocsPage());
 
     _setDocsForTest([wsHookDoc()]);
     _setHooksForTest([wsHook({ enabled: true })]);
@@ -916,9 +931,8 @@ describe("showDocsTab and refreshDocsView", () => {
   }
 
   beforeEach(async () => {
-    const { apiGet, apiGetTyped } = await import("./api-client.js");
-    vi.mocked(apiGet).mockClear().mockResolvedValue({ docs: [] });
-    vi.mocked(apiGetTyped).mockClear().mockResolvedValue({ hooks: [] });
+    const { apiGetTyped } = await import("./api-client.js");
+    vi.mocked(apiGetTyped).mockClear().mockImplementation(serveDocsPage());
   });
 
   it("a re-activation leaves the reader's sub-tab where it was", async () => {
@@ -934,29 +948,36 @@ describe("showDocsTab and refreshDocsView", () => {
 
   it("the activation fetches nothing and the refresh fetches", async () => {
     const { showDocsTab, refreshDocsView } = await import("./docs.js");
-    const { apiGet } = await import("./api-client.js");
+    const { apiGetTyped } = await import("./api-client.js");
+    const inventoryReads = (): string[] =>
+      vi
+        .mocked(apiGetTyped)
+        .mock.calls.map((c) => c[0])
+        .filter((p) => p === DOCS_PATH);
 
     showDocsTab();
-    expect(apiGet).not.toHaveBeenCalled();
+    expect(inventoryReads()).toEqual([]);
 
     refreshDocsView();
-    expect(apiGet).toHaveBeenCalledWith("/api/workspace/kiro-docs", expect.anything());
+    expect(inventoryReads()).toEqual([DOCS_PATH]);
   });
 
   it("arms no placeholder for a category with no documents once the inventory answered", async () => {
     // `docs` initialises to `[]`, so an empty category and an unread one look
     // identical in the container — and a gap reaches this refresh with no tab switch
     // behind it, so without the answered flag it shimmers over a settled panel.
-    const { apiGet } = await import("./api-client.js");
+    const { apiGetTyped } = await import("./api-client.js");
     let settle = (_v: unknown): void => {
       /* replaced below */
     };
     // PENDING across the show delay, or the answer lands first and cancels the timer
     // whatever the arm decided — which is the shape that made this pass either way.
-    vi.mocked(apiGet).mockReturnValueOnce(
-      new Promise((resolve) => {
-        settle = resolve as (v: unknown) => void;
-      }),
+    vi.mocked(apiGetTyped).mockImplementation(
+      serveDocsPage(
+        new Promise((resolve) => {
+          settle = resolve as (v: unknown) => void;
+        }),
+      ),
     );
     vi.useFakeTimers();
     try {
@@ -969,7 +990,7 @@ describe("showDocsTab and refreshDocsView", () => {
       expect(steering).not.toBeNull();
       expect(steering?.querySelector(".docs-skeleton")).toBeNull();
     } finally {
-      settle({ docs: [] });
+      settle({ docs: [], truncated: false });
       vi.useRealTimers();
     }
   });

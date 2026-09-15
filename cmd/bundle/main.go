@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -42,7 +43,7 @@ func run() error {
 	if err := cleanOutputs(); err != nil {
 		return err
 	}
-	if err := bundleApp(); err != nil {
+	if err := bundleScripts(); err != nil {
 		return err
 	}
 	if err := bundleServiceWorker(); err != nil {
@@ -197,11 +198,28 @@ func pruneEmptyDirs(dir string) error {
 	return nil
 }
 
+// bundleScripts builds the page's two scripts in dependency order: the SSE worker
+// first, because the page constructs it by the content-hashed URL that build emits,
+// and that URL is injected into the app build as a compile-time constant.
+func bundleScripts() error {
+	workerURL, err := bundleSSEWorker()
+	if err != nil {
+		return err
+	}
+	return bundleApp(workerURL)
+}
+
+// workerURLDefine is the identifier the page reads the worker's URL through
+// (static-src/globals.d.ts declares it; static-src/sse-adapter.ts constructs the
+// worker from it).
+const workerURLDefine = "__SSE_WORKER_URL__"
+
 // bundleApp bundles the main client entry as ESM with code splitting: the dynamic
 // import() sites and the code they share with the entry become hashed chunks under
 // /chunks/. The entry keeps its stable /app.js name, so the HTML never needs rewriting
-// and cache correctness comes from the server's ETag revalidation.
-func bundleApp() error {
+// and cache correctness comes from the server's ETag revalidation. workerURL is the
+// site-root path of the SSE worker script, spliced in as a string literal.
+func bundleApp(workerURL string) error {
 	result := api.Build(api.BuildOptions{
 		EntryPoints:       []string{filepath.Join(srcDir, "app.ts")},
 		Outdir:            outDir,
@@ -210,6 +228,7 @@ func bundleApp() error {
 		Splitting:         true,
 		EntryNames:        "[name]",
 		ChunkNames:        "chunks/[name]-[hash]",
+		Define:            map[string]string{workerURLDefine: strconv.Quote(workerURL)},
 		MinifyWhitespace:  true,
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
@@ -219,6 +238,61 @@ func bundleApp() error {
 		Write:             true,
 	})
 	return buildErr("app", &result)
+}
+
+// bundleSSEWorker bundles sse-worker.ts as a single classic script (IIFE) at a
+// content-hashed name under /chunks/: the URL IS the worker's identity, so a tab of an
+// old bundle can never attach to a new bundle's worker, and the server's immutable
+// caching of /chunks/ applies. It returns the emitted site-root path, read back from
+// esbuild's metafile rather than predicted.
+func bundleSSEWorker() (string, error) {
+	result := api.Build(api.BuildOptions{
+		EntryPoints:       []string{filepath.Join(srcDir, "sse-worker.ts")},
+		Outdir:            outDir,
+		Bundle:            true,
+		Format:            api.FormatIIFE,
+		EntryNames:        "chunks/[name]-[hash]",
+		MinifyWhitespace:  true,
+		MinifyIdentifiers: true,
+		MinifySyntax:      true,
+		Sourcemap:         api.SourceMapLinked,
+		Charset:           api.CharsetUTF8,
+		LogLevel:          api.LogLevelWarning,
+		Metafile:          true,
+		Write:             true,
+	})
+	if err := buildErr("sse-worker", &result); err != nil {
+		return "", err
+	}
+	return emittedEntry(result.Metafile)
+}
+
+// emittedEntry reads the one JavaScript output that esbuild's metafile marks as the
+// entry and returns it as a site-root URL path.
+func emittedEntry(metafile string) (string, error) {
+	var meta struct {
+		Outputs map[string]struct {
+			EntryPoint string `json:"entryPoint"`
+		} `json:"outputs"`
+	}
+	if err := json.Unmarshal([]byte(metafile), &meta); err != nil {
+		return "", fmt.Errorf("sse-worker metafile: %w", err)
+	}
+	var entries []string
+	for out, info := range meta.Outputs {
+		if info.EntryPoint == "" || filepath.Ext(out) != ".js" {
+			continue
+		}
+		rel, err := filepath.Rel(outDir, out)
+		if err != nil {
+			return "", fmt.Errorf("sse-worker output %q is outside %s: %w", out, outDir, err)
+		}
+		entries = append(entries, "/"+filepath.ToSlash(rel))
+	}
+	if len(entries) != 1 {
+		return "", fmt.Errorf("sse-worker build emitted %d entry scripts, want 1: %q", len(entries), entries)
+	}
+	return entries[0], nil
 }
 
 // bundleServiceWorker bundles sw.ts as a single classic script (IIFE): app.ts registers

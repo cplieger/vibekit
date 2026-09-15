@@ -80,12 +80,22 @@ const POPUPS: readonly Popup[] = [
     rows: () => [
       span("pill-detail", "Ready"),
       el("span", "pill-sep"),
+      // The account row is the card's one LINK now, holding a
+      // `.pill-account-lines` stack rather than the plan and the meter as direct
+      // children. NO assertion in this file changes — every computed read is on the
+      // card or on `.pill-detail` — which is exactly why this builder had to move:
+      // left as it was it would keep PASSING while no longer modelling the shipped
+      // markup, and `mount()`'s own docstring is "Mount one card the way
+      // `static/index.html` does". It was missed by the id-based census because this
+      // fixture addresses the row by CLASS.
       (() => {
-        const account = el("div", "pill-account");
-        account.append(
+        const account = el("a", "pill-account");
+        const lines = el("span", "pill-account-lines");
+        lines.append(
           span("pill-account-plan", "Pro"),
           span("pill-account-meter", "412 / 1,000 credits"),
         );
+        account.append(lines);
         return account;
       })(),
     ],

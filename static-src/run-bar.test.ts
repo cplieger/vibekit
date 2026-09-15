@@ -77,7 +77,7 @@ vi.mock("./api-client.js", async () => ({
 }));
 
 const { initRunBar, _resetRunBarForTest } = await import("./run-bar.js");
-const { noteRunLive, noteRunSettled } = await import("./run-store.js");
+const { noteRunLive, noteRunSettled, invalidateRun } = await import("./run-store.js");
 const { setSessions, setActive } = await import("./store.js");
 const { pushDecision, dropDecisions } = await import("./decision-dock.js");
 const { apiGetOrError } = await import("./api-client.js");
@@ -256,7 +256,36 @@ describe("the run bar", () => {
     // rather than reporting "not started" for a run that has demonstrably started.
     expect(rowStates()).toEqual(["unknown"]);
     expect(rowText(".run-bar-state")).toEqual([""]);
-    expect(bar.querySelector(".run-bar-glyph")?.childElementCount).toBe(0);
+    // No `data-status` at all, which is how the shared mark rule says "reserved box,
+    // nothing to show" — the same answer a tab row gets for a run it has not fetched.
+    // Asserted as the ATTRIBUTE's absence rather than as an empty glyph: the glyph has
+    // no children in any state now that the mark is painted by CSS, so a child count
+    // would pass whatever status this row carried.
+    expect(bar.querySelector(".run-bar-glyph")?.hasAttribute("data-status")).toBe(false);
+  });
+
+  // The bar's glyph IS the workflow mark, so what it carries is the mark's own status
+  // vocabulary (`TabRunDotStatus`) rather than this row's `data-state`. The two differ
+  // for the state that matters most: `running` on the row, `working` on the mark, which
+  // is the tab strip's word. `outcome-mark.test.ts` pins that the two surfaces share
+  // one CSS rule; this pins that the bar feeds it the right value.
+  it("marks its glyph with the tab strip's status for every live state", async () => {
+    const c = chatID();
+    chats.push(c);
+    const [running, parked, asking] = [runID("mrun"), runID("mpark"), runID("mask")];
+    inspect.set(running, state({ runLabel: "a" }));
+    inspect.set(parked, state({ runLabel: "b", status: "paused" }));
+    inspect.set(asking, state({ runLabel: "c", status: "paused" }));
+    live(running, c);
+    live(parked, c);
+    live(asking, c);
+    pushRunAsk(c, asking);
+    await activate(c);
+
+    expect(rowStates()).toEqual(["running", "waiting", "input"]);
+    expect(
+      [...bar.querySelectorAll(".run-bar-glyph")].map((g) => g.getAttribute("data-status")),
+    ).toEqual(["working", "waiting", "input"]);
   });
 
   it("reports the step counter and the elapsed clock", async () => {
@@ -447,5 +476,136 @@ describe("the run bar", () => {
     // A chat switch is not, even though the count moves with it.
     await activate(second);
     expect(announce).not.toHaveBeenCalled();
+  });
+});
+
+// A live run re-renders this bar several times a minute, and re-inserting a node
+// restarts every animation in it and drops `:hover` and focus (`web.md`). Object
+// IDENTITY is the assertion in every case here: a rebuilt row is indistinguishable
+// from a patched one by content.
+describe("a render patches its rows rather than rebuilding them", () => {
+  /** Change what the run read answers, then make the bar re-read it the way a
+   *  `run_progress` frame does. */
+  async function advance(id: string, over: Record<string, unknown>): Promise<void> {
+    inspect.set(id, state(over));
+    invalidateRun(id);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  function parts(): { row: Element; glyph: Element; clock: Element } {
+    const row = bar.querySelector("li");
+    const glyph = bar.querySelector(".run-bar-glyph");
+    const clock = bar.querySelector(".run-bar-clock");
+    if (row === null || glyph === null || clock === null) {
+      throw new Error("the bar has no row");
+    }
+    return { row, glyph, clock };
+  }
+
+  it("keeps the row, its mark and its clock across a step advance", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("patch");
+    inspect.set(
+      id,
+      state({
+        root: {
+          nodeId: "r",
+          type: "sequence",
+          status: "running",
+          startedAt: new Date(Date.now() - 5000).toISOString(),
+          children: [
+            { nodeId: "a", type: "step", status: "completed" },
+            { nodeId: "b", type: "step", status: "running" },
+          ],
+        },
+      }),
+    );
+    live(id, c);
+    await activate(c);
+    expect(rowText(".run-bar-steps")).toEqual(["step 2 of 2"]);
+    const before = parts();
+
+    await advance(id, {
+      root: {
+        nodeId: "r",
+        type: "sequence",
+        status: "running",
+        startedAt: new Date(Date.now() - 5000).toISOString(),
+        children: [
+          { nodeId: "a", type: "step", status: "completed" },
+          { nodeId: "b", type: "step", status: "completed" },
+          { nodeId: "c", type: "step", status: "running" },
+        ],
+      },
+    });
+
+    // The text moved, so the render definitely ran.
+    expect(rowText(".run-bar-steps")).toEqual(["step 3 of 3"]);
+    const after = parts();
+    expect(after.row).toBe(before.row);
+    // The mark is what carries the beat, and the clock is the element the shared
+    // 1s tick holds a pointer to — replacing either is what the fix is about.
+    expect(after.glyph).toBe(before.glyph);
+    expect(after.clock).toBe(before.clock);
+  });
+
+  it("keeps the keyboard's place on a row whose state changed", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("focus");
+    inspect.set(id, state());
+    live(id, c);
+    await activate(c);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+    btn?.focus();
+    expect(document.activeElement).toBe(btn);
+
+    await advance(id, { status: "paused" });
+
+    expect(rowStates()).toEqual(["waiting"]);
+    expect(document.activeElement).toBe(btn);
+  });
+
+  // A patch is not licence to go stale: the mark is written from the run's state on
+  // every pass, on the SAME element, so the row that keeps its glyph still tells the
+  // truth about what the run is doing.
+  it("rewrites the mark on the element it kept", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("mark");
+    inspect.set(id, state());
+    live(id, c);
+    await activate(c);
+    const glyph = bar.querySelector(".run-bar-glyph");
+    expect(glyph?.getAttribute("data-status")).toBe("working");
+
+    await advance(id, { status: "paused" });
+    expect(bar.querySelector(".run-bar-glyph")).toBe(glyph);
+    expect(glyph?.getAttribute("data-status")).toBe("waiting");
+
+    pushRunAsk(c, id);
+    expect(glyph?.getAttribute("data-status")).toBe("input");
+  });
+
+  // The name is resolved at CLICK time rather than captured at mount, because the row
+  // outlives its first paint now: a run whose label arrives with its first fetch
+  // would otherwise open a tab called "Workflow run" for the rest of the session.
+  it("opens the tab under the label the run has NOW, not the one it was mounted with", async () => {
+    const c = chatID();
+    chats.push(c);
+    const id = runID("late-label");
+    live(id, c);
+    await activate(c);
+    // Nothing fetched yet, so the row carries the fallback name.
+    expect(rowText(".run-bar-name")).toEqual(["Workflow run"]);
+    const btn = bar.querySelector<HTMLButtonElement>(".run-bar-open");
+
+    await advance(id, { runLabel: "nightly sweep" });
+
+    expect(bar.querySelector(".run-bar-open")).toBe(btn);
+    btn?.click();
+    expect(openRunView).toHaveBeenCalledWith(id, "nightly sweep", c);
   });
 });

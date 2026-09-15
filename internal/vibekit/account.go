@@ -30,7 +30,13 @@ type AccountUsage struct {
 	// IsEnterprise reports whether the plan is an enterprise/managed plan.
 	IsEnterprise bool `json:"is_enterprise,omitempty"`
 	// OveragesEnabled reports whether overage billing is enabled.
-	OveragesEnabled bool `json:"overages_enabled,omitempty"`
+	//
+	// NEVER `omitempty`: the client DISPLAYS this state, and `omitempty` omits a
+	// false bool, so an absent field would be indistinguishable from "overages
+	// are off" — a reader cannot supply a fallback for a fact it is meant to
+	// report. Without the tag wiregen emits a REQUIRED TypeScript field, so the
+	// render branch is total. Same contract as EffectiveSettings' fields.
+	OveragesEnabled bool `json:"overages_enabled"`
 	// Stale is true when this snapshot was served from the last-known
 	// cache because a fresh fetch failed (no live bridge, rate limit).
 	Stale bool `json:"stale,omitempty"`

@@ -46,7 +46,7 @@ import type { Block, Message, RunStepTranscriptState, ToolCall } from "./types.j
  *  outstanding, and `unaddressable` means the SERVER refused the address with a 4xx,
  *  which only this side can distinguish from a transport failure. Both are members of
  *  the same union rather than flags beside it, so the consumer's branch is total. */
-export type StepReadState = "loading" | "unaddressable" | RunStepTranscriptState;
+type StepReadState = "loading" | "unaddressable" | RunStepTranscriptState;
 
 /** One cache entry: the verdict, plus the content when there is any. */
 export interface StepRead {

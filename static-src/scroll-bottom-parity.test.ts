@@ -160,7 +160,11 @@ afterAll(() => {
 /** The properties the control was brought into line with. Each one was a measured
  *  gap against `.rail-marker`; `color` is deliberately NOT among them — the marker
  *  rests at `--c-text-tertiary` because it is a passive mark, and this is a control
- *  the reader is meant to click. */
+ *  the reader is meant to click.
+ *
+ *  `min-height` is among them and is the one that carries the PAINT rather than the
+ *  target: both sides take `--rail-mark` and buy the tier's floor back with an expander,
+ *  so one row height and one target size hold down the whole column. */
 const ALIGNED = [
   "background-color",
   "border-top-color",
@@ -178,6 +182,27 @@ const ALIGNED = [
 function styles(el: Element): Record<string, string> {
   const cs = getComputedStyle(el);
   return Object.fromEntries(ALIGNED.map((p) => [p, cs.getPropertyValue(p)]));
+}
+
+/** A token in PX. An unregistered custom property's computed value is its own token
+ *  stream, so reading it back answers `1.5rem`; assigning it to a real length property is
+ *  what absolutizes it. */
+function tokenPx(host: HTMLElement, token: string): number {
+  const probe = document.createElement("span");
+  probe.style.cssText = `position:absolute;visibility:hidden;block-size:var(${token})`;
+  host.appendChild(probe);
+  const px = parseFloat(getComputedStyle(probe).blockSize);
+  probe.remove();
+  return px;
+}
+
+/** Two used values agree to the pixel. `toBeCloseTo`'s second argument is a digit count
+ *  rather than a tolerance, so a 0.5 there asks for something else entirely. */
+function near(actual: number, expected: number, what: string): void {
+  expect(
+    Math.abs(actual - expected),
+    `${what}: ${String(actual)} vs ${String(expected)}`,
+  ).toBeLessThanOrEqual(0.5);
 }
 
 /** The RESTING values, which is what the parity claim is about. The docked
@@ -205,9 +230,8 @@ describe("the reveal gate is live in this browser", () => {
 });
 
 describe("the docked control reads as a rail row", () => {
-  // Both POINTER TIERS, because `min-height` is one of the aligned properties and
-  // it is the one that resolves to a different number on each: 24px on a fine
-  // pointer and 44px on a coarse one, from `--hit-floor` on both sides.
+  // Both POINTER TIERS, because the marker's skin is tier-independent and a rule that
+  // reached for `--hit-floor` in any of these properties would diverge on the coarse one.
   for (const tier of ["fine", "coarse"] as const) {
     it(`resolves the rail marker's own values for every property that was aligned, on a ${tier} pointer`, async () => {
       document.documentElement.dataset["pointer"] = tier;
@@ -230,19 +254,35 @@ describe("the docked control reads as a rail row", () => {
     expect(styles(resume)).not.toEqual(styles(plain));
   });
 
-  it("sizes itself from the app's hit floor, which is the marker's box too", () => {
-    // Read against the TOKEN rather than against the marker, which the parity case
-    // above already covers: this is what makes that parity a statement about the
-    // app's floor instead of two rail rules agreeing with each other. On the COARSE
-    // tier, where the floor is 44px and a literal 1.5rem would not be.
+  it("paints the rail's row box and answers the tier's floor, on a coarse pointer", () => {
+    // Read against the TOKENS rather than against the marker, which the parity case above
+    // already covers: this is what makes that parity a statement about the column's own
+    // two numbers instead of two rules agreeing with each other. The COARSE tier, where
+    // the two differ by 20px and a rule reaching for the wrong one is visible.
     document.documentElement.dataset["pointer"] = "coarse";
     const { resume, marker } = build(LABEL_PX);
-    const probe = document.createElement("span");
-    probe.style.setProperty("min-height", "var(--hit-floor)");
-    area?.appendChild(probe);
-    const floor = getComputedStyle(probe).minHeight;
-    expect(getComputedStyle(resume).minHeight).toBe(floor);
-    expect(getComputedStyle(marker).minHeight).toBe(floor);
+    // Probed inside `#messages-wrap-outer`, which is where the gutter column's tokens are
+    // declared: a probe outside it inherits neither and reads 0.
+    const host = resume.parentElement;
+    if (host === null) {
+      throw new Error("no wrap-outer");
+    }
+    const mark = tokenPx(host, "--rail-mark");
+    const floor = tokenPx(host, "--hit-floor");
+    expect(floor - mark).toBe(20);
+
+    for (const [el, what] of [
+      [resume, "control"],
+      [marker, "marker"],
+    ] as const) {
+      const box = el.getBoundingClientRect();
+      near(box.height, mark, `${what} paints the row box`);
+      // The target, by hit test, because an expander contributes nothing to the rect.
+      const cx = box.left + box.width / 2;
+      const cy = box.top + box.height / 2;
+      expect(document.elementFromPoint(cx, cy - floor / 2 + 1), `${what} target top`).toBe(el);
+      expect(document.elementFromPoint(cx, cy + floor / 2 - 1), `${what} target bottom`).toBe(el);
+    }
   });
 });
 

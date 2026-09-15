@@ -38,7 +38,7 @@ type routeHandler interface {
 // and /api/command, it is the fan-out this package broadcasts a settings change
 // through, and it is what the shutdown path drains. *agent.Runtime satisfies it.
 //
-// 3 methods against a *agent.Runtime that exports well over a hundred. Exported
+// 4 methods against a *agent.Runtime that exports well over a hundred. Exported
 // methods on the concrete type this package must NOT reach — bridge
 // coordination, the utility runtime, the MCP registry, run hosting — are the
 // reason the narrow spelling matters here more than anywhere else in the file.
@@ -50,6 +50,8 @@ type chatEngine interface {
 	// Shutdown drains in-flight prompts and closes all bridges, bounded by ctx,
 	// and reports which wait ran out of budget.
 	Shutdown(ctx context.Context) error
+	// Epoch is the SSE hub's current epoch, stamped on the tabs envelope.
+	Epoch() string
 }
 
 // pushService is the push surface this package serves: mount the subscription

@@ -161,10 +161,27 @@
     border-color var(--dur-micro) var(--ease-standard);
 
   /* Scoped away from the selected tab: without it, hover repaints the selected
-     fill and the bar forgets which tab you are on. */
-  &:not(.active):hover {
-    background: var(--c-hover);
+     fill and the bar forgets which tab you are on. The wash is the
+     SELECTION-TINTED one every tab-shaped control shares (01-tokens.css), and
+     `any-hover` keeps a tap from latching it; touch takes the press from
+     03-base.css's floor, which reaches this one because it is a real button. */
+  @media (any-hover: hover) {
+    &:not(.active):hover {
+      background: var(--c-hover-select);
+      color: var(--c-text-primary);
+    }
+  }
+
+  /* The press takes the same tinted ladder, and `box-shadow: none` opts out of
+     03-base.css's universal wash for the reason 70-selection.css states for the
+     SELECTED segment: this control reaches that floor (it is a real button, unlike
+     a tab row), so without the opt-out a press would step the tinted rung and the
+     achromatic wash at once — two steps on two ramps. Ungated, deliberately: press
+     is the channel a touchscreen has instead of hover. */
+  &:not(.active):active {
+    background: var(--c-press-select);
     color: var(--c-text-primary);
+    box-shadow: none;
   }
 
   /* Selected: 70-selection.css. This was the one segmented control that marked
@@ -405,6 +422,7 @@
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-secondary);
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -756,6 +774,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   text-align: center;
+  -webkit-user-select: all;
   user-select: all;
 }
 
@@ -1873,17 +1892,6 @@ select.native-rule-effect:focus-visible {
 
 /* --- History (full-page table): keyboard rows, skeleton, error --- */
 
-/* The title block restores the chat on click/Enter/Space (role="button"). */
-[id="history-table"] .list-row-title {
-  cursor: pointer;
-  border-radius: var(--r);
-}
-
-[id="history-table"] .list-row-title:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-offset-inset);
-}
-
 /* Load-failure state: message + Retry, so it's never a dead end. */
 .history-error {
   display: flex;
@@ -1907,41 +1915,4 @@ select.native-rule-effect:focus-visible {
 
 .history-skel-date {
   block-size: 0.75rem;
-}
-
-/* Deep-linked control (?highlight=<id> / openSetting) — settings-highlight.ts.
-   Two accent rings that fade, so the mark reads on a control of any shape
-   (checkbox, select, text input) without moving it: outline draws outside the
-   box and takes no layout, unlike a border. `outline` rather than
-   `box-shadow` so it also traces a non-rectangular control faithfully. */
-@keyframes setting-flash {
-  0%,
-  100% {
-    outline-color: transparent;
-    background-color: transparent;
-  }
-
-  15%,
-  55% {
-    outline-color: var(--c-accent);
-    background-color: var(--c-selected-bg);
-  }
-}
-
-.setting-flash {
-  border-radius: var(--r-sm);
-  outline: 2px solid transparent;
-  outline-offset: 3px;
-  animation: setting-flash 1.6s var(--ease-standard);
-}
-
-/* A flash is a "look here" cue, not information: a reader who has asked for no
-   motion still gets the scroll, and a steady ring instead of a pulsing one.
-   The class is stripped on a timer as well as on animationend, so suppressing
-   the animation here cannot leave the ring on permanently. */
-@media (prefers-reduced-motion: reduce) {
-  .setting-flash {
-    outline-color: var(--c-accent);
-    animation: none;
-  }
 }

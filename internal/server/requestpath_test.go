@@ -8,7 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // The fixture mirrors the real mount shape ListenAndServe builds: the SPA/static

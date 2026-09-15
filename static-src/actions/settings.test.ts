@@ -55,37 +55,61 @@ describe("saveSteering", () => {
   });
 });
 
+// The action's argument became `{ render, prev }` — an INJECTED render callback plus
+// the whole VERDICT it replaces — where it used to be two DOM elements it wrote
+// directly. Two reasons, and both are asserted below. `renderIdentity` is the one
+// writer of the auth row AND its separator now (two elements, one fact), so an
+// action writing `stAuth.textContent` itself would put "not signed in" into a row
+// that stays hidden; and carrying the VERDICT rather than the address is what makes
+// all THREE arms restorable, since the address cannot tell `signed_out` from
+// `unavailable` — both render empty.
+//
+// Asserted through a `vi.fn()` render callback rather than two elements: the
+// callback IS the contract, and reading the DOM would be testing `settings.ts`'s
+// writer from inside this module's tests.
 describe("logout", () => {
-  it("POSTs to /api/logout and applies optimistic UI", async () => {
+  it("POSTs to /api/logout and renders the signed-out verdict optimistically", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    const emailEl = document.createElement("span");
-    emailEl.textContent = "user@test.com";
-    const stAuthEl = document.createElement("span");
-    stAuthEl.textContent = "signed in";
+    const render = vi.fn();
 
     const { logout } = await import("./settings.js");
-    await logout.dispatch({ emailEl, stAuthEl });
+    await logout.dispatch({ render, prev: { state: "signed_in", email: "user@test.com" } });
 
-    expect(emailEl.textContent).toBe("");
-    expect(stAuthEl.textContent).toBe("not signed in");
+    expect(render).toHaveBeenCalledWith({ state: "signed_out" });
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/logout",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
-  it("rolls back optimistic UI on failure", async () => {
+  it("rolls back to the verdict it replaced on failure", async () => {
     mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
-    const emailEl = document.createElement("span");
-    emailEl.textContent = "user@test.com";
-    const stAuthEl = document.createElement("span");
-    stAuthEl.textContent = "signed in";
+    const render = vi.fn();
+    const prev = { state: "signed_in", email: "user@test.com" } as const;
 
     const { logout } = await import("./settings.js");
-    await logout.dispatch({ emailEl, stAuthEl });
+    await logout.dispatch({ render, prev });
 
-    expect(emailEl.textContent).toBe("user@test.com");
-    expect(stAuthEl.textContent).toBe("signed in");
+    expect(render).toHaveBeenNthCalledWith(1, { state: "signed_out" });
+    expect(render).toHaveBeenLastCalledWith(prev);
+  });
+
+  it("restores an UNAVAILABLE verdict rather than signed_out", async () => {
+    // THE ARM THE ADDRESS-CARRYING OP COULD NOT EXPRESS, and the reason the whole
+    // verdict travels. `unavailable` and `signed_out` both render an EMPTY address,
+    // so an op holding `emailEl.textContent` restored `""` for either and the old
+    // rollback then guessed `"not signed in"` from it — writing that where "unknown"
+    // had been. A refused logout from an unavailable verdict must restore the
+    // unavailable verdict.
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "nope" }), { status: 500 }));
+    const render = vi.fn();
+    const prev = { state: "unavailable", reason: "whoami unreachable" } as const;
+
+    const { logout } = await import("./settings.js");
+    await logout.dispatch({ render, prev });
+
+    expect(render).toHaveBeenLastCalledWith(prev);
+    expect(render).not.toHaveBeenLastCalledWith({ state: "signed_out" });
   });
 });
 

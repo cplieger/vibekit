@@ -1,5 +1,5 @@
 // Unit tests for tool-card.ts pure functions (extractSubtitle, mcpHue).
-import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import fc from "fast-check";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
@@ -37,25 +37,29 @@ vi.mock("./editor-openers.js", () => ({
   },
 }));
 
-// Mock tool-group.ts to avoid its transitive DOM dependencies.
-vi.mock("./tool-group.js", () => ({
-  trackInProgress: () => {
-    /* noop */
-  },
+// The bulk a previewed card fetches on first open, plus one line per request so a
+// case can assert that ONE fetch serves every deferred piece. Hoisted because the
+// factory below is lifted above every module-scope binding.
+const stubBulk = vi.hoisted(() => ({
+  output: "",
+  diffs: [] as { path: string; old_text?: string; new_text: string }[],
+  calls: [] as string[],
 }));
-
-// The bulk a previewed card fetches on first open. Hoisted because the factory below
-// is lifted above every module-scope binding.
-const stubBulk = vi.hoisted(() => ({ output: "" }));
 vi.mock("./tool-bulk.js", () => ({
-  toolCallBulk: () => Promise.resolve({ id: "stub", output: stubBulk.output, output_spans: [] }),
-  forgetToolCallBulk: () => {
-    /* noop */
+  toolCallBulk: (chatID: string, toolCallID: string) => {
+    stubBulk.calls.push(`${chatID}/${toolCallID}`);
+    return Promise.resolve({ output: stubBulk.output, outputSpans: [], diffs: stubBulk.diffs });
   },
 }));
 
-const { extractSubtitle, mcpHue, buildToolCard, expandToolDetails, refreshToolDisclosure } =
-  await import("./tool-card.js");
+const {
+  extractSubtitle,
+  mcpHue,
+  buildToolCard,
+  expandToolDetails,
+  refreshToolDisclosure,
+  insertDiffPreview,
+} = await import("./tool-card.js");
 
 // ---------------------------------------------------------------------------
 // extractSubtitle — table-driven
@@ -801,6 +805,30 @@ describe("tool card: whole-header disclosure", () => {
     card.remove();
   });
 
+  it("puts the PATH in the hover text and the action in the accessible name", () => {
+    // Two channels, two facts, and the split is what makes the app-wide two-line
+    // tooltip cap lossless here (`tooltip-size.test.ts`): the chip shows the
+    // basename, so the tooltip's job is the path, and a leading `Open the diff`
+    // line left the path one line of the two — which clips ~19% of real paths.
+    // The action then has to live in the NAME, or clicking a filename says
+    // nothing about opening a diff on the one channel that is always read.
+    const card = buildToolCard({
+      id: "hdr5",
+      output: "wrote 3 lines\n",
+      title: "fsWrite",
+      kind: "write",
+      status: "completed",
+      input: { path: "/workspace/vibekit/static-src/fundamentals/turn-footer.ts" },
+      live: false,
+    });
+    const link = card.querySelector<HTMLElement>(".tool-file-link")!;
+
+    expect(link.getAttribute("data-tooltip")).toBe(
+      "/workspace/vibekit/static-src/fundamentals/turn-footer.ts",
+    );
+    expect(link.getAttribute("aria-label")).toBe("Open the diff for turn-footer.ts");
+  });
+
   it("a claim-only card has no toggle and its header stays inert", () => {
     // `readFile` resolves to kind `read`, whose depth 1 is "none": no toggle and
     // no details region, so the header must not become a control that opens an
@@ -1091,10 +1119,28 @@ describe("a card with nothing to disclose", () => {
     expect(card.querySelector(".tool-disclosure")).not.toBeNull();
   });
 
-  it("has no chevron on a previewed call whose cut was DIFFS only", () => {
+  it("goes bare when an OUTPUT-cut previewed call carries no chat id either", () => {
+    // The other member, behind the same conjunct: one chat-id condition over the whole
+    // table rather than one per member, so the output arm cannot drift from the diff
+    // arm. This omission predates the table — HEAD's `hasFull && outputBytes > 0`
+    // never consulted the chat id either — so the fix closes both.
+    const card = buildToolCard({
+      id: "bare-full-out-nochat",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+      hasFull: true,
+      outputBytes: 48_000,
+    });
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+  });
+
+  it("keeps the chevron on a previewed call whose cut was DIFFS only", () => {
     // `hasFull` fires when the store cut anything at all, and this cut was DIFFS
-    // only: `fetchOutputBulk` returns early on an empty bulk output, so the region
-    // can never fill.
+    // only, so `outputBytes` is absent and no output arm holds. The DIFF is what
+    // opening this card loads, and a bare card has nothing to open — which is the
+    // whole reason the deferred pieces contribute their own disclosable arm.
     const card = buildToolCard({
       id: "bare-full-diffs",
       title: "fsWrite",
@@ -1102,26 +1148,42 @@ describe("a card with nothing to disclose", () => {
       status: "completed",
       live: false,
       hasFull: true,
-      diffCount: 3,
       chatID: "c1",
     });
-    expect(card.querySelector(".tool-disclosure")).toBeNull();
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
   });
 
-  it("still offers that card's diffs, which are a SIBLING of the region", () => {
-    // What the narrowing must not cost: the diffs the preview dropped are exactly
-    // what the reader wanted, and they were never inside the disclosure.
+  it("goes bare when the previewed call carries NO CHAT ID, so nothing can be fetched", () => {
+    // The same diffs-only cut as the case above, one field short. The fetch guard is
+    // `detailsBody`'s — an empty `chatID` returns before the request — so a card with
+    // no chat id can reach neither deferred piece, and keeping its chevron would open
+    // onto a region that can never fill. `run-step-blocks.ts` calls
+    // `toolCardOptsFor(tc, true)` with no chat id, which is what makes this reachable.
     const card = buildToolCard({
-      id: "bare-full-diffs-ctl",
+      id: "bare-full-nochat",
       title: "fsWrite",
       kind: "edit",
       status: "completed",
       live: false,
       hasFull: true,
-      diffCount: 3,
+    });
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
+  });
+
+  it("goes bare when the previewed call is not an EDIT, so no piece is deferred", () => {
+    // The control for the case above: `hasFull` with no `outputBytes` on a kind
+    // whose depth 1 is not a diff leaves both members answering false, so the card
+    // is bare exactly as it was before the table existed.
+    const card = buildToolCard({
+      id: "bare-full-search",
+      title: "grepSearch",
+      kind: "search",
+      status: "completed",
+      live: false,
+      hasFull: true,
       chatID: "c1",
     });
-    expect(card.querySelector('[data-reveal="diff"]')?.textContent).toBe("Show 3 diffs");
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
   });
 
   it("gets its chevron BACK when output lands, and it toggles", () => {
@@ -1216,6 +1278,210 @@ describe("a card with nothing to disclose", () => {
     // absent node would otherwise pass before the paint it is meant to refuse.
     await new Promise((r) => setTimeout(r, 0));
     expect(card.querySelector(".tool-output pre")).toBeNull();
+    card.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A card whose region the reader had open is BUILT open, not opened afterwards.
+//
+// Same rule as the tool group's, one level down: the primitive commits the closed
+// height before it writes the change, so creating the region closed and opening it
+// in the same task animates the reveal exactly as loudly as opening it a frame
+// later. The population is every path that re-mounts a card whose region was
+// already open — a window drop and re-mount in the transcript, and the run tab's
+// per-frame rebuild of a step's card.
+//
+// The stylesheet is mounted because the height transition lives on
+// `.uip-disclosure-region` in the ui-primitives base; without it neither case below
+// can fail. The second case is the control that proves it is in force.
+// ---------------------------------------------------------------------------
+
+describe("a card built with its details open", () => {
+  let style: HTMLStyleElement;
+  beforeAll(async () => {
+    const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
+    style = mountAppCSS();
+  });
+  afterAll(() => {
+    style.remove();
+  });
+
+  const opts = {
+    id: "tc-open",
+    title: "Execute",
+    kind: "execute",
+    status: "completed" as const,
+    live: false,
+    output: "hello from the build\n",
+  };
+
+  it("paints its body and animates nothing", () => {
+    const card = buildToolCard({ ...opts, detailsOpen: true });
+    document.body.appendChild(card);
+    const details = card.querySelector<HTMLElement>(".tool-details");
+
+    // The deferred builder ran at construction, so the region has content before any
+    // click — which is what makes `open: true` honest rather than an empty reveal.
+    expect(card.querySelector(".tool-output pre")?.textContent).toContain("hello from the build");
+    expect(details?.getAttribute("aria-hidden")).toBe("false");
+    // `applyHeight(true, false)` clears the height instead of tweening to it.
+    expect(details?.style.height).toBe("");
+    expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("true");
+    expect(details?.getAnimations()).toHaveLength(0);
+    card.remove();
+  });
+
+  it.each([true, false])("leaves a failed call's details CLOSED, live=%s", (live) => {
+    // A failure is not a reason to be born open, on either side of the live/replay
+    // split: opening one here would expand every failed call in a reopened chat, and
+    // the expand-on-fail courtesy is the live FLIP's (`expandToolDetails`) rather than
+    // the build's. Both inputs in one case because the claim is that live-ness does not
+    // enter this decision at all.
+    const card = buildToolCard({ ...opts, live, status: "failed" });
+    document.body.appendChild(card);
+
+    expect(card.querySelector(".tool-details")?.getAttribute("aria-hidden")).toBe("true");
+    expect(card.querySelector(".tool-disclosure")?.getAttribute("aria-expanded")).toBe("false");
+    // The deferred body never ran, which is what makes the close real rather than a
+    // hidden region already holding a built output dump.
+    expect(card.querySelector(".tool-output pre")).toBeNull();
+    card.remove();
+  });
+
+  it("still ANIMATES a region opened by an EVENT after the mount", () => {
+    // `expandToolDetails` stays the path for a call that fails or is refused
+    // mid-stream, and that reveal must keep its animation.
+    const card = buildToolCard({ ...opts });
+    document.body.appendChild(card);
+    const details = card.querySelector<HTMLElement>(".tool-details");
+    expect(details?.getAnimations()).toHaveLength(0);
+
+    expandToolDetails(card);
+    // Two, because `.tool-details` transitions height AND opacity — asserted as
+    // non-empty rather than as a count, so adding or dropping one animated property
+    // is not a failure of the claim this control is making.
+    expect(details?.getAnimations().length).toBeGreaterThan(0);
+    card.remove();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred content: what the transcript dropped, loaded when the reader OPENS
+// the card.
+//
+// On open and never on mount, which is the argument the fetch button these cases
+// replace was making: a card nobody opened costs one claim line. ONE bulk request
+// serves every dropped piece, because `toolCallBulk` answers all of them.
+// ---------------------------------------------------------------------------
+
+describe("deferred content a previewed card loads on open", () => {
+  const DIFF = { path: "src/auth.go", old_text: "before\n", new_text: "after\n" };
+
+  // The stub is module state and one case above leaves an output in it, so every
+  // field is restored rather than only the ones a case sets.
+  beforeEach(() => {
+    stubBulk.output = "";
+    stubBulk.diffs = [];
+    stubBulk.calls.length = 0;
+  });
+
+  /** A previewed EDIT card whose diffs the transcript dropped: `hasFull` with no
+   *  resting diff of its own, which is the shape the diff member answers for. */
+  const diffsOnly = {
+    title: "fsWrite",
+    kind: "edit",
+    status: "completed" as const,
+    live: false,
+    hasFull: true,
+    chatID: "c1",
+  };
+
+  /** A macrotask, so the bulk's resolved `.then` has certainly run: asserting on
+   *  an absent node would otherwise pass before the paint it is meant to see. */
+  const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 0));
+
+  it("issues NO request for a card nobody opens", async () => {
+    const card = buildToolCard({ ...diffsOnly, id: "def-no-open" });
+    document.body.appendChild(card);
+    await settle();
+    expect(stubBulk.calls).toEqual([]);
+    expect(card.querySelector(".tool-diff-preview")).toBeNull();
+    card.remove();
+  });
+
+  it("inserts the diff BEFORE the details region on open, and it survives a close", async () => {
+    stubBulk.diffs = [DIFF];
+    const card = buildToolCard({ ...diffsOnly, id: "def-open-diff" });
+    document.body.appendChild(card);
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
+
+    toggle.click();
+    await settle();
+
+    const preview = card.querySelector(".tool-diff-preview");
+    expect(preview).not.toBeNull();
+    // An edit's diff is its depth-1 claim, so it lands where every other edit
+    // card's does: in the card's resting state, above the region.
+    expect(preview?.nextElementSibling?.classList.contains("tool-details")).toBe(true);
+
+    // Closing the box is not un-loading the diff: it was never inside the region.
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
+    card.remove();
+  });
+
+  it("fetches ONE bulk for a card whose output AND diff were both dropped", async () => {
+    stubBulk.output = "the whole of it\n";
+    stubBulk.diffs = [DIFF];
+    const card = buildToolCard({ ...diffsOnly, id: "def-both", outputBytes: 48_000 });
+    document.body.appendChild(card);
+
+    card.querySelector<HTMLElement>(".tool-disclosure")!.click();
+    await settle();
+
+    // One request, not one per piece: the bulk carries both, and a second would be
+    // a second megabyte on the wire for an answer already in hand.
+    expect(stubBulk.calls).toEqual(["c1/def-both"]);
+    expect(card.querySelector(".tool-output pre")?.textContent).toContain("the whole of it");
+    expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
+    card.remove();
+  });
+
+  it("leaves exactly ONE preview when an update lands its diff mid-flight", async () => {
+    // The bulk is applied after an await, so a `tool_call_update` carrying diffs can
+    // insert the preview between the open and the answer. `messages-tools.ts`'s
+    // `applyDiffUpdate` refuses a second insert on its own side and inserts through
+    // this same exported function, which is why calling it directly IS that path for
+    // the purpose of this claim; without the table's own presence check the card ends
+    // up holding two mini-diffs for one call.
+    stubBulk.diffs = [DIFF];
+    const card = buildToolCard({ ...diffsOnly, id: "def-double-insert" });
+    document.body.appendChild(card);
+
+    card.querySelector<HTMLElement>(".tool-disclosure")!.click();
+    insertDiffPreview(card, DIFF.path, { oldText: DIFF.old_text, newText: DIFF.new_text });
+    expect(card.querySelectorAll(".tool-diff-preview")).toHaveLength(1);
+
+    await settle();
+
+    expect(card.querySelectorAll(".tool-diff-preview")).toHaveLength(1);
+    card.remove();
+  });
+
+  it("adopts on a card built ALREADY open, which never gets a click", async () => {
+    // `detailsOpen` is the transcript's window drop and re-mount, and the run tab's
+    // per-frame rebuild: the reader had this region open, so the load is theirs.
+    stubBulk.diffs = [DIFF];
+    const card = buildToolCard({ ...diffsOnly, id: "def-born-open", detailsOpen: true });
+    document.body.appendChild(card);
+    // The request went out at CONSTRUCTION, with no click anywhere: how many the
+    // card issues is the case above's claim, not this one's.
+    expect(stubBulk.calls[0]).toBe("c1/def-born-open");
+
+    await settle();
+    expect(card.querySelector(".tool-diff-preview")).not.toBeNull();
     card.remove();
   });
 });

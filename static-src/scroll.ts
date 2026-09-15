@@ -4,9 +4,11 @@
 //               reader gesture enters it, recognised by its INPUT rather than by
 //               where the position ended up (see `readerInControl`).
 // `overflow-anchor: none` on the scroller (css/13-messages.css) leaves this module
-// owning every mutation: Safari implements no `overflow-anchor`, and where it is
-// supported it queues its own adjustment on top of this one, so the reader moves
-// roughly twice as far.
+// owning every mutation, and the reason is now the SECOND half of what this comment
+// used to give: native anchoring queues its own adjustment on top of this one, so
+// the reader moves roughly twice as far. The first half ("Safari implements no
+// `overflow-anchor`") expired with Safari 27, which ships it — so the declaration is
+// a deliberate opt-out on every engine rather than a Safari accommodation.
 
 import { el } from "@cplieger/reactive";
 import { loadMoreSkeleton } from "./skeleton.js";

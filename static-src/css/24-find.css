@@ -89,8 +89,20 @@
   inset-block-start: var(--sp-3);
   inset-inline-end: var(--sp-3);
   display: flex;
-  align-items: center;
-  gap: var(--sp-1);
+
+  /* A COLUMN, because the note is a second line under the controls. It carries
+     no `gap` for `.page-find`'s reason one section down — a column gap applies
+     whatever the note's height is, which is what made an empty box 4px taller
+     than its own contents — so the row's own `align-items`/`gap` live on
+     `.chat-find-row` and the note pays for its spacing with its own margin. */
+  flex-direction: column;
+
+  /* A MAX rather than `.page-find`'s fixed `inline-size`, and the divergence is
+     deliberate: the page box always holds a sentence, so pinning it at 24rem is
+     right there. This one is usually a `3 of 17` counter between two buttons, so
+     a fixed width would pad it out permanently; a max lets it size to its content
+     and only bounds it when the note arrives and has to wrap. */
+  max-inline-size: min(24rem, calc(100vw - 2 * var(--sp-3)));
 
   /* THE TWO INLINE INSETS ARE DIFFERENT ON PURPOSE, and the reason is that the
      bar's two edge children have different heights. The row's height is set by
@@ -104,6 +116,12 @@
      below it, which is the mismatch this reads as. `--sp-1` at both makes it
      15px on all three, at any `--btn-h` (the mobile 2.75rem included, which is
      why that block needs no second answer).
+
+     THAT ARITHMETIC IS THE ROW'S, NOT THE BOX'S, now that the box is a column:
+     the block-END padding sits under the NOTE, so the × is 15px from the row's
+     own lower edge and the note is what the box's bottom padding separates from
+     its border. While the note is empty it takes no height, so the measurement a
+     reader sees is unchanged.
 
      The INPUT gets the wider `--sp-2` at the start for the same reason read the
      other way: its own box is shorter than the row, so `align-items: center`
@@ -148,6 +166,10 @@
   inline-size: min(24rem, calc(100vw - 2 * var(--sp-3)));
 }
 
+/* The controls row of BOTH find bars: the transcript's is byte-identical to the
+   page box's, so it joins this selector list rather than getting a second rule
+   the two could drift apart in. */
+.chat-find-row,
 .page-find-row {
   display: flex;
   align-items: center;
@@ -201,9 +223,10 @@
   }
 }
 
-/* The note reports what was NOT read (a truncated cross-chat scan) or how much
-   of a list is showing. Tertiary ink because it describes the results rather
-   than being one — the same correction `.fb-search-note` needed.
+/* The note reports what was NOT read — a truncated cross-chat scan, an in-chat
+   answer cut at the hit cap — or how much of a list is showing. Tertiary ink
+   because it describes the results rather than being one, the same correction
+   `.fb-search-note` needed.
 
    IT TAKES NO HEIGHT WHILE IT SAYS NOTHING, and it used to take 20 of the box's
    66px. A `min-block-size: 1rem` plus the column's gap reserved a line for a
@@ -262,6 +285,7 @@
    only a WRAP change re-runs the animation. Reduced motion is covered by
    40-a11y.css's global duration override, and nothing here waits on
    transitionend. */
+.chat-find-note,
 .page-find-note {
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
@@ -277,6 +301,7 @@
 }
 
 /* Shown: the note's own height, plus the gap the column no longer carries. */
+.chat-find-note:not(:empty),
 .page-find-note:not(:empty) {
   block-size: auto;
   margin-block-start: var(--sp-1);

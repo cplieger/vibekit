@@ -180,8 +180,8 @@ describe("send-state refused-send face", () => {
   });
 
   it("outranks streaming, exactly like the agent-down rung", () => {
-    // The store may read busy for the holder's own turn (SSE turn_state); the
-    // refusal face must still win, or the reader never learns their send was
+    // The store may read busy for the holder's own turn (the connect's `busy_chats`);
+    // the refusal face must still win, or the reader never learns their send was
     // refused.
     const id = "c1";
     setSessions([makeSession(id)]);

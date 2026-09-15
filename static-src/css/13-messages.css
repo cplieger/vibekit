@@ -19,11 +19,24 @@
   --rail-inset-end: calc(50% - var(--content-max-w) / 2 - var(--rail-w) - var(--sp-2));
   --rail-inset-start: calc(100% - var(--rail-inset-end) - var(--rail-w));
 
+  /* THE PAINTED BOX of a row in that column, and deliberately not `--hit-floor`:
+   * Apple's HIG and WCAG 2.5.8 size a tappable AREA, not the ink in it, so both
+   * occupants paint this and buy the tier's floor back with an expander. One value at
+   * both tiers, the fine floor, so only the coarse tier moves. Declared here rather
+   * than on the rail because the docked control is the rail's SIBLING and would not
+   * inherit it. */
+  --rail-mark: 1.5rem;
+
   /* The track's reserved FOOT, read by the rail and by the control that docks in
-   * it. The control sits at `--sp-3` and is `--hit-floor` tall, so without this
-   * the last marker lands under it; reserved UNCONDITIONALLY, because the control
-   * appears only once the reader has scrolled up and a marker may not move then. */
-  --rail-foot: calc(var(--sp-3) + var(--hit-floor) + var(--sp-2));
+   * it. Without it the last marker lands under the control; reserved UNCONDITIONALLY,
+   * because the control appears only once the reader has scrolled up and a marker may
+   * not move then.
+   *
+   * It clears the control's TARGET rather than its painted box, which is what the
+   * half-sum spells: the control sits at `--sp-3`, paints `--rail-mark` and its target
+   * overhangs that by `(--hit-floor - --rail-mark) / 2` on each side. The two are equal
+   * on a fine pointer, so this is the old `--sp-3 + --hit-floor + --sp-2` there. */
+  --rail-foot: calc(var(--sp-3) + (var(--hit-floor) + var(--rail-mark)) / 2 + var(--sp-2));
 }
 
 /* THE HELPER OWNS EVERY MUTATION. Native scroll anchoring is off deliberately,
@@ -381,7 +394,7 @@
 
     & code {
       font-family: var(--font-mono);
-      background: var(--c-code-bg);
+      background: var(--c-well);
       padding: 0.125rem var(--sp-1);
       border-radius: var(--r-sm);
       font-size: 0.9em;
@@ -407,7 +420,7 @@
 
     /* No radius here: `.code-wrap` draws the box this sits in. */
     & :where(pre) {
-      background: var(--c-code-bg);
+      background: var(--c-well);
       padding: var(--sp-3);
       overflow-x: auto;
       margin: var(--sp-2) 0;
@@ -749,14 +762,20 @@
   gap: 0.3rem;
   list-style: none;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   font-style: italic;
   padding: var(--sp-1) 0;
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
-.reasoning-summary:hover {
-  color: var(--c-text-primary);
+/* Gated for the reason 14-tools.css `.tool-group-header` states: the summary is a
+ * disclosure trigger, so on a touch device the finger is still on it when the tap
+ * ends and `:hover` latches until the next tap elsewhere. */
+@media (any-hover: hover) {
+  .reasoning-summary:hover {
+    color: var(--c-text-primary);
+  }
 }
 
 /* The label holds its width so the COUNT is what gives on a narrow row: the
@@ -825,6 +844,7 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
   font-variant-numeric: tabular-nums;
@@ -842,9 +862,13 @@
   display: none;
 }
 
-.code-refs-summary:hover {
-  color: var(--c-text-secondary);
-  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+/* Gated for `.reasoning-summary`'s reason: a disclosure trigger latches its hover
+ * after a tap. */
+@media (any-hover: hover) {
+  .code-refs-summary:hover {
+    color: var(--c-text-secondary);
+    border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+  }
 }
 
 .code-refs-summary:focus-visible {
@@ -999,13 +1023,18 @@
   padding: var(--sp-2) 0;
   list-style: none;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   font-size: var(--fs-sm);
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
-.compaction-head:hover {
-  color: var(--c-text-primary);
+/* Gated for `.reasoning-summary`'s reason: a disclosure trigger latches its hover
+ * after a tap. */
+@media (any-hover: hover) {
+  .compaction-head:hover {
+    color: var(--c-text-primary);
+  }
 }
 
 .compaction-icon {
@@ -1016,18 +1045,6 @@
 
 .compaction-label {
   font-style: italic;
-}
-
-.compaction-note {
-  font-size: var(--fs-xs);
-  font-style: normal;
-}
-
-/* The row's `gap` supplies the separator's leading space and this supplies its
- * trailing one, so the dot sits centred between the label and the toggle word.
- * A text space would be the font's, which is narrower than the gap. */
-.compaction-dot {
-  margin-inline-end: var(--sp-2);
 }
 
 .compaction[open] .compaction-head > .disclosure-chevron {
@@ -1119,6 +1136,26 @@
 @media (width <= 48rem) {
   .banner-stack {
     position: static;
+
+    /* `position: static` makes the insets inert, and the band's own `--sp-2` OFFSET
+     * from the bar was in one of them — so in flow the band began at the bar's
+     * hairline and BOTH of its rows sat flush against it: a banner directly, and a
+     * lone toast because it anchors to this box's bottom edge. Measured at 390x844
+     * before this rule, 0.00px against the desktop overlay's 8.00px.
+     *
+     * PADDING, not a margin, because the band already charges the banner-to-toast
+     * gap to its own border box for the same reason (`padding-block-end` above):
+     * `anchor(--notice-band bottom)` reads the border box, so one declaration moves
+     * the banner AND the toast under it, and the two cannot drift.
+     *
+     * UNCONDITIONAL, so the EMPTY band carries it too — that box is what a lone
+     * toast anchors to, and the desktop's offset is unconditional in exactly the
+     * same way. The cost is stated rather than hidden: an empty band reserves
+     * `--sp-2` of flow here where the desktop overlay reserves nothing, so the
+     * transcript's scroller is 8px shorter on a phone. Scoping it to
+     * `:not(:empty)` is the shape that looks tidier and reintroduces the defect
+     * for the toast, which is the row that reported it. */
+    padding-block-start: var(--sp-2);
     padding-inline: var(--sp-3);
   }
 }
@@ -1256,26 +1293,20 @@
   margin: 0 !important;
 }
 
-/* The block's title bar. The actions used to float over the pre's top-right,
- * covering the first line of code — the worst line to cover, since it is the one
- * that says what the snippet is. A flow row costs one row and covers nothing. */
+/* The title bar is in flow so the actions never cover the first line of code. Box
+ * rung, not band: a nested box takes no band (vibekit-ui.md "Bands"). No rule
+ * under it — the well below is the seam. */
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
 
-  /* A PLAIN CONTAINER <div> (code-blocks.ts:107 — no role, no tabindex, no
-     listener; it also carries the chrome marker), so it is NOT A TARGET and the
-     hit floor is not its measure. It briefly read `var(--hit-floor)`, which took
-     this bar to 49px on a finger — the floor plus this rule's own padding, border
-     and line box — for a box nothing taps; the ruling (2026-09-10) is that the
-     floor does not apply to a non-interactive container and there was nothing to
-     fix here. The copy and wrap buttons inside it carry their own floor. */
+  /* Not a target (a plain div; the buttons inside carry their own floor), so the
+     hit floor is not its measure. */
   min-height: 1.75rem;
   padding: 0.125rem var(--sp-2);
-  background: var(--c-bg-tertiary);
-  border-block-end: 1px solid var(--c-border);
+  background: var(--c-bg-secondary);
 }
 
 /* The RAW fence tag, as the author wrote it: highlight.ts exposes no display-name
@@ -1341,7 +1372,7 @@
 .turn-raw {
   margin: 0;
   padding: var(--sp-3);
-  background: var(--c-code-bg);
+  background: var(--c-well);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   font-family: var(--font-mono);
@@ -1396,9 +1427,10 @@
 
   /* NO DROP SHADOW, and the border below is the whole edge. It carried
    * `--shadow-ambient` (a 1px ring in `--c-border`) on top of that border, so the
-   * edge painted 2px in one colour. Every other drop shadow in the app sits on a
-   * transient overlay or a dragged element, the one exception being the effort
-   * slider's knob, so a persistent control with a raised layer was this one alone.
+   * edge painted 2px in one colour. Every drop shadow left in the app sits on a
+   * transient overlay or a dragged element — the effort slider's knob was the last
+   * persistent one and took a border instead in 2026-09 — so a persistent control
+   * with a raised layer is now unrepresentable rather than merely rare.
    * The opaque fill is what separates it from the text it sits over. */
   z-index: 10;
   opacity: 1;
@@ -1435,12 +1467,11 @@
      * under a label that is mostly a COUNT. Each declaration is one of those measured
      * gaps against `.rail-marker` (29-turns.css), which owns the vocabulary.
      *
-     * The height is `--hit-floor` rather than the marker's literal `1.5rem`: the two
-     * are the same 24px on a fine pointer, and on a coarse one this keeps a 44px
-     * target instead of inheriting a trade the rail's own rows made for themselves.
-     * The GLYPH column stays bound to `--rail-w` below, which is what puts it on the
-     * axis. */
-    min-block-size: var(--hit-floor);
+     * The height is `--rail-mark`, the same painted box a marker takes, with the tier's
+     * floor bought back by the expander below — so the column is one row height and one
+     * target size throughout. The GLYPH column stays bound to `--rail-w` below, which is
+     * what puts it on the axis. */
+    min-block-size: var(--rail-mark);
     background: var(--c-bg-primary);
     border-color: transparent;
     font-family: var(--font-mono);
@@ -1451,7 +1482,20 @@
     gap: 0;
     padding: 0;
     border-radius: var(--r-sm);
-    overflow: hidden;
+  }
+
+  /* THE HIT TARGET, matching `.rail-marker::before`: BLOCK axis only, because the box is
+   * already `--rail-w` wide at rest and grows from there when the label arrives, so an
+   * inline reach would only push the target past the gutter it lives in.
+   *
+   * This is why the button carries no `overflow: hidden` — an expander is clipped away by
+   * one, silently, and the label's ellipsis lives on the span rather than here. */
+  [id="scroll-bottom"]::before {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: calc((100% - var(--hit-floor)) / 2);
+    block-size: var(--hit-floor);
   }
 
   /* The glyph takes the rail's own column, so it sits on the axis whether or not
