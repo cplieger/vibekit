@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -1452,12 +1453,43 @@ func TestClassifyLoginStartErr(t *testing.T) {
 
 // --- slog-capture helpers, and the log assertions that use them ---
 
+// syncBuffer is a bytes.Buffer that may be written and read concurrently.
+//
+// The sink captureSlogJSON installs is process-wide, so its writer is reachable
+// from any goroutine still alive anywhere in the package, not only from the fn
+// being captured. slog's handlers require an io.Writer safe for concurrent calls
+// and bytes.Buffer is not one, so an unguarded buffer races with a login reap
+// goroutine that outlives the test which started it: that goroutine logs through
+// whatever default is installed by then, which is a later test's buffer.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// Bytes returns a COPY, because the caller reads it after releasing the lock
+// while a concurrent Write may still grow the underlying array.
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return bytes.Clone(b.buf.Bytes())
+}
+
 // captureSlogJSON swaps the default slog logger for a JSON handler writing to an
 // in-memory buffer at the given level, runs fn, and returns the parsed log
-// records. fn must be synchronous (no background goroutines) so every record is
-// flushed before parsing. The default is process-wide, so a test using it must not
-// run in parallel; it is restored through t.Cleanup rather than defer, so a nested
-// capture unwinds in reverse order at test end.
+// records. fn must be synchronous (no background goroutines) so every record it
+// causes is flushed before parsing. The default is process-wide, so a test using
+// it must not run in parallel; it is restored through t.Cleanup rather than
+// defer, so a nested capture unwinds in reverse order at test end.
+//
+// A record from an unrelated goroutine may still land in the buffer, which is
+// why every caller looks its record up by msg rather than asserting on a count
+// or an index.
 //
 // The log package's writer and flags are restored too: slog.SetDefault also points
 // log at the new handler, and it skips pointing it back when the restored handler
@@ -1465,7 +1497,7 @@ func TestClassifyLoginStartErr(t *testing.T) {
 // would land in this buffer.
 func captureSlogJSON(t *testing.T, level slog.Level, fn func()) []map[string]any {
 	t.Helper()
-	var buf bytes.Buffer
+	var buf syncBuffer
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
 	t.Cleanup(func() {
 		slog.SetDefault(prevLogger)
