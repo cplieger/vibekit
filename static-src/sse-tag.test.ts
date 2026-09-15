@@ -35,8 +35,8 @@ describe("derivedTag", () => {
 
 describe("persistedTag", () => {
   it("returns the persisted tag when it is well formed", () => {
-    localStorage.setItem(PROFILE_TAG_KEY, "amxAEqwvwjG23476CxNmK6");
-    expect(persistedTag()).toBe("amxAEqwvwjG23476CxNmK6");
+    localStorage.setItem(PROFILE_TAG_KEY, "tag-tag-tag-tag-tag-ta");
+    expect(persistedTag()).toBe("tag-tag-tag-tag-tag-ta");
   });
 
   it("mints and persists a 22-character random tag when none is held", () => {
