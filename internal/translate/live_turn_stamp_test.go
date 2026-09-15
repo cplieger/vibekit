@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/subject"
@@ -23,9 +24,9 @@ func wantLiveTurnStamp(t *testing.T, evt vibekit.ServerEvent, chatID vibekit.Cha
 // lastOfType returns the last captured event of type et.
 func lastOfType(t *testing.T, events []vibekit.ServerEvent, et vibekit.EventType) vibekit.ServerEvent {
 	t.Helper()
-	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Type == et {
-			return events[i]
+	for _, evt := range slices.Backward(events) {
+		if evt.Type == et {
+			return evt
 		}
 	}
 	t.Fatalf("no %s among %v", et, eventTypes(events))

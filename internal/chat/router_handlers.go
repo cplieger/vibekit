@@ -101,8 +101,8 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	//
 	// SO THIS RESPONSE IS NOT BOUNDED BY THE PARAMETER THE CALLER PASSED, and this is the
 	// one place that composes both halves, so the total is stated here. Arithmetic ceiling,
-	// summing the two bounds: ~10.1 MiB of live-turn text (liveTurnGETCaps.MaxTextBytes()
-	// = 10,616,832) plus its envelope of ~2.4 MiB (8192 blocks and 4096 tool calls at their
+	// summing the two bounds: ~10.1 MiB of live-turn text (liveTurnGETCaps' text dimensions
+	// sum to 10,616,832) plus its envelope of ~2.4 MiB (8192 blocks and 4096 tool calls at their
 	// own per-element cost), plus maxWholeTurnBytes (16 MiB) for the window — about 28.5 MiB
 	// — PLUS the newest single MESSAGE's own size, which the runaway stop deliberately does
 	// not bound (see the `len(window) > 0` gate in messageWindow) and which is bounded only

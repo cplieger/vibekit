@@ -741,12 +741,12 @@ func (c *Chat) SessionChain() []string {
 //
 // Not a wire type and not persisted: DraftChangedPayload crosses the wire.
 type ComposerState struct {
-	Text        string
-	Attachments []string
+	Text string
 	// Version is the `chat` version the composer write minted, filled by the
 	// store under the chat's lock so the draft_changed broadcast stamps from the
 	// same critical section. Empty on a state nothing minted (a read).
-	Version string
+	Version     string
+	Attachments []string
 }
 
 // Composer returns the chat's current composer state.

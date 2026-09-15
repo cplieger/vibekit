@@ -90,17 +90,9 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		t.announceTruncation(ctx, chatID, buf, subtask, totalLen)
 		return
 	}
-	// A refusal's explanation is this chunk's text and _meta.kiro.refusal
-	// classifies it. Stamp the buffer so it persists, forward it so the callout
-	// styles live. Gated on !isReasoning so a stray tagged thought cannot mark it.
 	// BEFORE the append, so the append is the last write and its version is the
 	// one the frame carries.
-	refusal := refusalInfo(&chunk)
-	if refusal != nil && !isReasoning {
-		buf.SetRefusal(refusal)
-	} else {
-		refusal = nil
-	}
+	refusal := stampRefusal(buf, &chunk, isReasoning)
 	// Mirror the delta into the block array, which also accumulates it into the
 	// turn's builder. A run of same-kind chunks extends this subtask's newest
 	// block; a text/thinking switch, or an intervening tool call, starts a new one.
@@ -185,6 +177,22 @@ func (t *Translator) announceTruncation(
 // refusalInfo maps a chunk's _meta.kiro.refusal block to the domain shape.
 func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 	return refusalFrom(chunk.Meta.Kiro.Refusal)
+}
+
+// stampRefusal records a refusal the chunk classifies and returns it for the frame,
+// or nil. A refusal's explanation is this chunk's text and _meta.kiro.refusal
+// classifies it: the buffer stamp is what persists it, the returned value is what
+// makes the callout style live. Gated on !isReasoning so a stray tagged thought
+// cannot mark it.
+func stampRefusal(buf *buffer.Buffer, chunk *ACPChunkWire, isReasoning bool) *vibekit.RefusalInfo {
+	if isReasoning {
+		return nil
+	}
+	refusal := refusalInfo(chunk)
+	if refusal != nil {
+		buf.SetRefusal(refusal)
+	}
+	return refusal
 }
 
 // refusalFrom maps KAS's refusal block onto the domain type, so the session/load

@@ -649,18 +649,18 @@ func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind v
 // A nil service is silent: composition always builds one, so that branch is a
 // direct package test rather than a state an operator can be in.
 func (bc *BridgeCoordinator) NotifyPushSubject(
-	ctx context.Context, body string, kind vibekit.PushKind, subject vibekit.PushSubject,
+	ctx context.Context, body string, kind vibekit.PushKind, subj vibekit.PushSubject,
 ) {
 	if bc.push == nil {
 		return
 	}
 	if !bc.push.HasSubscribers() {
-		bc.reportNoSubscribers(kind, subject)
+		bc.reportNoSubscribers(kind, subj)
 		return
 	}
 	bc.noSubscribers.Store(false)
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind, subject)
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, subj)
 	})
 }
 
@@ -669,11 +669,11 @@ func (bc *BridgeCoordinator) NotifyPushSubject(
 // nudge about it never lands after the answer. A run ask has no retraction here:
 // nothing pushes about one, and a run's subject is what its OUTCOME push carries,
 // which the run's own teardown would otherwise retract.
-func (bc *BridgeCoordinator) RetractPush(subject vibekit.PushSubject) {
+func (bc *BridgeCoordinator) RetractPush(subj vibekit.PushSubject) {
 	if bc.push == nil {
 		return
 	}
-	bc.push.Retract(subject)
+	bc.push.Retract(subj)
 }
 
 // reportNoSubscribers states that a notification went nowhere for want of a
@@ -685,12 +685,12 @@ func (bc *BridgeCoordinator) RetractPush(subject vibekit.PushSubject) {
 // Both halves of the subject are logged and either is legitimately empty — a chat
 // notification carries no key and a run's carries no chat — so the line still names
 // what was dropped whichever kind it was.
-func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, subject vibekit.PushSubject) {
+func (bc *BridgeCoordinator) reportNoSubscribers(kind vibekit.PushKind, subj vibekit.PushSubject) {
 	if !bc.noSubscribers.CompareAndSwap(false, true) {
 		return
 	}
 	slog.Info("no push subscribers; notifications are being dropped until a browser subscribes",
-		"chat_id", subject.ChatID, "subject", subject.Key, "kind", string(kind))
+		"chat_id", subj.ChatID, "subject", subj.Key, "kind", string(kind))
 }
 
 // SettleTurnOnResponse closes the turn named by epoch on the response that

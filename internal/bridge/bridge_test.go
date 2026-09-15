@@ -2793,7 +2793,6 @@ func TestLoadSession_LeavesAnUnsupervisedResumeAlone(t *testing.T) {
 	data := captureRequests(t, &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "sess_plain"})
 	if strings.Contains(data, `"`+vibekit.ConfigOptionAutopilot+`"`) {
 		t.Errorf("an unsupervised resume sent the autopilot option:\n%s", data)
-
 	}
 }
 

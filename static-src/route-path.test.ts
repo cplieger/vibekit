@@ -483,7 +483,7 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
     const result = fc.check(
       fc.property(fc.string({ minLength: 0, maxLength: 200 }), (pathname) => {
         const r = parseRoute(pathname, "");
-        return r !== null && typeof r === "object" && "kind" in r;
+        return typeof r.kind === "string";
       }),
       { numRuns: 500 },
     );
@@ -507,7 +507,7 @@ describe("parseRoute adversarial inputs (no-throw)", () => {
     const result = fc.check(
       fc.property(arbPath, (pathname) => {
         const r = parseRoute(pathname, "");
-        return r !== null && typeof r === "object" && "kind" in r;
+        return typeof r.kind === "string";
       }),
       { numRuns: 300 },
     );

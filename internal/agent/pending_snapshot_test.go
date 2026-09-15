@@ -6,10 +6,9 @@ import (
 	"strconv"
 	"testing"
 
-	"pgregory.net/rapid"
-
 	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"pgregory.net/rapid"
 )
 
 // pendingFixture is a Runtime holding only what the pending snapshot reads: the

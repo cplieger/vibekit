@@ -75,6 +75,20 @@ field UnitSingular is
 field UnitPlural is
 field Value is
 
+# The same shape, one level up: an EMBEDDED struct field on a registered struct.
+# chat.SearchResult, chat.SearchAllResult and filebrowse.FileSearchResult embed
+# textsearch.Tally, and encoding/json flattens its three fields onto the wire, so
+# no Go code names the field `Tally` — it is read as scanned/matched/truncated:
+#   Tally -> decoders.gen.ts reqNum($.file_search_result, "scanned"|"matched"),
+#            reqBool(..., "truncated"); static-src/files-search.ts res.scanned,
+#            static-src/docs.ts other.matched
+# server.KiroDoc.ReadOnly is a plain registered field the SERVER sets and only the
+# client reads (static-src/docs.ts doc.read_only), which is the whole point of a
+# writability marker; a reference search sees the assignment and no read.
+#   KiroDoc.ReadOnly -> types.gen.ts KiroDoc.read_only, decoders.gen.ts optBool($.kiro_doc)
+field Tally is
+field ReadOnly is
+
 # Whole-file entries: every exported struct in these two files is a
 # wiregen-registered wire type (ElicitationPropertySchema,
 # ElicitationRequestSchema / PolicyRuleCore, PolicyRule, PolicyView,
@@ -268,7 +282,28 @@ function WithChatFileCap
 method (*compressWriter).Unwrap
 method (*compressWriter).Flush
 
-# --- 19. Observation-first decode of the initialize result's agentCapabilities
+# --- 19. The test-only control surface (-tags vibekit_test). internal/server's
+# testhooks_vibekittest.go declares two role interfaces the runtime and the push
+# service satisfy — sseProbe {SSEClientCount, SSEConnects, CloseNextSSEAfter} and
+# pushProbe {PresenceRows, PresenceTransitions, Suppressed} — and calls every member
+# through them, so the methods are interface-reached AND their one caller sits behind
+# a build tag punused's default build never selects. The probes exist so a client
+# fixture (static-src/package.json names the tag as sseFixtureTags) can arm a
+# mid-stream cut and read the presence census against a real server; deleting them
+# empties GET /api/test/sse on a vibekit_test build.
+# closeAfterWriter.Unwrap is section 18's shape on the cut connection's wrapper:
+# cplieger/sse's Serve unwraps `interface{ Unwrap() http.ResponseWriter }` to reach
+# the Flusher and the write deadline through it (sse/serve.go), so a missing Unwrap
+# turns the probed connection into one that never flushes.
+method (*Runtime).SSEClientCount
+method (*Runtime).SSEConnects
+method (*Runtime).CloseNextSSEAfter
+method (*closeAfterWriter).Unwrap
+method (*Service).Suppressed
+method (*Service).PresenceRows
+method (*Service).PresenceTransitions
+
+# --- 20. Observation-first decode of the initialize result's agentCapabilities
 # _meta.kiro block: no behavior may branch on it yet, so the accessor is the read
 # door for future capability logic and tests are its only consumers by design.
 method (*Bridge).AgentKiroCapabilities

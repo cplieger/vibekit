@@ -84,7 +84,7 @@ func TestTestHooks_NarrowEngineMountsNothing(t *testing.T) {
 // transitions, and one suppressed count per registered kind.
 func TestTestHooks_CensusReportsPresenceAndSuppression(t *testing.T) {
 	presence := push.NewPresence()
-	presence.Observe(sse.PresenceEvent{Kind: sse.PresenceConnected, Tag: "amxAEqwvwjG23476CxNmK6"})
+	presence.Observe(&sse.PresenceEvent{Kind: sse.PresenceConnected, Tag: "amxAEqwvwjG23476CxNmK6"})
 	svc := push.New(context.Background(), t.TempDir(), "mailto:test@example.com", push.WithPresence(presence))
 	t.Cleanup(svc.Close)
 	mux := http.NewServeMux()

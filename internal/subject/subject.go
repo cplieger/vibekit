@@ -2,8 +2,8 @@
 // version string per (kind, ref) subject, minted by the store that owns the
 // subject and read by the resolver and the REST envelopes.
 //
-// Versions holds its own mutex and no store lock. A writer bumps or sets a
-// version INSIDE its own critical section, so the version and the state it
+// Versions holds its own mutex and no store lock. A writer bumps a version
+// INSIDE its own critical section, so the version and the state it
 // certifies come out of one section; the registry only records the result.
 package subject
 
@@ -42,21 +42,8 @@ type key struct {
 // Versions is the registry. The zero value is ready to use and safe for
 // concurrent use.
 type Versions struct {
-	set      map[key]string
 	counters map[key]uint64
 	mu       sync.Mutex
-}
-
-// Set records v as the current version of (kind, ref), replacing whatever the
-// registry held. For a subject whose version is minted elsewhere (a buffer's
-// <id>:<rev>, the tab store's collection version).
-func (v *Versions) Set(kind Kind, ref, version string) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.set == nil {
-		v.set = make(map[key]string)
-	}
-	v.set[key{kind, ref}] = version
 }
 
 // BumpCounter increments the counter behind (kind, ref) and returns the new
@@ -78,11 +65,7 @@ func (v *Versions) BumpCounter(kind Kind, ref string) string {
 func (v *Versions) Current(kind Kind, ref string) (string, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	k := key{kind, ref}
-	if s, ok := v.set[k]; ok {
-		return s, true
-	}
-	if n, ok := v.counters[k]; ok {
+	if n, ok := v.counters[key{kind, ref}]; ok {
 		return strconv.FormatUint(n, 10), true
 	}
 	return Unminted, false

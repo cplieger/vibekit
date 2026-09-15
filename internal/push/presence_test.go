@@ -30,12 +30,12 @@ func (c *presenceClock) Advance(d time.Duration) {
 
 func newPresenceAt(c *presenceClock) *Presence { p := NewPresence(); p.now = c.Now; return p }
 
-func connected(tag string) sse.PresenceEvent {
-	return sse.PresenceEvent{Kind: sse.PresenceConnected, Tag: tag}
+func connected(tag string) *sse.PresenceEvent {
+	return &sse.PresenceEvent{Kind: sse.PresenceConnected, Tag: tag}
 }
 
-func disconnected(tag string, c sse.PresenceCause) sse.PresenceEvent {
-	return sse.PresenceEvent{Kind: sse.PresenceDisconnected, Tag: tag, Cause: c}
+func disconnected(tag string, c sse.PresenceCause) *sse.PresenceEvent {
+	return &sse.PresenceEvent{Kind: sse.PresenceDisconnected, Tag: tag, Cause: c}
 }
 
 const beat = liveness.Keepalive

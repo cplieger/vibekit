@@ -125,14 +125,6 @@ type bridges struct {
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
-	// legacyConnects and v3Connects count connects by wire generation: a legacy
-	// connect (no SSE-Wire header) is the v2 bundle still running somewhere, and
-	// the counter is what says when the overlap can go. Observability only.
-	legacyConnects atomic.Uint64
-	v3Connects     atomic.Uint64
-	// closeAfter, when positive, cuts the NEXT connection after that many data
-	// frames (sse_probe.go). Test-only; armed by nothing in production.
-	closeAfter atomic.Int64
 	// presence receives the hub's connect/disconnect feed and the client
 	// acknowledgements (alive_route.go). nil drops both; WithPresence fills it.
 	presence presenceTable `wiring:"optional"`
@@ -149,6 +141,14 @@ type bus struct {
 	// retractPush drops a held push about a subject whose ask was just settled
 	// (BridgeCoordinator.RetractPush); the bus has no push reference of its own.
 	retractPush func(vibekit.PushSubject)
+	// legacyConnects and v3Connects count connects by wire generation: a legacy
+	// connect (no SSE-Wire header) is the v2 bundle still running somewhere, and
+	// the counter is what says when the overlap can go. Observability only.
+	legacyConnects atomic.Uint64
+	v3Connects     atomic.Uint64
+	// closeAfter, when positive, cuts the NEXT connection after that many data
+	// frames (sse_probe.go). Test-only; armed by nothing in production.
+	closeAfter atomic.Int64
 }
 
 // Runtime is the central coordinator.
@@ -349,7 +349,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		sse.WithKeepaliveEvent(keepaliveEventName),
 		sse.WithWriteTimeout(liveness.AliveWindow),
 		sse.WithReconnectDelay(liveness.ReconnectDelay),
-		sse.WithPresence(sseP.forwardPresence),
+		sse.WithPresence(func(ev sse.PresenceEvent) { sseP.forwardPresence(&ev) }),
 	)
 	lc := &lifetime{
 		workDir: workDir,
@@ -528,7 +528,8 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	// under a RouteTimeout (legal: it is a bounded request, not a streaming one) so a
 	// resolution parked on a lock cannot hold its slot for the peer's lifetime.
 	mux.Handle("POST /api/sync", rt.refuseWhenDraining(
-		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out")))
+		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out"),
+	))
 	// The keepalive acknowledgement is not drain-gated: a receipt landing while the
 	// stream it acknowledges is being torn down changes nothing worth refusing.
 	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)

@@ -293,8 +293,19 @@ func TestSnapshotCapped_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
 	}
 }
 
+// textCeiling is the worst-case TEXT a caps value admits: the two flat fields, the block
+// array's share, and every carried tool call's output (bounded by the aggregate when one
+// is set). It is the arithmetic the marshaled-size assertion below reads.
+func textCeiling(c SnapshotCaps) int {
+	tools := c.ToolCalls * c.ToolOutputBytes
+	if c.ToolOutputTotalBytes > 0 {
+		tools = min(tools, c.ToolOutputTotalBytes)
+	}
+	return c.ReasoningBytes + c.ContentBytes + c.BlockTextBytes + tools
+}
+
 // connectCapsForTest is a SMALL caps value, sized so the fixtures above cut on every
-// dimension and MaxTextBytes stays a hand-checkable 52 KiB. It is this file's own: the
+// dimension and textCeiling stays a hand-checkable 52 KiB. It is this file's own: the
 // production caps (internal/agent's liveTurnGETCaps) are sized in the megabytes so an
 // ordinary turn is never cut, which is exactly what a truncation test cannot use.
 func connectCapsForTest() SnapshotCaps {
@@ -491,19 +502,14 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 	}
 }
 
-// TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload is the arithmetic a byte
-// budget over a capped snapshot depends on: a maximally-full capped snapshot's REAL
-// marshaled length has to sit inside MaxTextBytes plus an envelope, or a budget that
-// subtracts MaxTextBytes per snapshot under-counts. liveTurnGETCaps states its ceiling
-// through this method, so the arithmetic has to hold.
-func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
+// TestSnapshotCapped_MarshalsInsideTheTextCeiling is the arithmetic a byte ceiling over
+// a capped snapshot depends on: a maximally-full capped snapshot's REAL marshaled length
+// has to sit inside the caps' text ceiling plus an envelope, or a ceiling stated from the
+// caps (internal/agent's liveTurnGETCaps publishes one) under-counts.
+func TestSnapshotCapped_MarshalsInsideTheTextCeiling(t *testing.T) {
 	caps := connectCapsForTest()
-	if got, want := caps.MaxTextBytes(), 52<<10; got != want {
-		t.Errorf("MaxTextBytes() = %d, want %d; the test caps and the budget arithmetic disagree", got, want)
-	}
-	if got := (SnapshotCaps{ReasoningBytes: 1}).MaxTextBytes(); got != 0 {
-		t.Errorf("MaxTextBytes() with unbounded dimensions = %d, want 0 (unbounded); a partial sum "+
-			"reads as a real ceiling and understates the payload", got)
+	if got, want := textCeiling(caps), 52<<10; got != want {
+		t.Errorf("textCeiling() = %d, want %d; the test caps and the ceiling arithmetic disagree", got, want)
 	}
 
 	fx := newCapFixture(t)
@@ -518,13 +524,12 @@ func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
 	// The envelope allowance, stated: JSON structure around the text — field
 	// names, quotes, braces, the per-tool-call metadata (id, title, kind,
 	// status, ts) and the per-block type/subtask fields. 8 KiB is generous for
-	// 8 tool calls and 64 blocks and is what the budget subtracts alongside
-	// MaxTextBytes.
+	// 8 tool calls and 64 blocks and is what a ceiling adds beside the text.
 	const envelopeAllowance = 8 << 10
-	if limit := caps.MaxTextBytes() + envelopeAllowance; len(raw) > limit {
-		t.Errorf("capped snapshot marshaled to %d bytes, want <= %d (MaxTextBytes %d + %d envelope); "+
-			"a budget built on MaxTextBytes would under-count",
-			len(raw), limit, caps.MaxTextBytes(), envelopeAllowance)
+	if limit := textCeiling(caps) + envelopeAllowance; len(raw) > limit {
+		t.Errorf("capped snapshot marshaled to %d bytes, want <= %d (text ceiling %d + %d envelope); "+
+			"a ceiling built on the caps would under-count",
+			len(raw), limit, textCeiling(caps), envelopeAllowance)
 	}
 }
 
@@ -617,32 +622,6 @@ func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
 		}
 		if got, want := len(msg.ToolCalls), fx.toolCalls; got != want {
 			t.Errorf("carried %d tool calls, want all %d: a zero aggregate must not cut", got, want)
-		}
-	})
-
-	t.Run("MaxTextBytes takes the min of the product and the aggregate", func(t *testing.T) {
-		base := SnapshotCaps{
-			ReasoningBytes:  1000,
-			ContentBytes:    2000,
-			BlockTextBytes:  3000,
-			ToolCalls:       10,
-			ToolOutputBytes: 500,
-			Blocks:          8,
-		}
-		// Product is 10 x 500 = 5000; the flat share is 6000.
-		if got, want := base.MaxTextBytes(), 11000; got != want {
-			t.Fatalf("MaxTextBytes() with no aggregate = %d, want %d (the product)", got, want)
-		}
-		tighter := base
-		tighter.ToolOutputTotalBytes = 1500
-		if got, want := tighter.MaxTextBytes(), 7500; got != want {
-			t.Errorf("MaxTextBytes() with a smaller aggregate = %d, want %d: the aggregate is what "+
-				"the payload can actually reach, so the product would overstate the ceiling", got, want)
-		}
-		looser := base
-		looser.ToolOutputTotalBytes = 99000
-		if got, want := looser.MaxTextBytes(), 11000; got != want {
-			t.Errorf("MaxTextBytes() with a larger aggregate = %d, want %d: the product still binds", got, want)
 		}
 	})
 }

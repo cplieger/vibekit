@@ -1,6 +1,7 @@
 package testsupport
 
 import (
+	"context"
 	"encoding/json"
 	"slices"
 
@@ -32,6 +33,46 @@ func cloneChat(c *vibekit.Chat) *vibekit.Chat {
 		return &shallow
 	}
 	return &out
+}
+
+// broadcaster is the fan-out both fakes' Bus fields satisfy.
+type broadcaster interface {
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+}
+
+// upsertTurnPlan is both fakes' UpsertTurnPlan body: overwrite this turn's plan
+// row through mutate, or append msg when the turn carries none, and announce
+// which one happened on bus. One body so the two fakes cannot drift from each
+// other on the turn-boundary rule.
+func upsertTurnPlan(
+	mutate func(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error),
+	bus broadcaster, chatID vibekit.ChatID, msg *vibekit.Message,
+) error {
+	var updated *vibekit.Message
+	var appended bool
+	version, err := mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if i, ok := turnPlanRow(c.Messages); ok {
+			c.Messages[i].Plan = msg.Plan
+			updated = &c.Messages[i]
+			return true
+		}
+		c.Messages = append(c.Messages, *msg)
+		appended = true
+		return true
+	})
+	if err != nil || bus == nil {
+		return err
+	}
+	switch {
+	case updated != nil:
+		bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
+	case appended:
+		bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
+	}
+	return nil
 }
 
 // turnPlanRow reports the index of the plan row belonging to the turn in flight,

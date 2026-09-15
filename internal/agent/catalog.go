@@ -16,11 +16,11 @@ import (
 // workspace agent and a bundled mode of the same id arrives already resolved.
 // A client must not re-derive it.
 type Catalog struct {
-	modes  []vibekit.SessionMode
-	models []vibekit.SessionModel
 	// versions holds the `catalog` counter, bumped under mu when either list
 	// changes; nil defaults to a private registry on first use.
 	versions *subject.Versions
+	modes    []vibekit.SessionMode
+	models   []vibekit.SessionModel
 	mu       sync.Mutex
 }
 

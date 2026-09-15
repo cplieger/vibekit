@@ -29,7 +29,6 @@ func NewInMemoryChatStore() *InMemoryChatStore {
 	return &InMemoryChatStore{chats: make(map[vibekit.ChatID]*vibekit.Chat)}
 }
 
-// Get returns a copy of the stored chat for id, or (nil, false) if not found.
 // Exists reports whether the fake holds id.
 func (s *InMemoryChatStore) Exists(id vibekit.ChatID) bool {
 	s.mu.Lock()
@@ -38,6 +37,7 @@ func (s *InMemoryChatStore) Exists(id vibekit.ChatID) bool {
 	return ok
 }
 
+// Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *InMemoryChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,31 +158,7 @@ func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID vibekit.Chat
 // carries none. Mirrors (*chat.Store).UpsertTurnPlan; the turn boundary is the
 // first user message walking back from the tail.
 func (s *InMemoryChatStore) UpsertTurnPlan(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
-	var updated *vibekit.Message
-	var appended bool
-	version, err := s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		if i, ok := turnPlanRow(c.Messages); ok {
-			c.Messages[i].Plan = msg.Plan
-			updated = &c.Messages[i]
-			return true
-		}
-		c.Messages = append(c.Messages, *msg)
-		appended = true
-		return true
-	})
-	if err != nil || s.Bus == nil {
-		return err
-	}
-	switch {
-	case updated != nil:
-		s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageUpdated, ChatID: chatID, Payload: updated}, chatID, version))
-	case appended:
-		s.Bus.Broadcast(context.Background(), stamped(vibekit.ServerEvent{Type: vibekit.EventMessageAppended, ChatID: chatID, Payload: msg}, chatID, version))
-	}
-	return nil
+	return upsertTurnPlan(s.Mutate, s.Bus, chatID, msg)
 }
 
 // UpdateMessage applies mutate to the message identified by msgID within the stored chat.

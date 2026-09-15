@@ -150,10 +150,24 @@ func TestLiveTurnGETCaps_CutNothingAtTheMeasuredMaxima(t *testing.T) {
 	}
 }
 
+// textCeiling is the worst-case TEXT a caps value admits: the two flat fields, the block
+// array's share, and the tool-output product bounded by the aggregate. Zero when any of
+// the five text dimensions is unbounded — a partial sum would read as a real ceiling.
+func textCeiling(c buffer.SnapshotCaps) int {
+	if c.ReasoningBytes <= 0 || c.ContentBytes <= 0 || c.BlockTextBytes <= 0 || c.ToolCalls <= 0 || c.ToolOutputBytes <= 0 {
+		return 0
+	}
+	tools := c.ToolCalls * c.ToolOutputBytes
+	if c.ToolOutputTotalBytes > 0 {
+		tools = min(tools, c.ToolOutputTotalBytes)
+	}
+	return c.ReasoningBytes + c.ContentBytes + c.BlockTextBytes + tools
+}
+
 // TestLiveTurnGETCaps_StateTheirRunawayCeiling pins the number the caps' doc comment
 // publishes, plus the two dimensions that number cannot speak for.
 //
-// MaxTextBytes' unbounded guard covers the five TEXT dimensions only — dropping any one of
+// textCeiling's unbounded guard covers the five TEXT dimensions only — dropping any one of
 // them makes it report 0, so a silently unbounded reasoning, content, block-text,
 // tool-call or per-call-output cap fails the first check. It does READ
 // ToolOutputTotalBytes, as the min() that bounds the tool product, so unbounding that one
@@ -165,8 +179,8 @@ func TestLiveTurnGETCaps_CutNothingAtTheMeasuredMaxima(t *testing.T) {
 // the per-block envelope cost the caps' own figures rest on becomes unbounded. That is why
 // it is asserted directly.
 func TestLiveTurnGETCaps_StateTheirRunawayCeiling(t *testing.T) {
-	if got, want := liveTurnGETCaps.MaxTextBytes(), liveTurnGETMaxTextBytes; got != want {
-		t.Errorf("liveTurnGETCaps.MaxTextBytes() = %d, want %d: the guarantee is unbounded without "+
+	if got, want := textCeiling(liveTurnGETCaps), liveTurnGETMaxTextBytes; got != want {
+		t.Errorf("textCeiling(liveTurnGETCaps) = %d, want %d: the guarantee is unbounded without "+
 			"a stated ceiling, and a zero here means a text dimension was left unbounded", got, want)
 	}
 	if liveTurnGETCaps.ToolOutputTotalBytes <= 0 {
@@ -176,7 +190,7 @@ func TestLiveTurnGETCaps_StateTheirRunawayCeiling(t *testing.T) {
 	if liveTurnGETCaps.Blocks <= 0 {
 		t.Error("Blocks is unbounded: capBlocks with a zero count cap admits any number of blocks " +
 			"under BlockTextBytes, so the payload's per-block envelope cost stops being bounded " +
-			"while MaxTextBytes keeps reporting the same ceiling")
+			"while the text ceiling keeps reporting the same number")
 	}
 }
 

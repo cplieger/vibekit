@@ -116,7 +116,7 @@ func (rt *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 	rt.bus.fanout.Serve(armedWriter(&rt.bus.closeAfter, w), r,
 		sse.WithClientTag(tag),
 		sse.OnConnect(func(sw *sse.Writer, h sse.Hello) error {
-			return rt.streamInitialState(sw, h, legacy)
+			return rt.streamInitialState(sw, &h, legacy)
 		}),
 	)
 	slog.Info("SSE disconnected", "client", client)
@@ -149,8 +149,9 @@ const (
 // reply a reader came for.
 //
 // Measured maxima over the live chat volume, one per dimension, so the sizing is
-// checkable rather than asserted. What survives is a RUNAWAY ceiling of
-// MaxTextBytes() = 10,616,832 bytes: past it the turn is cut and `truncated` says so.
+// checkable rather than asserted. What survives is a RUNAWAY ceiling of 10,616,832 bytes
+// of text (the two flat fields, the block share and the tool-output aggregate summed;
+// live_turn_caps_test.go pins it): past it the turn is cut and `truncated` says so.
 // ToolOutputTotalBytes is what makes that number statable — the per-call cap stays at the
 // terminal ring buffer's own 64 KiB bound, so a single call is never cut, and the
 // aggregate bounds the product the per-call cap cannot.
@@ -176,7 +177,7 @@ var liveTurnGETCaps = buffer.SnapshotCaps{
 // decoders know and numeric floor/head on `connected`. Every frame is id-less and
 // unnamed: the v2 bundle reads through onmessage, which a named event never reaches.
 // `connected` carries no Subject: one scalar stamp cannot vouch for several subjects.
-func (rt *Runtime) streamInitialState(sw *sse.Writer, h sse.Hello, legacy bool) error {
+func (rt *Runtime) streamInitialState(sw *sse.Writer, h *sse.Hello, legacy bool) error {
 	busy := rt.coord.turns.busyChatIDs()
 	// An over-cap list is withheld rather than truncated: on either the client
 	// retracts nothing.
