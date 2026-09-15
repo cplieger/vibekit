@@ -39,13 +39,11 @@ import { restartShell } from "./actions/shell.js";
 import { refreshGitStatus } from "./git-status-store.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
-// Awaited by the kernel before the first server resize so the PTY is sized
-// against the real cell metrics. Every family here must be one an @font-face
-// matches (css/00-fonts.css): `document.fonts.load` resolves against NOTHING for
-// a family it has no rule for, so the await returns immediately and the first
-// PTY resize measures the fallback cell. 14px matches the `.term` font-size the
-// UI CSS sets, which is also the only size the glyph font tiles at.
-const SHELL_FONT_READY = '14px "Web Terminal Glyphs", "Monaspace Neon NF"';
+// Awaited before the first server resize so the PTY is sized on real cell
+// metrics. ONE family — the one the width probe measures — declared in
+// css/00-fonts.css, and never --font-mono's stack: #web-terminal-ui's
+// `fontReady` owns why.
+const SHELL_FONT_READY = '14px "Monaspace Neon NF"';
 
 // The scrollback store is built at MODULE load, not inside ensureTerminal, even
 // though the terminal itself stays lazy. Constructing it is what runs its orphan

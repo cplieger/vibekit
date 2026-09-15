@@ -340,12 +340,10 @@ describe("shell.ts: lazy terminal creation", () => {
     const [root, opts] = call as [HTMLElement, CreateTerminalOptions];
     expect(root).toBe(h.shellTerminal);
     expect(opts.wsPath).toBe("/api/shell/ws");
-    // The awaited face is the EXACT stack the theme asks for. `document.fonts.load`
-    // resolves against nothing for a family no @font-face matches, so the await
-    // returns immediately and the first resize is measured on the fallback's cell
-    // metrics — which the server then sizes the PTY from. A toBeDefined() here
-    // passed for any string at all, including the library's Monaspace default.
-    expect(opts.fontReady).toBe('14px "Web Terminal Glyphs", "Monaspace Neon NF"');
+    // The companion ALONE, not the theme's two-family stack: naming the overlay
+    // first makes WebKit resolve the gate before the text face loads, so the PTY
+    // is sized on fallback metrics (#web-terminal-ui, `fontReady`).
+    expect(opts.fontReady).toBe('14px "Monaspace Neon NF"');
     // The glyph family FIRST, ahead of the text face: it carries only the
     // codepoints that have to tile, so dropping it or reordering it takes box
     // drawing and the block elements back to Monaspace's own, which is the row-gap

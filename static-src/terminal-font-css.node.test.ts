@@ -227,6 +227,46 @@ describe("every src names a file the Dockerfile writes", () => {
   });
 });
 
+describe("the served cell is the cell the glyphs are drawn for", () => {
+  // The one pairing no single release can check, and the reason
+  // web-terminal-kiro and web-terminal-server run a build-time gate for it: the
+  // `.term` cell comes from the ARG-pinned library and the glyphs are drawn for
+  // the cell the ARG-pinned overlay release publishes, so two independent
+  // Renovate PRs decide whether they still agree. A bump on either side that
+  // moves the cell reopens the row-gap defect this stack exists to fix, behind a
+  // green build. vibekit's own half is asserted above; this is the seam.
+  const CELL_JSON_RELEASE = "v1.0.0";
+  const CELL = { fontSize: "14px", lineHeight: "17px" } as const;
+
+  const libraryCSS = read("node_modules/@cplieger/web-terminal-ui/css/02-terminal.css");
+
+  /** The `.term` declarations, comments stripped first so a `}` inside one cannot
+   *  end the body early. The rule is flat, so the first close is its own. */
+  function termDecl(name: string): string {
+    const text = libraryCSS.replace(/\/\*[\s\S]*?\*\//g, " ");
+    const open = text.indexOf(":where(.wt-root) .term {");
+    expect(open, "the library declares no :where(.wt-root) .term rule").toBeGreaterThanOrEqual(0);
+    const body = text.slice(open, text.indexOf("}", open));
+    return new RegExp(`${name}\\s*:\\s*([^;]+)`).exec(body)?.[1]?.trim() ?? "";
+  }
+
+  it("is still reading the release CELL was transcribed from", () => {
+    // CELL is a transcription: cell.json is fetched at build time, so no test can
+    // open it. Pinning the version it came from is what makes the transcription
+    // safe — a glyph bump fails HERE until the new release's cell block is read.
+    const arg = /^ARG WEB_TERMINAL_GLYPHS_VERSION=(\S+)$/m.exec(dockerfile)?.[1];
+    expect(arg, "the Dockerfile pins no glyph release").toBe(CELL_JSON_RELEASE);
+  });
+
+  it("sizes the row at the contract's cell and synthesises nothing", () => {
+    expect(termDecl("font-size")).toBe(CELL.fontSize);
+    expect(termDecl("line-height")).toBe(CELL.lineHeight);
+    // The other half of 00-fonts.css's four-descriptor-sets-per-family rule:
+    // nothing to synthesise from, and nothing asked for.
+    expect(termDecl("font-synthesis")).toBe("none");
+  });
+});
+
 describe("the terminal stack stays scoped to the terminal", () => {
   it("keeps both terminal families out of the app-wide --font-mono", () => {
     // `createTerminal` sets SHELL_THEME's `--font-mono` on the terminal ROOT, so
