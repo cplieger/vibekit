@@ -378,7 +378,17 @@
 }
 
 /* ---- Editor diff mode pane ---- */
+
+/* PINNED to the `1fr` track like the five other surfaces in `.editor-body`'s
+   `auto 1fr` grid (20-editor.css). Without this the pane auto-places into the
+   `auto` track, whose size is the pane's own max-content — and `diff-pane.ts`'s
+   `measure()` writes `--diff-hspan` from the column's `scrollWidth` back into
+   every row's `min-inline-size` (:160), so that max-content feeds itself and the
+   `ResizeObserver` on the column re-fires: the pane ratchets 2px per frame from
+   ~78% to full width over ~2.8s. Not a `flex` item despite the `flex: 1` below. */
 .editor-diff-pane {
+  grid-column: 2;
+  grid-row: 1;
   flex: 1;
   min-height: 0;
   display: flex;
