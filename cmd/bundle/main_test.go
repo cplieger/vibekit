@@ -149,6 +149,31 @@ func TestCleanOutputs_SweepsANestedModuleTree(t *testing.T) {
 	}
 }
 
+// TestCleanOutputs_KeepsTheFetchedFontTree: static/vendor/ is filled by the
+// Dockerfile (and scripts/dev-fonts.sh) before the bundle runs and the bundler
+// writes nothing into it, so the sweep must leave it whole. It used to remove
+// the directory, and every image embedded a font-less tree: the browser fetched
+// WebTerminalGlyphs.woff2 and got the SPA's index.html.
+func TestCleanOutputs_KeepsTheFetchedFontTree(t *testing.T) {
+	dir := stageOut(t, map[string]string{
+		"vendor/fonts/WebTerminalGlyphs.woff2":       "wOF2",
+		"vendor/fonts/MonaspaceNeonNF-LICENSE":       "OFL",
+		"vendor/fonts/MonaspaceNeonNF-Regular.woff2": "wOF2",
+		"chunks/chunk-abc.js":                        "stale\n",
+	})
+	if err := cleanOutputs(); err != nil {
+		t.Fatalf("cleanOutputs() = %v", err)
+	}
+	for _, kept := range []string{"WebTerminalGlyphs.woff2", "MonaspaceNeonNF-LICENSE", "MonaspaceNeonNF-Regular.woff2"} {
+		if _, err := os.Stat(filepath.Join(dir, outDir, "vendor", "fonts", kept)); err != nil {
+			t.Errorf("static/vendor/fonts/%s = %v, want the fetched font kept", kept, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, outDir, "chunks")); !os.IsNotExist(err) {
+		t.Error("static/chunks/ still present, want the bundler's own output swept")
+	}
+}
+
 // TestCleanOutputs_KeepsADirectoryHoldingACommittedAsset: the prune may only
 // take a shell the sweep emptied. A directory holding a hand-authored file
 // stays, with that file, however much bundle output sat beside it.

@@ -123,13 +123,13 @@ func precacheAssets() ([]string, error) {
 // linger into the embed; committed assets (index.html, manifest.json, icons) are
 // untouched. Ownership is by EXTENSION AT ANY DEPTH, matching .gitignore's
 // `static/**/*.js`: an enumerated directory list let `static/exec-view/` survive every
-// rebuild and reach the embedded tree. `chunks` and `vendor` are removed whole,
-// because they may hold entries no extension rule owns.
+// rebuild and reach the embedded tree. `chunks` is removed whole, because it may hold
+// entries no extension rule owns. `vendor` is NOT: the bundler writes nothing there,
+// and the Dockerfile fetches the terminal's web fonts into it BEFORE running the
+// bundle, so sweeping it shipped every image without its fonts.
 func cleanOutputs() error {
-	for _, dir := range []string{"chunks", "vendor"} {
-		if err := os.RemoveAll(filepath.Join(outDir, dir)); err != nil {
-			return err
-		}
+	if err := os.RemoveAll(filepath.Join(outDir, "chunks")); err != nil {
+		return err
 	}
 	if err := removeBundleFiles(outDir); err != nil {
 		return err
