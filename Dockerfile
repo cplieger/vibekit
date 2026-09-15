@@ -123,7 +123,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # rules, which WebKit treats as preview and ignores, so every row boundary shows
 # an unpainted stripe on iOS and a solid column of background renders as dashes.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.1
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.2
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
