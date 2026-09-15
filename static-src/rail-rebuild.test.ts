@@ -95,16 +95,23 @@ function markerFor(n: number): HTMLButtonElement {
  *  until layout resolves and it feeds the marker span, so the first render's inputs are
  *  not the settled ones. Holding a marker captured before that is holding a DETACHED node
  *  — which is what made the first version of the animation case read `getAnimations()` on
- *  an element with no parent and no computed style at all. Two identical frames is one
- *  frame with no redraw in it. */
+ *  an element with no parent and no computed style at all.
+ *
+ *  The sample is the rail's whole markup, not the marker labels: the position mark
+ *  (`data-current`) is a render input too, and it lands from an IntersectionObserver
+ *  delivery that under a cold full-suite load arrives after the labels have stopped
+ *  moving — so a label-only wait returned while one more rebuild was still coming, and
+ *  the repaint case then compared a marker against its rebuilt successor. Frames rather
+ *  than a 16ms timer, because observer callbacks are delivered in the rendering step
+ *  and a loaded frame is longer than the timer; three identical frames is two with no
+ *  redraw in them. */
 async function settle(): Promise<void> {
+  const root = outer.querySelector(".turn-rail");
   let last = "";
   let stable = 0;
-  for (let i = 0; i < 120 && stable < 2; i++) {
-    await new Promise((r) => setTimeout(r, 16));
-    const now = markers()
-      .map((m) => m.firstChild?.textContent ?? "")
-      .join(",");
+  for (let i = 0; i < 120 && stable < 3; i++) {
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    const now = root?.innerHTML ?? "";
     stable = now === last ? stable + 1 : 0;
     last = now;
   }
