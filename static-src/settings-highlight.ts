@@ -13,52 +13,23 @@
 // most callers use; `?highlight=` exists so such a link survives being copied,
 // bookmarked or pasted into a chat.
 //
-// Two mechanics that are easy to get wrong here:
+// One mechanic that is easy to get wrong here: the query string is read at MODULE
+// LOAD, not at boot. `applyShareTarget` strips `location.search` and `pushRoute`
+// compares only pathname + hash, so the parameter is gone by the time any route is
+// applied. Reading it at import time is what makes it survive both.
 //
-//   1. The query string is read at MODULE LOAD, not at boot. `applyShareTarget`
-//      strips `location.search` and `pushRoute` compares only pathname + hash,
-//      so the parameter is gone by the time any route is applied. Reading it at
-//      import time is what makes it survive both.
-//   2. A target may not be reachable the instant it is asked for: the panel swap
-//      runs through a view transition and the Tools / Permissions / Instructions
-//      panels populate from an async fetch. So the flash retries across a bounded
-//      number of frames and waits for the element to be laid out — an element
-//      inside a `.hidden` panel has no box, so scrollIntoView on it is a silent
-//      no-op.
+// Landing on the control and marking it is `flash-target.ts`'s, shared with the
+// PRs tab's own deep link.
 // ---------------------------------------------------------------------------
 
-import { getActiveTabRoute, toggleSettingsView } from "./tabs.js";
-import { forceReflow } from "./dom.js";
+import { openSettingsView } from "./tabs.js";
+import { flashTarget } from "./flash-target.js";
 import { forceSettingsTab } from "./settings-tabs.js";
 import { pushRoute } from "./router.js";
-import type { SettingsTab } from "./router.js";
-
-/** The flash class; the keyframes live in css/17-settings.css. */
-const FLASH_CLASS = "setting-flash";
-
-/** How many frames to keep looking for a target that is not there yet. About a
- *  third of a second at 60fps: longer than the panel swap and a local fetch,
- *  short enough that an id which will never exist stops costing frames. */
-const MAX_FRAMES = 20;
-
-/** Backstop for stripping the flash class, comfortably past the 1.6s keyframes.
- *  Required rather than defensive: under `prefers-reduced-motion` the animation
- *  is suppressed, so `animationend` never fires and the ring would otherwise
- *  stay on that control for the rest of the session. */
-const FLASH_CLEAR_MS = 2500;
-
-/** The pending flash-clear timeout PER TARGET, so re-highlighting a control
- *  cancels the deadline the previous flash installed.
- *
- *  Without it the first timeout stripped the second flash's class partway
- *  through: re-adding the class restarts the animation but does nothing to a
- *  timer that is already counting. Worst under `prefers-reduced-motion`, where
- *  the timeout is the only cleanup path and the flash would just vanish. Keyed
- *  weakly so a removed control is not held alive by its own timer entry. */
-const flashTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+import type { SettingsTab } from "./route-path.js";
 
 /** The `?highlight=` value this page load carried, read once at import time
- *  (see mechanic 1 above). Consumed at most once. */
+ *  (see the mechanic above). Consumed at most once. */
 let pendingTarget: string | null = readTargetFromURL();
 
 function readTargetFromURL(): string | null {
@@ -71,12 +42,6 @@ function readTargetFromURL(): string | null {
   }
 }
 
-/** Is the element laid out, i.e. can it actually be scrolled to? False while
- *  its panel still carries `.hidden`. */
-function isLaidOut(e: HTMLElement): boolean {
-  return e.offsetParent !== null || e.getClientRects().length > 0;
-}
-
 /** Scroll a Settings control into view and flash a ring around it.
  *
  *  Quiet on an unknown id by design: a caller's target may have been renamed or
@@ -84,70 +49,26 @@ function isLaidOut(e: HTMLElement): boolean {
  *  find one control is a better outcome than an error the reader cannot act on.
  *  Returns nothing — there is no success signal to branch on. */
 export function highlightControl(id: string): void {
+  // An empty id means the CALLER had no target, which `flashTarget` would spend
+  // its whole frame budget failing to find.
   if (id === "") {
     return;
   }
-  let frames = 0;
-  const attempt = (): void => {
-    const target = document.getElementById(id);
-    if (target === null || !isLaidOut(target)) {
-      frames++;
-      if (frames <= MAX_FRAMES) {
-        requestAnimationFrame(attempt);
-      }
-      return;
-    }
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
-    // End any flash still live on this control, deadline included. The map entry
-    // is the single record of "a flash is running", which is also what makes
-    // this safe to call from a listener a PREVIOUS flash left attached: with no
-    // entry it does nothing, and with one it is firing at that flash's own
-    // animation end.
-    const clear = (): void => {
-      const pending = flashTimers.get(target);
-      if (pending === undefined) {
-        return;
-      }
-      clearTimeout(pending);
-      flashTimers.delete(target);
-      target.classList.remove(FLASH_CLASS);
-    };
-    clear();
-    // Re-add rather than toggle: a second jump to the same control while the
-    // first flash is still running must restart the animation, and removing the
-    // class only takes effect after a reflow.
-    target.classList.remove(FLASH_CLASS);
-    forceReflow(target);
-    target.classList.add(FLASH_CLASS);
-    target.addEventListener("animationend", clear, { once: true });
-    flashTimers.set(target, setTimeout(clear, FLASH_CLEAR_MS));
-  };
-  attempt();
+  flashTarget(() => document.getElementById(id));
 }
 
 /** Open Settings on `tab` and highlight `controlID`. The in-app form of the deep
- *  link: what a message naming a setting calls.
- *
- *  Never routes through `toggleSettingsView` when Settings is already the active
- *  view — that helper CLOSES an active singleton, so a link clicked from inside
- *  Settings would dismiss the panel it was pointing at. */
+ *  link: what a message naming a setting calls. */
 export function openSetting(tab: SettingsTab, controlID: string): void {
-  if (getActiveTabRoute()?.kind !== "settings") {
-    // A round trip when the tab is not open. Awaited through the promise rather
-    // than detached, because everything below addresses the panel the open
-    // produces — and the highlight is a DOM write against a view that has to
-    // exist first.
-    void toggleSettingsView(tab).then(() => {
-      applySetting(tab, controlID);
-    });
-    return;
-  }
-  applySetting(tab, controlID);
+  // Awaited through the promise rather than detached, because everything below
+  // addresses the panel the open produces — and the highlight is a DOM write
+  // against a view that has to exist first.
+  void openSettingsView(tab).then(() => {
+    applySetting(tab, controlID);
+  });
 }
 
-/** Swap the panel, push the URL and highlight. Split out of openSetting so the
- *  already-open path stays synchronous: reaching the panel is a round trip only
- *  when the tab has to be opened. */
+/** Swap the panel, push the URL and highlight. */
 function applySetting(tab: SettingsTab, controlID: string): void {
   // Swaps the panel and fires the tab's lazy loader; the URL is pushed here
   // rather than by forceSettingsTab, which is the router's own callee.

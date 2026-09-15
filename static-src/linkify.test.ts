@@ -96,6 +96,49 @@ describe("linkifyPaths: explicit cases (table-driven)", () => {
   });
 });
 
+describe("linkifyPaths: absolute paths", () => {
+  it("linkifies an absolute path under the workspace root", () => {
+    const root = linkify("wrote it to /workspace/out/shot.png");
+    const ls = links(root);
+    expect(ls).toHaveLength(1);
+    expect(ls[0]!.title).toBe("/workspace/out/shot.png");
+    expect(ls[0]!.textContent).toBe("shot.png");
+  });
+
+  it("captures a line number on an absolute path", () => {
+    const root = linkify("at /workspace/vibekit/main.go:174 now");
+    const ls = links(root);
+    expect(ls).toHaveLength(1);
+    expect(ls[0]!.title).toBe("/workspace/vibekit/main.go:174");
+    expect(ls[0]!.textContent).toBe("main.go:174");
+  });
+
+  it("linkifies the uploads and config roots", () => {
+    expect(links(linkify("see /uploads/a.png"))[0]!.title).toBe("/uploads/a.png");
+    expect(links(linkify("see /config/tools.json"))[0]!.title).toBe("/config/tools.json");
+  });
+
+  it("does not linkify an absolute path outside the linkable roots", () => {
+    expect(links(linkify("read /etc/nginx/nginx.conf"))).toHaveLength(0);
+    expect(links(linkify("tail /var/log/syslog.log"))).toHaveLength(0);
+  });
+
+  it("does not linkify a root-shaped segment inside a URL", () => {
+    expect(links(linkify("see https://example.com/workspace/a.md"))).toHaveLength(0);
+    expect(links(linkify("see http://host/uploads/y.png"))).toHaveLength(0);
+  });
+
+  it("does not linkify a directory whose name merely starts with a root", () => {
+    expect(links(linkify("see /workspaceother/a.md"))).toHaveLength(0);
+  });
+
+  it("clicking an absolute path opens it unchanged", () => {
+    const root = linkify("open /workspace/out/shot.png now");
+    links(root)[0]!.click();
+    expect(openFile).toHaveBeenCalledWith("/workspace/out/shot.png", undefined);
+  });
+});
+
 describe("linkifyPaths: skip zones", () => {
   it("leaves paths inside <code> untouched", () => {
     const root = document.createElement("div");

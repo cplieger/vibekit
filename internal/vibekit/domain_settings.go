@@ -35,13 +35,14 @@ type EffectiveSettings struct {
 	Theme string `json:"theme"`
 	// FBPath is the file-browser path to restore, "" to list the granted mounts.
 	FBPath string `json:"fb_path"`
-	// LastModel and LastEffort are what a NEW chat opens on. Both are pure memory:
-	// the value in force for an existing chat lives on that chat's record.
-	LastModel  string `json:"last_model"`
-	LastEffort string `json:"last_effort"`
-	// LastEffortModel is the model LastEffort was picked under; the seed applies
-	// only to a chat running that model (settings.KeyLastEffortModel).
-	LastEffortModel string `json:"last_effort_model"`
+	// LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
+	// memory: the value in force for an existing chat lives on that chat's record.
+	LastModel string `json:"last_model"`
+	// LastEffortByModel maps a model id to the reasoning-effort level last picked
+	// under it, so the seed applies to a chat running THAT model and to no other.
+	// One level for the whole app cannot express that: a pick on any chat retracts
+	// every other model's remembered level (settings.KeyLastEffortByModel).
+	LastEffortByModel map[string]string `json:"last_effort_by_model"`
 	// LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
 	// the merge dialog's default. Empty means nothing picked yet.
 	LastMergeMethod string `json:"last_merge_method"`
@@ -65,9 +66,10 @@ type EffectiveSettings struct {
 	ToolSearchEnabled bool `json:"tool_search_enabled"`
 	MemoryEnabled     bool `json:"memory_enabled"`
 	// NotificationsEnabled is the push master switch, default off. The three per-kind
-	// switches below default ON, mirroring push.kindRegistry — the polarity differs
-	// between the master and the kinds on purpose, and that asymmetry is exactly
-	// why the client must not guess either of them.
+	// switches below take their defaults from settings.Default*, and those are not
+	// uniform either — pr_status is OFF where its two siblings are ON. So there are
+	// three polarities across these four fields, and that asymmetry is exactly why
+	// the client must not guess any of them.
 	NotificationsEnabled bool `json:"notifications_enabled"`
 	NotifyAgentFinished  bool `json:"notify_agent_finished"`
 	NotifyPRStatus       bool `json:"notify_pr_status"`

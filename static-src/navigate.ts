@@ -34,7 +34,7 @@
 // ---------------------------------------------------------------------------
 
 import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
-import { toggleGitView } from "./tabs.js";
+import { openGitView } from "./tabs.js";
 import { isSafeURL } from "./url-safety.js";
 import { absPath } from "./workspace.js";
 
@@ -84,7 +84,7 @@ export function openCallDiff(path: string, oldText: string, newText: string): vo
  *  made them — and where they differ the turn's own ledger is the scoped list.
  *  Scoping the git view to a path set is a filter it does not have. */
 export function openChangeSet(): void {
-  void toggleGitView("changes");
+  void openGitView("changes");
 }
 
 /** Open the editor at a line — a search hit, or a `path:line` reference.

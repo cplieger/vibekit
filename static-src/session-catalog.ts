@@ -5,6 +5,7 @@
 
 import type { ModelInfo, SessionModel } from "./types.js";
 import { apiGetTyped } from "./api-client.js";
+import { observeStamp } from "./subject-versions.js";
 import { decodeConfigTemplateResponse } from "./wire/decoders.gen.js";
 import type { ConfigTemplateResponse } from "./wire/types.gen.js";
 import { CATALOG_REQUEST_TIMEOUT_MS, refreshCatalog } from "./model-catalog.js";
@@ -39,8 +40,11 @@ function toModelInfo(m: SessionModel): ModelInfo {
  *
  *  The server prefers a LIVE session's report over the template, so this one feed is
  *  authoritative whether or not a bridge has spawned. `reset` RESTARTS a retry loop
- *  already running; every other caller declines, so a second call on one gap is free. */
-export function fetchCatalog(opts: { readonly reset?: boolean } = {}): Promise<void> {
+ *  already running; every other caller declines, so a second call on one reconcile is
+ *  free. `signal` bounds the whole loop, reads and waits alike. */
+export function fetchCatalog(
+  opts: { readonly reset?: boolean; readonly signal?: AbortSignal } = {},
+): Promise<void> {
   return refreshCatalog<ConfigTemplateResponse>(
     {
       // Through the GENERATED decoder: an inline `apiGet<{modes: …}>` is a CLAIM
@@ -57,6 +61,9 @@ export function fetchCatalog(opts: { readonly reset?: boolean } = {}): Promise<v
       // effort list by construction, so a login-triggered fetch that degraded used to
       // replace the tiers a successful boot fetch had landed.
       apply: (d) => {
+        // The `catalog` digest stamp, once the answer is applied below. First rather
+        // than last only because nothing below can fail: every arm is a store write.
+        observeStamp(d.subject);
         // ONE rule over all three: an EMPTY list is the absence of a vocabulary rather
         // than a value, so it never replaces one an earlier answer landed. Per list
         // because each arrives empty on its own, a merely COLD cache included.

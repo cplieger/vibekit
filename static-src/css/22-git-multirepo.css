@@ -247,12 +247,16 @@
   white-space: nowrap;
 }
 
-.git-repo-ahead {
-  color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary));
-}
-
+/* Ahead and behind are COUNTS, and a count needs no hue — which is also how
+   VS Code renders them (a colourless `↑N ↓M` label beside a sync icon, see
+   extensions/git/src/statusbar.ts, where the entry sets no colour at all). The
+   two tints they used to carry each claimed a second meaning for a hue that
+   means one thing elsewhere: amber is "modified" app-wide, and accent violet is
+   the brand, which says nothing about git. The badge on the git button carries
+   the state; these carry the numbers. */
+.git-repo-ahead,
 .git-repo-behind {
-  color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
+  color: var(--c-text-secondary);
 }
 
 .git-repo-stashes {
@@ -434,12 +438,16 @@
   flex: 0 0 auto;
 }
 
+/* The per-repo dirty mark, and the git button's badge is the AGGREGATE of these,
+   so the two must be the same amber exactly — hence the state ink --c-yellow
+   rather than the destructive-action --c-warning it used to mix, and solid
+   rather than 80% toward transparent. */
 .git-repo-dirty-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--c-warning) 80%, transparent);
+  background: var(--c-yellow);
   margin-inline-start: var(--sp-1);
 }
 
@@ -635,6 +643,7 @@
   padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   width: 100%;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1098,8 +1107,8 @@ a.git-pr-row-title:hover {
 }
 
 /* Cloned indicator: a STILL green circle. "Cloned" is a settled fact about a repo,
- * and this app spends motion on unsettled states only — the rule `.status-dot`
- * states for itself one file over.
+ * and this app spends motion on unsettled states only — the rule the sidebar's
+ * connection mark states for itself one file over.
  *
  * It used to carry a `vk-ping` ripple, on the stated grounds that the sidebar's
  * connected dot did too. That dot's ping was removed for this exact reason and

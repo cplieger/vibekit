@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -49,13 +50,17 @@ func CmdSetDraft(ctx context.Context, chats ChatStore, bus Broadcaster, cmd *vib
 
 // broadcastComposer publishes draft_changed for a write that landed, and
 // does nothing for one that did not. A nil state means no record, or the
-// same value already stored.
+// same value already stored. The frame carries the `chat` stamp from
+// state.Version, which the store filled under the chat's lock, because the
+// composer is part of the chat projection the digest certifies.
 func broadcastComposer(ctx context.Context, bus Broadcaster, chatID vibekit.ChatID, state *vibekit.ComposerState) {
 	if state == nil {
 		return
 	}
-	bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventDraftChanged, chatID, vibekit.DraftChangedPayload{
+	frame := vibekit.NewEvent(vibekit.EventDraftChanged, chatID, vibekit.DraftChangedPayload{
 		Text:        state.Text,
 		Attachments: state.Attachments,
-	}))
+	})
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), state.Version)
+	bus.Broadcast(ctx, frame)
 }

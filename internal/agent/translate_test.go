@@ -20,9 +20,9 @@ import (
 
 func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
 	msg := &vibekit.RPCResponse{
 		Method: "session/update",
@@ -43,7 +43,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 
 func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent("c1", newChunkMsg("one"))
 	firstID := h.stageTurnBuffer(t, "c1").MessageID
@@ -170,7 +170,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+			_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 			if tc.setup != nil {
 				tc.setup(h)
 			}
@@ -188,7 +188,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 
 func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	raw := json.RawMessage(`{"sessionUpdate":"plan","entries":[{"content":"step 1","priority":"high","status":"pending"}]}`)
 	h.translateACPEvent("c1", &vibekit.RPCResponse{
@@ -208,9 +208,9 @@ func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 
 func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
 	// and the params are FLAT ({sessionId, toolCall, options}); the option id
 	// is camelCase `optionId`. (The pre-fix shape nested id+params inside
@@ -238,7 +238,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Each of these must be a silent no-op, not a panic.
 	bad := []*vibekit.RPCResponse{
@@ -291,7 +291,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 	for _, p := range payloads {
 		b.Run(p.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
+			_, _ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -337,7 +337,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -350,7 +350,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, before := h.bus.fanout.Bounds()
+		before := h.bus.fanout.Position().Head
 		var idx int
 		if len(data) > 0 {
 			idx = int(data[0]) % len(methods)
@@ -361,7 +361,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 		}
 		// Must not panic.
 		h.translateACPEvent("fuzz", msg)
-		if _, head := h.bus.fanout.Bounds(); head < before {
+		if head := h.bus.fanout.Position().Head; head < before {
 			t.Errorf("event head went backwards from %d", before)
 		}
 	})
@@ -389,7 +389,7 @@ func FuzzTranslateMCP(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -427,7 +427,7 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})

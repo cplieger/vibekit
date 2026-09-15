@@ -35,7 +35,7 @@ type RouteRegistrar interface {
 type bridgeChatRecords interface {
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) (string, error)
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	// UpdateMessage amends ONE persisted message by id and NO-OPS when that id
 	// is absent, which is what a truncation leaves (amendLostReason).
@@ -44,11 +44,16 @@ type bridgeChatRecords interface {
 
 // chatRecords is the runtime's field type: a UNION of the narrower views the
 // composition root passes on to bridgeChatRecords, command.ChatStore and
-// translate.ChatRecords. The runtime itself calls only Get, List and Mutate.
+// translate.ChatRecords. The runtime itself calls only Get, List, Mutate and
+// Exists.
 type chatRecords interface {
 	bridgeChatRecords
 
 	List(ctx context.Context) []vibekit.ChatHeader
+	// Exists is the digest resolver's `chat` gone predicate: file present and not
+	// tombstoned, read under NO per-chat mutex, because Mutate holds that mutex
+	// across an fsynced file rewrite the resolver must never wait out.
+	Exists(id vibekit.ChatID) bool
 	// SetDraft and SetAttachments are passed on to the command dispatcher.
 	SetDraft(ctx context.Context, id vibekit.ChatID, text string) (*vibekit.ComposerState, error)
 	SetAttachments(ctx context.Context, id vibekit.ChatID, paths []string) (*vibekit.ComposerState, error)
@@ -62,6 +67,9 @@ type chatRecords interface {
 type pushNotifier interface {
 	HasSubscribers() bool
 	Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject)
+	// Retract drops any push about subject still held for a later delivery: the
+	// ask was answered, so a nudge about it has nothing left to say.
+	Retract(subject vibekit.PushSubject)
 }
 
 // pushService is the runtime's whole view of push: the send half plus the two

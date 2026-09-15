@@ -63,10 +63,6 @@ vi.mock("./store.js", async (importOriginal) => ({
   relatchTurnVerdict: vi.fn(),
   latchFieldsFor: () => ({}),
 }));
-vi.mock("./tab-freshness.js", async () => ({
-  ...(await import("./__test-helpers__/tab-freshness-mock.js")).tabFreshnessMock,
-  syncEpoch: () => 0,
-}));
 // `importOriginal` rather than a name list: Browser Mode links a factory mock for
 // real, so every name ANY module in this graph reaches has to exist on it —
 // `transport.js` alone imports three. Spreading the real module keeps that

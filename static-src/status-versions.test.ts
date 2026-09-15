@@ -33,9 +33,22 @@ vi.mock("@cplieger/ui-primitives/announce", () => ({ announce: vi.fn() }));
 const { setStatus, initStatusVersions, refreshRuntimeLine } = await import("./status.js");
 const { loadVersions, getVersions, _resetVersionsForTest } = await import("./versions.js");
 
+/** The footer as `static/index.html` authors it, minus what no writer here touches.
+ *
+ *  `#account-btn` is REQUIRED: `setStatus` writes its `data-tooltip` (the connection
+ *  state is the trigger's DESCRIPTION now, where it used to be the dot's flipping
+ *  `aria-label`), and `dom.ts`'s `byId` throws `Missing element: #account-btn`
+ *  without it — five cases in this file call `setStatus`.
+ *
+ *  It needs NO `#st-auth-sep`: `status.ts` never reaches `setAuthLine`, whose only
+ *  callers are in `settings.ts`. `#user-email` is not required by any writer this
+ *  file exercises either; it is here because the fixture's job is to model the real
+ *  markup. */
 function card(): void {
   document.body.innerHTML = `
-    <button id="status-dot"></button>
+    <button type="button" id="account-btn">
+      <span id="status-dot"></span><span id="user-email"></span>
+    </button>
     <span id="status-card">
       <span id="st-ws">-</span><span id="st-kiro">-</span><span id="st-auth">-</span>
     </span>`;

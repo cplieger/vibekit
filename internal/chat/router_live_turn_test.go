@@ -31,10 +31,16 @@ type liveTurnPage struct {
 	LiveTurn *struct {
 		Message   vibekit.Message `json:"message"`
 		ChunkSeq  int64           `json:"chunk_seq"`
+		BlockBase int             `json:"block_base"`
 		Truncated bool            `json:"truncated"`
 	} `json:"live_turn"`
 	Messages []json.RawMessage `json:"messages"`
 }
+
+// liveTurnFixtureBase is the fixture's block base, NON-ZERO on purpose: a zero would
+// be indistinguishable from the field being absent, which is exactly the state
+// encoding/json leaves behind for an unknown key.
+const liveTurnFixtureBase = 117
 
 // liveTurnFixture is one in-flight turn of textBytes, in BOTH carriers the way the
 // buffer's own snapshot produces it: the flat field the export path reads and the block
@@ -50,6 +56,7 @@ func liveTurnFixture(textBytes int) vibekit.LiveTurn {
 			Blocks:  []vibekit.Block{{Type: vibekit.BlockText, Text: text}},
 		},
 		ChunkSeq:  7,
+		BlockBase: liveTurnFixtureBase,
 		Truncated: true,
 	}
 }
@@ -68,7 +75,7 @@ func seedTranscript(t *testing.T, s *Store, id vibekit.ChatID, n, bytesEach int)
 			},
 			fatMessage("a"+strconv.Itoa(i), bytesEach))
 	}
-	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(id)
 		c.Messages = msgs
 		return true
@@ -129,6 +136,14 @@ func TestChatGet_CarriesTheInjectedLiveTurn(t *testing.T) {
 	if !page.LiveTurn.Truncated {
 		t.Errorf("live_turn.truncated = false, want true: the cap withheld part of the message, " +
 			"and a reader shown the tail with nothing saying so reads it as the whole reply")
+	}
+	// Asserted through the ROUTE rather than off the struct: encoding/json ignores a key
+	// the mirror above does not declare, so a renamed tag would leave every other
+	// assertion here green while the newest field stopped being covered at all.
+	if got, want := page.LiveTurn.BlockBase, liveTurnFixtureBase; got != want {
+		t.Errorf("live_turn.block_base = %d, want %d: the cap keeps the TAIL of the block array "+
+			"and re-indexes it from zero, so without the base on the wire every later "+
+			"message_chunk lands at the wrong position", got, want)
 	}
 	// The live turn is a SIBLING of the window, never spliced into it: `messages` means
 	// what the file holds, which is what keeps has_more, turn_offset, turn_segment_closed

@@ -52,7 +52,7 @@ import (
 
 	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 const (

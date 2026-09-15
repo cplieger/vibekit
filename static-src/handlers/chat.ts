@@ -9,7 +9,8 @@ import { dropDecisions } from "../decision-dock.js";
 import { forgetDeferredCue } from "../agent-finished-cue.js";
 import { dropComposerState, adoptRemoteComposerState } from "../composer-state.js";
 import { forgetSteerResend } from "../steer-resend.js";
-import { parseRoute, replaceRoute } from "../router.js";
+import { parseRoute } from "../route-path.js";
+import { replaceRoute } from "../router.js";
 
 // Defensive `=== undefined` guards: the wire decoder marks payloads
 // non-nullable but the test suite (and a malformed frame at runtime)
@@ -29,7 +30,7 @@ onSSE("chat_created", (_chatID, header) => {
   // /chat/{id}, so what remains is a chat becoming active while the route
   // is still "/" — including one created on another device. Never hijack
   // a reader who has navigated elsewhere meanwhile.
-  const route = parseRoute(location.pathname);
+  const route = parseRoute(location.pathname, location.hash);
   if (header.id === getActiveId() && route.kind === "chat" && route.id === "") {
     replaceRoute({ kind: "chat", id: header.id });
   }

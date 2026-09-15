@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -154,12 +155,16 @@ func TestHandleShellInterception_HeldAdmissionReturns409Immediately(t *testing.T
 // its "was the user message persisted" gate.
 type shellStoreDeps struct {
 	*benchDeps
-	appended []vibekit.Message
+	appended  []vibekit.Message
+	mutations int
 }
 
-func (d *shellStoreDeps) Mutate(_ context.Context, _ vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) error {
-	mutate(&vibekit.Chat{}, false)
-	return nil
+func (d *shellStoreDeps) Mutate(_ context.Context, _ vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) (string, error) {
+	if !mutate(&vibekit.Chat{}, false) {
+		return "", nil
+	}
+	d.mutations++
+	return strconv.Itoa(d.mutations), nil
 }
 
 func (d *shellStoreDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) {

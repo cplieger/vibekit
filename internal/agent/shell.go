@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/web-terminal-engine/v5/terminal"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // shutdownBudget bounds one PTY teardown. Sized above the engine's 5s reap

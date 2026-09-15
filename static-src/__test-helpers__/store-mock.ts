@@ -144,13 +144,16 @@ export const storeMock = {
   // claiming a seq would make a fetched live turn read as stale for a reason production
   // did not supply.
   chunkWatermark: vi.fn(() => undefined),
-  // The capped-snapshot marker. The READER answers the empty case, which is what a
-  // mock owes: one claiming a message is truncated would make a renderer test pass
-  // for a reason production did not supply.
-  noteTruncatedSnapshot: vi.fn(),
+  // The adopted-snapshot record: the block window a capped payload delivered, and
+  // whether it withheld anything. Both READERS answer the empty case, which is what a
+  // mock owes: one claiming a message is truncated would make a renderer test pass for
+  // a reason production did not supply, and one claiming a nonzero base would place a
+  // live chunk somewhere production would not.
+  noteAdoptedSnapshot: vi.fn(),
+  snapshotBlockBase: vi.fn(() => 0),
   isTruncatedSnapshot: vi.fn(() => false),
-  clearTruncatedSnapshot: vi.fn(),
-  clearTruncatedSnapshots: vi.fn(),
+  clearAdoptedSnapshot: vi.fn(),
+  clearAdoptedSnapshots: vi.fn(),
 
   setCurrentMode: vi.fn(),
   setSupervisedMode: vi.fn(),

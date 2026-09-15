@@ -108,7 +108,7 @@ export interface CloseTabArgs {
 /** How long a close dispatch may stay unanswered before the pending-op
  *  machine VERIFIES instead: the removal stays applied, nothing restores,
  *  and a re-list settles it on authoritative evidence. */
-export const CLOSE_CONFIRM_MS = 5000;
+const CLOSE_CONFIRM_MS = 5000;
 
 /** What the server committed for a close. `closed` is a list (a parent and
  *  its children close as one mutation), and empty is a normal answer —

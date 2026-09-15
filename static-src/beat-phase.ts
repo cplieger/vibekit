@@ -16,23 +16,57 @@ function periodMs(): number {
   return s.endsWith("ms") ? n : n * 1000;
 }
 
-/** One entry per element that has been stamped, so re-stamping cannot loop: writing
- *  the delay shifts a running animation's timeline, which can fire `animationstart`
- *  again. Weak, so a dot leaving the DOM takes its entry with it. */
-const stamped = new WeakSet<Element>();
+/** The beat `startTime` this element was last stamped FOR, keyed weakly so a dot
+ *  leaving the DOM takes its entry with it.
+ *
+ *  NOT a has-been-stamped flag, and that distinction is the whole of it: re-inserting
+ *  an attached node destroys and recreates its animation, so a dot stamped once can
+ *  need stamping again, and a permanent flag left it off the shared grid forever with
+ *  nothing able to put it back. `tabs-drag.ts` reaches that on every completed drag.
+ *
+ *  `startTime` is what tells a real restart from our own write echoing back. Measured
+ *  in Chromium 151: writing the delay on a running beat fires NO `animationstart` and
+ *  leaves `startTime` untouched (101 on both sides) while `currentTime` advances, and a
+ *  re-seat fires exactly one event and mints a new `startTime` (101 to 851) with
+ *  `currentTime` back at 100. So the flag this replaced was guarding an event that does
+ *  not arrive. It is keyed on the animation instance rather than on that measurement
+ *  because being wrong the other way is a permanent visual loop: an engine that DID
+ *  re-fire on the write still cannot make this re-stamp, because the echo carries the
+ *  `startTime` already recorded. */
+const stampedFor = new WeakMap<Element, number>();
+
+/** This element's beat, BY NAME: `getAnimations({subtree:true})` also returns the
+ *  pseudo-element's animation, which is where the beat lives, and any other animation
+ *  the element happens to carry. `undefined` while the animation is PENDING, which only
+ *  a new one can be, so that case stamps. */
+function beatStartTime(el: Element): number | undefined {
+  for (const a of el.getAnimations({ subtree: true })) {
+    if ((a as CSSAnimation).animationName !== NAME) {
+      continue;
+    }
+    return a.startTime === null ? undefined : Number(a.startTime);
+  }
+  return undefined;
+}
 
 function stamp(el: Element): void {
-  if (stamped.has(el) || !(el instanceof HTMLElement)) {
+  if (!(el instanceof HTMLElement)) {
     return;
   }
   const period = periodMs();
   if (period === 0) {
     return;
   }
-  stamped.add(el);
+  const start = beatStartTime(el);
+  if (start !== undefined) {
+    if (stampedFor.get(el) === start) {
+      return;
+    }
+    stampedFor.set(el, start);
+  }
   // Negative, so an animation created now behaves as though it began at the last
   // boundary of a grid anchored at the performance origin — the same grid for every
-  // dot, whenever it starts.
+  // dot, whenever it starts, and the same grid again after a restart.
   el.style.setProperty("--beat-phase", `${String(-(performance.now() % period))}ms`);
 }
 
@@ -62,8 +96,8 @@ export function initBeatPhase(): void {
 
 /** Test seam. Detaches rather than only clearing the flag: a reset that left the
  *  listener up would add a second one on the next init, and two stamps racing one
- *  element is the shape this module's WeakSet exists to make harmless — a seam
- *  should not depend on that guard to stay correct. */
+ *  element is the shape this module's per-instance record exists to make harmless — a
+ *  seam should not depend on that guard to stay correct. */
 export function resetBeatPhaseForTest(): void {
   attached?.abort();
   attached = undefined;

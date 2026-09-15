@@ -240,7 +240,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []vibekit.TerminalOutputPa
 		id uint64
 	}
 	var found []idPayload
-	for _, e := range h.bus.fanout.Buffered() {
+	for _, e := range h.bus.fanout.Snapshot() {
 		var env struct {
 			Type    string                        `json:"type"`
 			Payload vibekit.TerminalOutputPayload `json:"payload"`
@@ -249,7 +249,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []vibekit.TerminalOutputPa
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
 		if env.Type == string(vibekit.EventTerminalOutput) {
-			found = append(found, idPayload{p: env.Payload, id: e.ID})
+			found = append(found, idPayload{p: env.Payload, id: e.Offset})
 		}
 	}
 	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })
@@ -513,7 +513,7 @@ func terminalExitedPayloads(t *testing.T, h *Runtime) []vibekit.TerminalExitedPa
 		id uint64
 	}
 	var found []idPayload
-	for _, e := range h.bus.fanout.Buffered() {
+	for _, e := range h.bus.fanout.Snapshot() {
 		var env struct {
 			Type    string                        `json:"type"`
 			Payload vibekit.TerminalExitedPayload `json:"payload"`
@@ -522,7 +522,7 @@ func terminalExitedPayloads(t *testing.T, h *Runtime) []vibekit.TerminalExitedPa
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
 		if env.Type == string(vibekit.EventTerminalExited) {
-			found = append(found, idPayload{p: env.Payload, id: e.ID})
+			found = append(found, idPayload{p: env.Payload, id: e.Offset})
 		}
 	}
 	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })

@@ -219,8 +219,8 @@ func (s stubMeteringStore) AppendMessage(context.Context, vibekit.ChatID, *vibek
 	return nil
 }
 
-func (s stubMeteringStore) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
-	return s.mutateErr
+func (s stubMeteringStore) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+	return "", s.mutateErr
 }
 
 func (s stubMeteringStore) UpdateMessage(context.Context, vibekit.ChatID, string, func(*vibekit.Message)) error {

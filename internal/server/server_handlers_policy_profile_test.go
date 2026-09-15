@@ -28,6 +28,7 @@ func (f *fakeEngine) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	f.events = append(f.events, evt)
 }
 func (f *fakeEngine) Shutdown(context.Context) error { return nil }
+func (f *fakeEngine) Epoch() string                  { return "fake-epoch" }
 
 // fakeReload records whether the profile change asked for a session recycle.
 type fakeReload struct{ restarts int }

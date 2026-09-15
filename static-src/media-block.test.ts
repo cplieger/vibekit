@@ -46,6 +46,16 @@ describe("mediaElementFor", () => {
     expect(mediaElementFor("/etc/passwd", "")).toBeNull();
   });
 
+  // `/uploads` is a granted browse mount, so a file the reader dropped into the
+  // composer is served by the same route. This gate tested a literal
+  // `/workspace/` prefix, so moving the upload folder out of the workspace turned
+  // every such reference back into a bare broken `<img>`.
+  it("serves a file under the uploads root", () => {
+    const a = mediaElementFor("/uploads/clip.mp3", "");
+    expect(a?.tagName).toBe("AUDIO");
+    expect(a?.getAttribute("src")).toBe("/api/file/download?path=%2Fuploads%2Fclip.mp3");
+  });
+
   it("gives anything else a download affordance", () => {
     const link = mediaElementFor("/workspace/out/report.zip", "the report");
     expect(link?.tagName).toBe("A");

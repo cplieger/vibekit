@@ -180,7 +180,7 @@ func TestHandleList_CarriesLastTurnOutcomeOnTheWire(t *testing.T) {
 	for _, sc := range seed {
 		msg := vibekit.Message{ID: "m1", Role: vibekit.RoleAssistant, Content: "x"}
 		msg.TurnOutcome = sc.outcome
-		if err := s.Mutate(t.Context(), vibekit.ChatID(sc.id), func(c *vibekit.Chat, _ bool) bool {
+		if _, err := s.Mutate(t.Context(), vibekit.ChatID(sc.id), func(c *vibekit.Chat, _ bool) bool {
 			c.Name = sc.id
 			c.Messages = []vibekit.Message{msg}
 			return true

@@ -244,6 +244,7 @@ describe("the per-outcome estimate", () => {
     expect(wholeTurn(t)).toBe(TEXT_PX + GAP_PX + 71 + GAP_PX + TEXT_PX);
   });
 
+  // A literal, not a read of `BLOCK_ESTIMATE_PX`: the table is what is under test.
   it("prices a WORKFLOW LAUNCH higher, because it mounts a run card and not a tool row", () => {
     const t = turn([
       assistant(
@@ -260,7 +261,7 @@ describe("the per-outcome estimate", () => {
         ],
       ),
     ]);
-    expect(wholeTurn(t)).toBe(79);
+    expect(wholeTurn(t)).toBe(71);
   });
 
   it("prices a blockless message at one row", () => {

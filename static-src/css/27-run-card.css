@@ -24,42 +24,14 @@
    ========================================================================== */
 
 .run-card {
-  /* THE CARD'S FLOOR, AS A CONTENT HEIGHT. Containment reasoning is at `.tool-call`
-     (14-tools.css); what is specific here is which regions a skipped card is made
-     of. Only the BODY is inside the disclosure, so the head, its own
-     `margin-block-end` and the FOOT are present whatever the disclosure says — and
-     the foot is what the old "the header plus one step row" claim omitted, along
-     with that margin. So the smallest real card is a COLLAPSED one: head + margin +
-     foot, and it is what this reserves.
-
-     MEASURED over 200 cards (`run-card-metrics.test.ts`), against `auto 4rem`'s
-     rendered 66px:
-
-       tier     collapsed   open with one step
-       fine     79px        129px
-       coarse   107px       165px
-
-     So 4rem was below the floor in BOTH states rather than for a tail of cards, and
-     the list GREW as the reader scrolled. An expression rather than a literal
-     because BOTH the head and the foot move on the pointer tier: the head is on
-     `--btn-h`, the foot is `.run-open`'s target — the app-wide floor's, so
-     `var(--hit-floor)` — plus its own padding and hairline, and the border is the box
-     model's to add. Exact on all three tiers the metrics suite measures; the two
-     coarse ones are identical, since nothing here keys on width.
-
-     THE FOOT TERM IS NOT TIER-INVARIANT, and it read `1.5rem` here until the
-     `.run-open` repair below: 33px on a fine pointer, 53px on a coarse one. While
-     that link declared its own `1.5rem` the foot was 33px at every tier and the
-     literal was exact; the moment the link joined the floor the reserve under-stated
-     a coarse card by 20px (measured -3,620px over this suite's list, the error times
-     the 181 cards Chromium had not rendered), and the coarse rows above moved with
-     it. A term restating another rule's height is what made a hit-target fix a
-     virtualization defect, so read the token both of them read.
-
-     ONE ESTIMATE CANNOT BE EXACT FOR BOTH STATES, so this is the smaller: an open
-     card under-states, which makes the container grow, where reserving the open
-     height would make it SHRINK under every reader scrolling past a folded card. */
-  --run-card-content: calc(var(--btn-h) + var(--sp-2) + var(--hit-floor) + var(--sp-1) * 2 + 1px);
+  /* The COLLAPSED card's content height — head, foot row, foot hairline — which is
+     the smallest real card, since only the body is inside the disclosure. Reads the
+     tokens the head and `.run-open` read so it moves with the pointer tier; a
+     literal here under-stated a coarse card by 20px once. Equal to
+     `--subagent-content` (14-tools.css), the same shape. Under-stating an OPEN card
+     is the right error: the container grows rather than shrinking under a reader.
+     `block-heights.ts` shadows the resolved values. */
+  --run-card-content: calc(var(--btn-h) + max(var(--hit-floor), var(--ctl-h-dense)) + 1px);
 
   content-visibility: auto;
   contain-intrinsic-size: auto var(--run-card-content);
@@ -122,17 +94,10 @@
      what made sibling cards in one transcript disagree by a few pixels. */
   min-height: var(--btn-h);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   min-width: 0;
   transition: background var(--dur-micro) var(--ease-standard);
-
-  /* The gap to whatever follows lives HERE rather than on each follower, and that
-     is what the hover tint forces. `:hover` paints the head's own padding box, so
-     a follower supplying its own top padding still ends up flush against a
-     coloured edge the moment the pointer lands — which is exactly how the deleted
-     pip row read. One margin on the head is a gap no following region can lose,
-     and it collapses with the alert's own margin rather than adding to it. */
-  margin-block-end: var(--sp-2);
 }
 
 /* The shared box-header recipe, not an accent tint of its own; 14-tools.css
@@ -235,32 +200,30 @@
    two pixels away, in the one channel the card uses for its own edge. The
    non-colour channel is the alert's own text: `fundamentals/run-card.ts` writes
    the state into `alert.textContent`, on a `role="status"` live region. */
+/* A notice is a hue wash of its state over the container, never a rung
+   (vibekit-ui.md "Notices"). Every kind `renderAlert` writes has an arm, so the
+   base carries no fill. */
 .run-alert {
-  margin: 0 var(--sp-3) var(--sp-2);
+  margin: var(--sp-2) var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r);
   font-size: var(--fs-sm);
   line-height: 1.5;
-  background: var(--c-bg-tertiary);
-  color: var(--c-text-secondary);
+  color: var(--c-text-primary);
 }
 
 .run-alert[data-kind="paused"] {
   background: color-mix(in srgb, var(--c-blue) 8%, transparent);
-  color: var(--c-text-primary);
 }
 
 .run-alert[data-kind="failed"] {
   background: color-mix(in srgb, var(--c-red) 8%, transparent);
-  color: var(--c-text-primary);
 }
 
-/* An unanswered ask. The one alert a click resolves, so it takes the wants-you ink
-   rather than the informational blue a pause gets. */
-.run-alert[data-kind="input"] {
-  border-inline-start-color: var(--c-yellow);
+/* The two stopped-short states share the amber the footer glyph gives them. */
+.run-alert[data-kind="input"],
+.run-alert[data-kind="stopped"] {
   background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
-  color: var(--c-text-primary);
 }
 
 /* --------------------------------------------------------------------------
@@ -274,14 +237,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: 0 var(--sp-3) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  border-block-start: 1px solid var(--c-border);
   min-width: 0;
   overflow: hidden;
   transition: height var(--dur-standard) var(--ease-standard);
 }
 
 .run-body[aria-hidden="true"] {
-  padding-block-end: 0;
+  padding-block: 0;
+  border-block-start: none;
 }
 
 .run-steps {
@@ -294,7 +259,7 @@
 .run-step {
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  background: var(--c-bg-primary);
+  background: var(--c-well);
   overflow: hidden;
   min-width: 0;
 }
@@ -343,6 +308,7 @@
   padding: var(--sp-1) var(--sp-2);
   min-height: var(--btn-h);
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   min-width: 0;
   color: inherit;
@@ -558,17 +524,17 @@
    Foot — the outcome, and the way out
    -------------------------------------------------------------------------- */
 
-/* Tinted like the turn card's own footer, so the run reads as bracketed the same
-   way a turn does. Outside the disclosure: a collapsed card still states its
-   result, which is the rule the delegated-work card's footer established. */
+/* Outside the disclosure, so a collapsed card still states its result. No block
+   padding: the row IS `.run-open`'s hit box. Box rung with a rule, like every
+   nested foot (vibekit-ui.md "Bands"). */
 .run-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-1) var(--sp-3);
+  padding-block: 0;
+  padding-inline: var(--sp-3);
   border-block-start: 1px solid var(--c-border);
-  background: var(--c-bg-tertiary);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
   font-variant-numeric: tabular-nums;
@@ -593,7 +559,16 @@
      24px on a fine pointer, 44px on a coarse one, so it follows the tier with no
      value here to keep in step. The `1.5rem` this used to declare was (0,1,0) and
      beat that zero-specificity floor, which left the link at 24px under a finger.
-     The `padding-inline` is the hover wash's inset, not the target. */
+     The `padding-inline` is the hover wash's inset, not the target.
+
+     THE BAND IS THIS BOX, now that the foot carries no block padding: the floor
+     alone would leave the row at 24px on a mouse where every other card foot is 32,
+     so this declares the same band they do — the dense control height, floored by the
+     target. (0,1,0), which is what lets it raise the zero-specificity floor rather
+     than replace it. Its hover wash then spans the band and lands flush in the card's
+     bottom trailing corner, which the card's own clip rounds (`web.md`: a child flush
+     inside a clipping parent takes the parent's corner). */
+  min-height: max(var(--hit-floor), var(--ctl-h-dense));
   padding-inline: var(--sp-1);
   border-radius: var(--r-sm);
   transition:

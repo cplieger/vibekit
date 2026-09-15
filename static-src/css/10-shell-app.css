@@ -3,7 +3,29 @@
   border-inline-end: 1px solid var(--c-border);
   display: flex;
   flex-direction: column;
+
+  /* Pays the BOTTOM inset for the whole panel, which is why `.sidebar-footer`
+     below carries no `env()` term of its own: the footer is this element's last
+     child, so a term there would be charged twice. */
   padding-bottom: env(safe-area-inset-bottom, 0);
+
+  /* THIS PANEL'S TWO ENDS ARE ONE BAND, and the value is the app's chrome band.
+     Both ends are the same shape — `flex` plus `align-items: center`, a leading
+     identity element, trailing `.icon-btn`s, `flex-shrink: 0` — at opposite ends of
+     one panel, so a reader reads them as a pair.
+
+     `--titlebar-h` rather than a value of the sidebar's own, because the HEADER is
+     already in that token's declared population: it is one of the bars that meet at
+     the top of the app, and 01-tokens.css states the reason there (their bottom
+     hairlines have to line up, which is why the header adds the top inset as
+     padding while the token itself folds none in). The header spelled the token's
+     value as a literal, and the footer declared a bare `height: 3.4375rem` (55px) —
+     a single-user literal, unchanged since the first commit, derived from nothing
+     measurable and 3px off both this panel's other end and that token. Measured
+     before: the footer's slack around the same 32px `.icon-btn` was 11.5px against
+     the header's 9.5px, so the two ends were within 2px of each other by accident
+     rather than by declaration. */
+  --sidebar-band-h: var(--titlebar-h);
 
   /* BOTH INLINE EDGES, and the bare `env()` rather than the `max()` shape the bar
      above uses: this element declares no inline padding of its own, so there is no
@@ -15,8 +37,8 @@
   padding-inline: env(safe-area-inset-left, 0) env(safe-area-inset-right, 0);
   position: fixed;
   top: 0;
-  bottom: 0;
   left: 0;
+  height: var(--app-h);
   width: var(--sidebar-w);
   z-index: 2;
 }
@@ -26,7 +48,7 @@
   align-items: center;
   justify-content: space-between;
   padding: env(safe-area-inset-top, 0) var(--sp-4) 0;
-  min-height: calc(3.25rem + env(safe-area-inset-top, 0));
+  min-height: calc(var(--sidebar-band-h) + env(safe-area-inset-top, 0));
   border-block-end: 1px solid var(--c-border);
   flex-shrink: 0;
 }
@@ -37,6 +59,7 @@
   gap: var(--sp-2);
   color: var(--c-accent);
   cursor: default;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -134,7 +157,7 @@
      and .list-row-btn say so outright, .pill / .chat-opt-btn / .picker-btn
      change background alone, and .tab-close mixes toward the text colour. In
      this app accent-on-hover is the TEXT-CONTROL idiom instead — .steer-note-more,
-     .ev-in-more, .steer-more, .steer-note-more, a.git-pr-row-title — so
+     .ev-in-more, .steer-note-more, a.git-pr-row-title — so
      spending it here made a primary action read as a link. `color` left the
      transition list with the declaration: nothing else writes this element's
      colour in any state (verified by a CSSOM walk over the whole bundle:
@@ -176,6 +199,7 @@
  * by startDrag in tabs.ts. -webkit-touch-callout covers the long-
  * press context menu that iOS shows before user-select kicks in. */
   &.dragging {
+    -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
   }
@@ -204,11 +228,14 @@
   padding-block: var(--sp-2);
   padding-inline: var(--sp-3) var(--sp-2);
 
-  /* A transparent border is reserved on EVERY tab so toggling the active
-   * outline below never shifts the row. This is what the old design got wrong
-   * in miniature: it drew a 2px accent border on the active tab only and paid
-   * for it with a compensating `padding-inline-start`, so the selected row's
-   * text sat 2px off from every other row's. */
+  /* A transparent border is reserved on EVERY tab, and it outlived the selected
+   * outline it was added for (70-selection.css records why that edge is gone):
+   * `.sidebar-action-btn` above draws a real 1px border and the two border boxes
+   * have to coincide edge for edge, which is what makes their corners share a
+   * centre. This is also what the old design got wrong in miniature — it drew a
+   * 2px accent border on the active tab only and paid for it with a compensating
+   * `padding-inline-start`, so the selected row's text sat 2px off from every
+   * other row's. */
   border: 1px solid transparent;
   border-radius: var(--r);
   cursor: pointer;
@@ -245,9 +272,46 @@
   }
 
   /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
-   * only filled row in the strip is the selected one. */
-  &:not(.active):hover {
-    background: var(--c-hover);
+   * only filled row in the strip is the selected one. The lift is the
+   * SELECTION-TINTED wash (01-tokens.css) rather than the ladder's achromatic
+   * one: on this strip the neutral film was the only untinted fill among rest,
+   * selected and dragging, and it previews the fill the row is one click from.
+   *
+   * `any-hover`, never `hover`, per web.md — and unlike the SELECTED row's
+   * hover next door, this rule was never gated, so a tap latched the wash on
+   * until the next tap elsewhere. That matters more now that the wash carries
+   * the accent: a latched violet row reads as selected. */
+  @media (any-hover: hover) {
+    &:not(.active):hover {
+      background: var(--c-hover-select);
+    }
+  }
+
+  /* The press channel a touchscreen gets instead, and the reason it has to be
+   * written HERE: 03-base.css's universal press floor is scoped to
+   * `:where(button, summary, [role="button"])`, and a tab row is a div with
+   * `role="tab"`, so an inactive row had hover feedback and no press feedback
+   * at all — reported as the selected row answering the pointer while none of
+   * the others did. One rung deeper in the same wash rather than the ladder's
+   * `--c-press`, so one row speaks one vocabulary. */
+  &:not(.active):active {
+    background: var(--c-press-select);
+  }
+
+  /* And the row YIELDS its press to the ×, which is the other half of the rule
+   * 70-selection.css states for a selected row: `:active` propagates to every
+   * ancestor, so without this, pressing the × steps the whole row while the ×
+   * paints its own press inside it, and the wrong thing lights up under the
+   * finger. The value is the rung BELOW — this ladder has two, so the row falls
+   * back to its hover fill, where a selected row falls back to `-hover`, its own
+   * middle rung.
+   *
+   * Scored (0,4,0) against the press rule's (0,3,0), so it wins on specificity.
+   * It cannot be written as the honest `:not(:has(.tab-close:active))` guard on
+   * that rule for the reason recorded at the selected twin: four pseudo-classes
+   * is over the fleet's `selector-max-pseudo-class` of 3. */
+  &:not(.active):has(.tab-close:active) {
+    background: var(--c-hover-select);
   }
 
   /* The active tab is a FILLED row, not a bordered one: the whole background
@@ -259,9 +323,9 @@
    * one edge, which is easy to miss on a dense strip and impossible to see at
    * all once a row is indented (a sub-tab's nesting arrow sits exactly where
    * the border was). A fill is unambiguous at any indent. */
-  /* The active row's fill/edge/ink triple lives in 70-selection.css with
-   * every other selected surface. Its hover and press stay here: they score
-   * (0,3,0), so they still beat that file's (0,2,0) resting rule. */
+  /* The active row's fill/ink pair lives in 70-selection.css with every other
+   * selected surface. Its hover and press stay here: they score (0,3,0), so
+   * they still beat that file's (0,2,0) resting rule. */
 
   /* The active tab DOES get hover feedback — it just cannot be the flat
    * `--c-bg-hover` square the old rule used, which repainted the fill and so
@@ -429,6 +493,7 @@
   animation: drag-gap-open var(--dur-micro) var(--ease-standard) forwards;
   height: 0;
   opacity: 0;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -450,6 +515,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 
   /* The third consumer of the flex-centring fix 15-input.css derives, and the one
@@ -509,8 +575,7 @@
 /* Hover lifts WHATEVER fill the × sits on — flat row, hovered row, or the
    active tab's violet chip — instead of painting the global grey
    --c-bg-hover square, which mismatched the accent fill and vanished
-   against an already-hovered row. Same text-mix construction as
-   --c-selected-border. */
+   against an already-hovered row. */
 .tab-close:hover {
   color: var(--c-text-primary);
   background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
@@ -536,14 +601,174 @@
   background: var(--c-press);
 }
 
-/* Sidebar footer */
+/* Sidebar footer, the panel's other end band (`--sidebar-band-h` above).
+   `min-height` rather than the `height` this declared, so the band is a FLOOR the
+   way the header's is: nothing here exceeds it today (the coarse hit floor lifts the
+   two controls to 44px against a 52px band), and a fixed height is the one shape
+   that could not grow if one ever did. No `env()` term — the panel pays the bottom
+   inset for it. */
 .sidebar-footer {
   flex-shrink: 0;
   padding: 0 var(--sp-4);
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  height: 3.4375rem;
+  min-height: var(--sidebar-band-h);
+
+  /* THE BOUNDARY BETWEEN THE TAB LIST AND THE FOOTER. With many tabs the strip runs
+     right up to the footer and the two read as one column; this is the line that
+     separates them. Same COLOUR token as the header's own hairline and the panel's
+     trailing edge (`--c-border`), and the fleet's hairline WIDTH (`--hairline`,
+     which those two still spell as the literal `1px` — moving them onto the token
+     is a separate change). SOLID, so the panel's two internal boundaries are one
+     treatment rather than two vocabularies (user call, 2026-09-12; it shipped
+     dotted for one day on the reasoning that a second solid rule would read as a
+     repeated one, and the repetition is the point — both ends of the panel close
+     the same way).
+
+     `box-sizing: border-box` (02-reset.css) means it is spent OUT of the band
+     exactly as the header's is, so both of the panel's ends still render the same
+     52px box and both content bands are now 51px. That is the symmetry
+     `sidebar-band-css.test.ts` pins, inverted: the footer used to be the end
+     without a hairline.
+
+     Double-up check, done rather than assumed: `[id="tab-list"]` declares
+     `padding: var(--sp-1) var(--sp-2)` and no bottom margin, and this rule declares
+     no block padding, so the line sits directly under the last tab row's 4px bottom
+     padding with nothing to retune on either side. The border is on the FOOTER,
+     outside the scroller, so it cannot scroll away, and the panel's
+     `padding-bottom: env(safe-area-inset-bottom)` sits BELOW the footer rather than
+     in this seam. `--c-border` is a `color-mix` over `--c-text-primary` declared
+     once (01-tokens.css) and the light block redeclares that ink, so it re-resolves
+     per theme at computed-value time — nothing is added to the light block. */
+  border-block-start: var(--hairline) solid var(--c-border);
+}
+
+/* The footer's identity control: the connection mark and the address are ONE
+   button, and it is the status popup's trigger. A reader presses the row rather
+   than an 8px disc, which is the whole point — the disc was the app's smallest
+   target and the address beside it did nothing but leave for app.kiro.dev.
+
+   The state channels are `.icon-btn`'s, by user instruction — the footer's two
+   controls are a PAIR and must answer the pointer alike — so the hover value below
+   is deliberately the shared class's rather than the app's row-hover recipe
+   (`--c-hover`, vibekit-ui.md "ONE HOVER RECIPE"). `account-btn-css.test.ts` reads
+   both rules out of the sheet and fails when they diverge.
+
+   Button chrome is stripped by NAMED declarations rather than `all: unset`, and
+   the reason is a cascade fact rather than tidiness: that shorthand resets
+   `min-width`/`min-height` at this selector's own (0,1,0), which is what made
+   `.status-dot` INVISIBLE to the app-wide zero-specificity hit floor
+   (61-mcp-tools.css) and forced it to grow an `::after` expander. What actually
+   carries this target is `align-self: stretch` against `.sidebar-footer`'s
+   `min-height: var(--sidebar-band-h)` — 51px of content band at every tier, past
+   both the 24px fine floor and the 44px coarse one — so the floor's `min-height`
+   is a BACKSTOP here, not the mechanism. Naming the declarations is what keeps that
+   backstop reachable: with `all: unset` a later change that drops the stretch would
+   silently produce an 8px-tall target and nothing would catch it.
+
+   `min-width: 0` below opts out of the floor's OTHER axis on purpose, the way
+   `.send-btn` does: this box is the band's whole width, so a 44px inline floor
+   would be describing nothing. */
+.account-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  /* A <button>'s UA `text-align: center` would centre a short address in the
+     row's slack. `start` is the house idiom for a button that holds a row of
+     text (14-tools.css `.always-allow-preset`, 15-input.css
+     `.chat-options-card`). */
+  text-align: start;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+
+  /* THE WASH BLEEDS `--sp-2` PAST THE CONTENT ON BOTH INLINE EDGES AND NOTHING ON
+     SCREEN MOVES. The pair is exact, not approximate — with W the footer's content
+     width and A the actions cluster's:
+
+       anchor margin box   = W - 12 - A          (flex: 1, one 12px footer gap)
+       button border box   = anchor + 8 + 8      (both margins are negative)
+       button content box  = border box - 8 - 8  = W - 12 - A
+       address             = content - 8 (mark) - 12 (gap) = W - 32 - A
+
+     and before the change the address was W - 8 - 24 - A = W - 32 - A. Identical.
+     Measured before the change at 1280px: the mark's left edge is 16 and the logout
+     button's right edge is 243 at BOTH pointer tiers, which is what the "nothing
+     moved" case encodes. A bare `padding-inline` would step the mark 8px right; no
+     padding at all would run the wash flush into the mark.
+
+     THE LOAD-BEARING STRUCTURAL FACT: the `.sr-only` subject span inside this
+     button is `position: absolute` (40-a11y.css), so it is OUT OF FLOW and this box
+     has exactly TWO flex items. An in-flow subject would take a second `--sp-3` and
+     make the address `W - 44 - A` instead.
+
+     The trailing bleed leaves 4px between this box's edge and the actions cluster,
+     which is real separation and never an ambiguity: only one of the two controls
+     can be hovered at a time, and they hover to the same token.
+
+     BOTH AXES ARE SPELLED, and the block one is not decoration: 02-reset.css's only
+     `button` rule sets `touch-action` and `-webkit-tap-highlight-color` and nothing
+     else, so Chromium's UA `padding-block: 1px` is never reset and would survive a
+     `padding-inline` shorthand here. Harmless on the pixel — this box is
+     `align-self: stretch` at 51px and the address is centred — but it would
+     contradict the claim above that chrome is stripped by named declarations. */
+  padding: 0 var(--sp-2);
+  margin-inline: calc(-1 * var(--sp-2));
+  border-radius: var(--r);
+
+  /* `background` and `color` only, character for character with `.icon-btn`,
+     deliberately omitting `box-shadow` so 03-base.css's universal press wash
+     appears and leaves in one frame on both of the footer's controls. */
+  transition:
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
+
+  /* GATED, unlike `.icon-btn`'s own `&:hover` one rule below, and the divergence is
+     deliberate rather than an oversight: `.icon-btn`'s ungated hover is a
+     pre-existing app-wide property of a shared class and not this change's to fix,
+     while an ungated wash on a 240px row latches under a finger until the next tap
+     elsewhere — far more visible than on a 32px glyph. `any-hover`, never `hover`:
+     the latter reports only the PRIMARY input and drops the rule on every
+     touch-primary device (web.md).
+
+     Measured, both floors, both themes (scripts/css-contrast.py): the three mark
+     inks over this fill are 7.544/4.048 (green), 8.827/4.455 (yellow) and
+     4.844/3.900 (red) dark/light against WCAG 1.4.11's 3:1, and the address ink is
+     11.217/11.795 against 1.4.3's 4.5:1. Nothing is close HOVERED.
+
+     RECORDED RESIDUAL — the one FAIL this control ships. The PRESSED composite is a
+     separate measurement and it is where the mark degrades, in BOTH themes: over
+     `over(--c-press, --c-bg-secondary)` the marks read 4.433/2.878 green,
+     5.187/3.168 yellow and 2.847/2.773 red, so dark red, light green and light red
+     all sit under 3:1 while light yellow clears at 3.168; pressed WHILE hovered
+     every figure drops again (2.259-4.117 dark / 2.333-2.665 light). The mechanism:
+     an inset `box-shadow` paints over its own element's background but BELOW its
+     descendants, so the press film lands on the row AROUND the disc while the disc
+     keeps its hue — painting order read from css-backgrounds-3 rather than measured
+     here. It is a real degradation INTRODUCED by merging the two controls: today the
+     mark IS the button, so the film lands on the DISC. Recorded rather than fixed,
+     for four reasons: the mark's meaning is also spelled in words one row inside the
+     card (`#st-ws`), announced through the live region on every settled change, and
+     published as this trigger's own tooltip; it is app-wide in kind (every mark
+     inside a pressed row has it, the tab strip's activity dots being the largest
+     population); fixing it means exempting this one control from 03-base.css's
+     universal press, which breaks the user's instruction that the footer's two
+     controls answer the pointer alike; and lifting the mark's own fill while pressed
+     is a fourth channel on a mark whose fill IS its state. */
+  @media (any-hover: hover) {
+    &:hover {
+      background: var(--c-bg-tertiary);
+    }
+  }
 }
 
 .sidebar-email {
@@ -567,34 +792,34 @@
   text-box: trim-both cap alphabetic;
   padding-block: 0.35em;
 
-  /* THE TARGET IS THE FOOTER'S WHOLE BAND, not the address's own line box. At
-     `align-self: center` (inherited from .sidebar-footer's `align-items`) this box
-     was its trimmed text plus 0.35em — measured 16.61px tall in a 55px footer — so
-     iOS painted its touch-and-hold highlight as a thin 237x17 strip floating in the
-     middle of the row, which is the "weird rectangle" this fixes. Stretching costs
-     the centring nothing: `align-content: center` centres the in-flow line inside
-     the taller box, and because the box is still a BLOCK container the trim above
-     and `text-overflow: ellipsis` both keep working (a flex or grid container would
-     make the text an anonymous item and drop the ellipsis, since `text-overflow` is
-     not inherited).
+  /* THE TARGET IS THE FOOTER'S WHOLE BAND, and `.account-btn` above is the box that
+     carries it now. Four declarations left with it and each for its own reason:
+     `align-self: stretch` and `border-radius: var(--r)` moved, because the box that
+     fills the band and paints a wash is the BUTTON; `align-content: center` was
+     DELETED with the stretch it corrected (this span is now a flex item of an
+     `align-items: center` parent, so its box is its content height and there is no
+     free space to distribute — and it would be inert on `.account-btn`, which
+     declares no `flex-wrap`); and `-webkit-tap-highlight-color: transparent` went
+     too, because 02-reset.css gives every `button` both that and
+     `touch-action: manipulation`, so it was load-bearing only while this was an
+     `<a>`.
 
-     The native highlight is then suppressed for the app's own press wash, so a
-     touch-and-hold reads as a deliberate press of a row rather than as a system
-     rectangle — the `.tab-close` pairing. The rest at the footer's leading and
-     trailing padding stays inert, and the two 16px gaps to the status dot and the
-     logout button stay theirs. */
-  align-self: stretch;
-  align-content: center;
-  border-radius: var(--r);
-  -webkit-tap-highlight-color: transparent;
-}
+     The two rules that went with them: `:hover { color: var(--c-text-secondary) }`,
+     because the grouped control's hover channel is `.icon-btn`'s background wash and
+     dimming the ink at the same time is a second channel the logout button does not
+     have; and `:active { background: var(--c-press) }`, because 03-base.css's
+     universal `:where(button, summary, [role="button"]):active` reaches the new
+     button and paints the same token, so a bespoke rule here would compound the
+     press one step past `--c-press`.
 
-.sidebar-email:hover {
-  color: var(--c-text-secondary);
-}
-
-.sidebar-email:active {
-  background: var(--c-press);
+     WHAT STAYS AND WHY IT IS STILL LOAD-BEARING: the address is still the flex item
+     that takes the slack and clips, and as a flex item of the button it is
+     blockified to `display: block`, so it is still a block container and
+     `text-overflow: ellipsis` still applies — the property is not inherited, so an
+     anonymous flex item would lose it, which is what
+     `sidebar-footer-target.test.ts`'s block-container case pins. The cap-band trim
+     above still applies for the same reason it always did: the button is an
+     `align-items: center` flex container, so the same box asymmetry holds. */
 }
 
 .sidebar-footer-actions {
@@ -605,35 +830,35 @@
   flex-shrink: 0;
 }
 
+/* THE CONNECTION MARK. A decorative 8px disc inside `.account-btn`, which owns the
+   target, the press and the focus ring. `--dot-size` rather than the literal
+   `0.5rem` it spelled: 01-tokens.css declares that token for exactly this, so the
+   footer mark and the tab strip's dots are one size by declaration instead of by
+   coincidence.
+
+   `display: block` is DECLARED rather than inherited from flex-item blockification.
+   The old rule relied on that accident — `all: unset` resets `display` to `inline`,
+   on which width and height do not apply, and the disc rendered only because
+   `.popup-anchor` is a flex container. The accident is visible in the test suite:
+   `status-dot-css.test.ts`'s `mountDot` puts the mark straight in `<body>`, where it
+   is NOT blockified, which is why no case in that file ever asserted the desktop
+   disc's 8px box. Declaring it is what lets the new suite assert the size at every
+   tier.
+
+   FIVE MECHANISMS ARE DELETED WITH THE BUTTON: `all: unset` (there is no button
+   chrome to strip), `cursor: pointer` (the button's), `position: relative` (nothing
+   positions against it now), `anchor-name: --status-dot` (zero consumers anywhere in
+   css/ or static-src/), the `&:focus-visible` block (a span is not focusable), and
+   the whole `&::after` hit expander — the target is `.account-btn`'s own band at
+   every tier, so there is ONE mark rule and no second spelling to keep in step. */
 .status-dot {
-  /* Status dot is a <button> but it must look like a tiny circle, NOT a pill.
- * The .pill-expandable class (added for expand-on-click behaviour) must not
- * drag in button chrome. Override aggressively: zero padding, no border, no
- * background. Size + shape come from width/height + border-radius. */
-  all: unset;
-  width: 0.5rem;
-  height: 0.5rem;
+  display: block;
+  inline-size: var(--dot-size);
+  block-size: var(--dot-size);
   border-radius: 50%;
   background: var(--c-yellow);
   flex-shrink: 0;
-  position: relative;
-  anchor-name: --status-dot;
-  cursor: pointer;
   box-sizing: border-box;
-
-  /* The TARGET is --hit-floor; the DISC stays 8px. `all: unset` above resets
-     `min-width`/`min-height`, and it scores (0,1,0) against the app-wide floor's
-     zero-specificity `:where()` (61-mcp-tools.css), so this control is invisible
-     to that floor — an 8px button at every tier and the one undersize the desktop
-     audit reports. Growing the box is not the answer here: this is a status MARK
-     whose size is its meaning, so the hit area grows past the paint instead. The
-     expander is centred by `inset` rather than sized, so it follows the tier with
-     no second declaration. */
-  &::after {
-    content: "";
-    position: absolute;
-    inset: calc((var(--hit-floor) - 100%) / -2);
-  }
 
   /* Connecting (default/yellow): gentle breathing pulse. Motion here means an
      UNSETTLED state, which is this app's motion axis, so it stays — but it now
@@ -677,66 +902,28 @@
     background: var(--c-red);
     opacity: 1;
   }
-
-  &:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: var(--focus-offset);
-  }
 }
 
+/* THE FOOTER'S PHONE GAP, and it is the ONE rule left inside this block.
+   Everything else here was the status dot's phone treatment — a three-selector
+   44px transparent grid plus four `::before` rules carrying the mark — and all of
+   it is deleted, because the target is `.account-btn`'s own band at every tier so
+   ONE mark rule serves all three. `status-dot-css.test.ts` asserts as SOURCE that
+   this block mentions no `status-dot` selector, which is what makes "one mark rule
+   at every tier" checkable.
+
+   The block itself must NOT be removed: `atRuleBody` ends in
+   `expect(found.length, …).toBe(1)`, so that source assertion would fail outright
+   against a file with no such block — and this gap is a real rule with a real
+   effect. It now governs the only gap the footer still has, the anchor-to-actions
+   separation, which goes 12px -> 16px on a phone exactly as it always did. The
+   mark-to-address gap goes 16px -> 12px on a phone, deliberately: that space
+   belongs to the CONTROL now (`.account-btn`'s own `gap: var(--sp-3)`) at every
+   tier. */
 @media (width <= 48rem) {
   .sidebar-footer {
     gap: var(--sp-4);
   }
-
-  /* Keep the 8px status mark and give its BUTTON the 44px touch target. The
-     pseudo carries the visual state; widening the state-coloured element itself
-     would turn the tiny indicator into a 44px green disc. */
-  .status-dot,
-  .status-dot.connected,
-  .status-dot.error {
-    display: grid;
-    place-items: center;
-    width: var(--btn-h);
-    height: var(--btn-h);
-    background: transparent;
-
-    /* The button becomes a transparent 44px target and its ::before carries the
-       mark, so the beat moves down with it. Resetting opacity here is required,
-       not tidy: the desktop rule above sets it on the BUTTON, and inherited
-       opacity would multiply with the pseudo's own. */
-    opacity: 1;
-  }
-
-  /* `:not()` rather than an `animation: none` in each settled state: an animation
-     outranks a normal declaration, so `.connected::before { opacity: 1 }` cannot
-     stop a beat inherited from a base rule — it would breathe a still disc. The
-     beat MEANS unsettled, so the selector says so. */
-  .status-dot:not(.connected, .error)::before {
-    content: "";
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    background: var(--c-yellow);
-
-    --beat-peak: 0.45;
-
-    animation: vk-dot-beat var(--dot-beat-dur) var(--ease-standard) var(--beat-phase, 0ms) infinite;
-  }
-
-  .status-dot.connected::before {
-    background: var(--c-green);
-    opacity: 1;
-  }
-
-  .status-dot.error::before {
-    background: var(--c-red);
-    opacity: 1;
-  }
-
-  /* No `.status-dot.connected::after` twin here. It only re-centred the ripple
-     overlay inside the 44px touch box and set no `content`, so with the desktop
-     rule gone the pseudo never generates and this was a dead layer. */
 }
 
 /* User button + popup */
@@ -744,7 +931,29 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
+
+  /* The anchor used to hold a content-sized 8px trigger; it holds the footer's wide
+     control now, so it takes the row's slack instead of refusing it (`flex-shrink: 0`
+     is what left). `min-width: 0` is what lets the address inside actually clip, and
+     `align-self: stretch` is what gives the button a full-band box to stretch into.
+
+     ONE CONSEQUENCE, accepted and pinned rather than worked around: the status card
+     is `position: absolute; bottom: calc(100% + var(--sp-1))` against this anchor
+     (15-input.css `.pill-status-content`), so `100%` is the ANCHOR's height — which
+     is exactly what `align-self: stretch` changes. The card RISES ~21.5px on desktop
+     (from an 8px anchor centred in the 51px band to the full band) and ~3.5px on a
+     phone, `--pill-max-block` loses the same amount out of a ~700px budget, and the
+     open card stops overlapping its own trigger by the 17.5px it does today. That
+     overlap was tolerable while the trigger was an 8px disc under the card; it is
+     not once the trigger is a 240px row painting a hover wash and a press wash. The
+     desktop geometry is moving TO the phone geometry rather than away from anything.
+
+     Not a shared-class change: this footer is the only consumer in `css/` and in
+     `static/index.html` (15-input.css only mentions the class in a comment), plus the
+     two footer test fixtures this change already updates. */
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
 }
 
 .icon-btn {
@@ -863,11 +1072,15 @@
 }
 
 [id="theme-btn"].glow-sun {
-  box-shadow: inset 0 -0.35rem 0.75rem oklch(82% 0.16 85deg / 50%);
+  box-shadow: inset 0 -0.35rem 0.75rem var(--c-glow-sun);
 }
 
 [id="theme-btn"].glow-moon {
-  box-shadow: inset 0 -0.35rem 0.75rem oklch(80% 0.05 260deg / 30%);
+  box-shadow: inset 0 -0.35rem 0.75rem var(--c-glow-moon);
+}
+
+[id="theme-btn"].glow-system {
+  box-shadow: inset 0 -0.35rem 0.75rem var(--c-glow-system);
 }
 
 /* ========================================================================

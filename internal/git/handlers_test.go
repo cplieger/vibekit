@@ -23,7 +23,7 @@ import (
 
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
 )

@@ -59,7 +59,7 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { CHROME_ATTR } from "./chrome-attr.js";
-import { isSafeUrl, rewriteWorkspaceImageSrc } from "./utils-url.js";
+import { isSafeUrl, rewriteServedImageSrc } from "./utils-url.js";
 import { mediaElementFor } from "./media-block.js";
 import { latexToMathML } from "./mathml.js";
 import { el } from "@cplieger/reactive";
@@ -136,7 +136,7 @@ const MATH_ATTR = "data-math";
  *  (`fundamentals/subagent-block.ts`) put a space at every element boundary, so
  *  it printed gaps inside words for as long as a delegate streamed. One
  *  definition, two readers. */
-export const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
+const CHUNK_ENTER_ATTR = "data-vk-chunk-enter";
 const MATH_RAW_ATTR = "data-math-raw";
 
 /** Turn a closed equation host's LaTeX into MathML in place.
@@ -248,7 +248,7 @@ function add_token_dom(data: DomRendererData, type: Token): void {
  *  settled span would re-run the fade over text already on screen — the flash the
  *  mount-once design exists to avoid. The marker survives, because the delegate
  *  card's text walk reads it to tell a rendering artefact from a word boundary. */
-export const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
+const CHUNK_SETTLED_ATTR = "data-vk-chunk-settled";
 
 /** Replace an inline element whose token never closed with its own delimiter
  *  followed by its children, which is what CommonMark renders for an unclosed
@@ -403,7 +403,7 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
       data.nodes[data.index] = swapped;
       return;
     }
-    node.setAttribute(attrName, rewriteWorkspaceImageSrc(value));
+    node.setAttribute(attrName, rewriteServedImageSrc(value));
     // Defer the fetch until the image is near the viewport, and set it HERE
     // rather than at add_token so it reaches exactly the nodes that are still
     // images with a real src: the unsafe-URL gate above returned early with

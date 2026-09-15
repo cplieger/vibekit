@@ -493,7 +493,10 @@ export const RUN_INPUT_FALLBACK = "A step is waiting for your answer";
  *  is the record of. A card the reader never saw needs no explanation, and the
  *  surface that DID answer reaches this with nothing to remove — `settle` splices
  *  the entry before the answer goes out — so it never explains itself to the
- *  person who just clicked. */
+ *  person who just clicked.
+ *
+ *  Answers the settled ask's run id ("" for the chat's own ask), or undefined when
+ *  no card for it was queued here. */
 export function collapseSettledDecision(
   chatID: string,
   // The three REQUEST-shaped kinds only, and narrowed rather than widened to the
@@ -502,14 +505,14 @@ export function collapseSettledDecision(
   kind: RequestDecision["kind"],
   requestID: number,
   settledBy: SettledBy,
-): void {
+): string | undefined {
   const q = queues.get(chatID);
   const i =
     q?.findIndex((d) => d.kind === kind && isRequestDecision(d) && d.requestID === requestID) ?? -1;
   if (q === undefined || i < 0) {
-    return;
+    return undefined;
   }
-  q.splice(i, 1);
+  const [settled] = q.splice(i, 1);
   if (q.length === 0) {
     queues.delete(chatID);
   }
@@ -520,6 +523,10 @@ export function collapseSettledDecision(
     info(settledMessage(kind, settledBy));
   }
   bump();
+  // The settle frame names the chat the ask travelled on, not the run it was about,
+  // and the banner it raised was tagged by the run: the queue is where that
+  // attribution survives, so the retraction reads it back from here.
+  return settled?.runID ?? "";
 }
 
 /** What the reader is told about a card that collapsed under them. The three

@@ -30,7 +30,7 @@ export interface ForgesListResponse {
 
 const FORGE_KINDS: readonly ForgeKind[] = ["github", "gitlab", "codeberg", "gitea"];
 
-export const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
+const decodeForgesListResponse: Decoder<ForgesListResponse> = (v) => {
   const o = asObject(v, "$.forges_list");
   const out: ForgesListResponse = {
     forges: decodeArray(o["forges"], decodeConfiguredForge, "$.forges_list.forges"),

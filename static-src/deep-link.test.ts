@@ -314,6 +314,25 @@ describe("admitLocation", () => {
     expect(admitLocation({ kind: "docs", tab: "hooks" }, "restore")).toBe("canonicalized");
   });
 
+  // A files route reaches this gate on the SAME terms as every other kind: there is
+  // no per-kind carve-out, and there must not be one. The folder-to-browser
+  // resolution that makes `tabIdForRoute` answer an id for a folder no tab was
+  // opened at is `tabs.ts`'s, pinned in tabs.test.ts; what this pins is that a
+  // non-empty answer is enough here, so a history entry onto a folder the open
+  // browser can move to is ADMITTED rather than redirected away from it.
+  it("admits a files location on the strength of the resolver's answer alone", () => {
+    expect.assertions(2);
+    mockTabIdForRoute.mockReturnValue("t-files");
+    expect(admitLocation({ kind: "files", path: "/workspace/_ui-qa" }, "history")).toBe("opens");
+
+    // And refuses it when nothing is open, which is the one case that has no
+    // browser to move.
+    mockTabIdForRoute.mockReturnValue("");
+    expect(admitLocation({ kind: "files", path: "/workspace/_ui-qa" }, "history")).toBe(
+      "canonicalized",
+    );
+  });
+
   it("points a refused location at the tab that IS active", () => {
     expect.assertions(1);
     at("/chat/c-gone");

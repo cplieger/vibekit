@@ -3,6 +3,7 @@ package buffer
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,24 +17,24 @@ import (
 //
 // The mirror re-folded every broadcast event into its own vibekit.Message — a second
 // implementation of the block assembly this package already does, free to drift
-// from it. These cases pin that the buffer's own snapshot carries what the
-// connect-time turn_state needs.
+// from it. These cases pin that the buffer's own snapshot carries what the transcript
+// GET's live_turn needs.
 func TestBufferSnapshot(t *testing.T) {
 	t.Run("an unstarted turn has no snapshot", func(t *testing.T) {
 		var buf Buffer
-		if _, _, _, ok := buf.SnapshotCapped(SnapshotCaps{}); ok {
+		if _, ok := buf.SnapshotCapped(SnapshotCaps{}); ok {
 			t.Error("snapshot reported content for a buffer with no message id")
 		}
 	})
 
 	t.Run("a started but silent turn is a bare busy signal", func(t *testing.T) {
 		buf := Buffer{MessageID: "m1"}
-		msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
+		snap, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if ok {
-			t.Errorf("snapshot reported content for an empty turn: %+v", msg)
+			t.Errorf("snapshot reported content for an empty turn: %+v", snap.Message)
 		}
-		if seq != 0 {
-			t.Errorf("chunk seq = %d, want 0", seq)
+		if snap.ChunkSeq != 0 {
+			t.Errorf("chunk seq = %d, want 0", snap.ChunkSeq)
 		}
 	})
 
@@ -49,10 +50,11 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
 		buf.AppendTextDelta("world", "")
 
-		msg, seq, _, ok := buf.SnapshotCapped(SnapshotCaps{})
+		snap, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
+		msg := snap.Message
 		if msg.ID != "m1" {
 			t.Errorf("id = %q, want m1", msg.ID)
 		}
@@ -79,7 +81,7 @@ func TestBufferSnapshot(t *testing.T) {
 			t.Errorf("blocks = %v, want 4 (text, thinking, tool_use, text)", kinds)
 		}
 		// Two text deltas were counted; the thinking delta counts too.
-		if seq == 0 {
+		if snap.ChunkSeq == 0 {
 			t.Error("chunk seq = 0, want the delta count so a client can drop folded-in chunks")
 		}
 	})
@@ -92,10 +94,11 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendTextDelta("hi", "")
 		buf.AppendToolCall(&vibekit.ToolCall{ID: "tool-1"})
 
-		msg, _, _, ok := buf.SnapshotCapped(SnapshotCaps{})
+		snap, ok := buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
+		msg := snap.Message
 		// Mutate IN PLACE first. Appending would reallocate (len == cap here)
 		// and leave the aliased array untouched, so an append-then-check makes
 		// this test vacuous — it passed against a deliberately aliasing
@@ -178,43 +181,45 @@ func blockTextLen(blocks []vibekit.Block) int {
 	return n
 }
 
-// TestSnapshotCapped_UnboundedMatchesSnapshot is the ONE-implementation guard.
-// Snapshot delegates to SnapshotCapped(SnapshotCaps{}), so the two can only
-// diverge by someone reintroducing a second read — and the comparison is on
-// MARSHALED BYTES rather than field by field, so a field added to one path and
-// not the other fails here instead of shipping.
+// TestSnapshotCapped_UnboundedCutsNothing pins the uncut path over the 4 MiB fixture:
+// SnapshotCaps{} is the unbounded read, so it withholds nothing, carries every block, and
+// reports a base of 0.
 //
-// Ts is normalized because it is stamped from time.Now() per call and the two
-// calls can straddle a millisecond; every other field is compared verbatim.
-func TestSnapshotCapped_UnboundedMatchesSnapshot(t *testing.T) {
+// The BlockBase leg is a REGRESSION PIN rather than fail-first evidence, and the exemption
+// is stated because no implementation of the field can make it red — 0 is both the correct
+// answer on the uncut path and the answer a stub gives. What it DOES defend is a keepFrom
+// hoisted to function scope: SnapshotCaps{} never enters the text-cap block, so a base read
+// from a keepFrom initialised to len(out) outside it answers 4,000-odd rather than 0.
+//
+// The >= 4 MiB marshal assertion stays, because it is what keeps this case running over a
+// real turn rather than a toy. What went with the rename is the SECOND call and the byte
+// comparison against it: the value was compared to itself, while the name, the doc comment
+// and three failure strings all referenced a Buffer.Snapshot method that has never existed
+// and would now read as a claim about the Snapshot struct.
+func TestSnapshotCapped_UnboundedCutsNothing(t *testing.T) {
 	fx := newCapFixture(t)
 
-	plain, plainSeq, _, plainOK := fx.buf.SnapshotCapped(SnapshotCaps{})
-	capped, cappedSeq, truncated, cappedOK := fx.buf.SnapshotCapped(SnapshotCaps{})
-	if !plainOK || !cappedOK {
-		t.Fatalf("ok = %v / %v, want both true", plainOK, cappedOK)
+	snap, ok := fx.buf.SnapshotCapped(SnapshotCaps{})
+	if !ok {
+		t.Fatal("snapshot reported no content over the 4 MiB fixture")
 	}
-	if truncated {
+	if snap.Truncated {
 		t.Error("SnapshotCaps{} reported truncated; a zero in every field means unbounded")
 	}
-	if plainSeq != cappedSeq {
-		t.Errorf("chunk seq = %d (Snapshot) vs %d (SnapshotCapped), want equal", plainSeq, cappedSeq)
+	if snap.BlockBase != 0 {
+		t.Errorf("BlockBase = %d, want 0: an unbounded read cuts no block, so the window starts "+
+			"where the array does", snap.BlockBase)
 	}
-	plain.Ts, capped.Ts = 0, 0
-	wantJSON, err := json.Marshal(plain)
+	if got, want := len(snap.Message.Blocks), len(fx.buf.Blocks); got != want {
+		t.Errorf("carried %d blocks, want all %d", got, want)
+	}
+	raw, err := json.Marshal(snap.Message)
 	if err != nil {
-		t.Fatalf("marshal Snapshot: %v", err)
+		t.Fatalf("marshal snapshot: %v", err)
 	}
-	gotJSON, err := json.Marshal(capped)
-	if err != nil {
-		t.Fatalf("marshal SnapshotCapped: %v", err)
-	}
-	if len(wantJSON) < 4<<20 {
-		t.Errorf("fixture marshaled to %d bytes, want at least 4 MiB; the guard has to run over a real turn", len(wantJSON))
-	}
-	if !bytes.Equal(gotJSON, wantJSON) {
-		t.Errorf("SnapshotCapped(SnapshotCaps{}) is not byte-identical to Snapshot (%d vs %d bytes); "+
-			"there are two implementations of the read again", len(gotJSON), len(wantJSON))
+	if len(raw) < 4<<20 {
+		t.Errorf("fixture marshaled to %d bytes, want at least 4 MiB; the case has to run over a "+
+			"real turn rather than a toy", len(raw))
 	}
 }
 
@@ -225,7 +230,7 @@ func TestSnapshotCapped_KeepsTheTailAndMarksTruncated(t *testing.T) {
 	buf.AppendTextDelta("OLD-content"+strings.Repeat("c", 4096)+"NEW-content", "")
 	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "OLD-out" + strings.Repeat("o", 4096) + "NEW-out"})
 
-	msg, _, truncated, ok := buf.SnapshotCapped(SnapshotCaps{
+	snap, ok := buf.SnapshotCapped(SnapshotCaps{
 		ReasoningBytes:  64,
 		ContentBytes:    64,
 		BlockTextBytes:  128,
@@ -236,7 +241,8 @@ func TestSnapshotCapped_KeepsTheTailAndMarksTruncated(t *testing.T) {
 	if !ok {
 		t.Fatal("snapshot reported no content")
 	}
-	if !truncated {
+	msg := snap.Message
+	if !snap.Truncated {
 		t.Error("truncated = false after cutting reasoning, content, blocks and tool output")
 	}
 	// The TAIL, because a mid-turn reconnect wants the reply being written now.
@@ -271,11 +277,12 @@ func TestSnapshotCapped_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
 	buf.AppendTextDelta("hello world", "")
 	buf.AppendToolCall(&vibekit.ToolCall{ID: "t1", Output: "ok"})
 
-	msg, _, truncated, ok := buf.SnapshotCapped(connectCapsForTest())
+	snap, ok := buf.SnapshotCapped(connectCapsForTest())
 	if !ok {
 		t.Fatal("snapshot reported no content")
 	}
-	if truncated {
+	msg := snap.Message
+	if snap.Truncated {
 		t.Error("truncated = true for a turn well inside every cap; the client would show a note for nothing")
 	}
 	if msg.Content != "hello world" || msg.Reasoning != "pondering" {
@@ -286,9 +293,10 @@ func TestSnapshotCapped_ASmallTurnIsNotMarkedTruncated(t *testing.T) {
 	}
 }
 
-// connectCapsForTest mirrors internal/agent's connectSnapshotCaps. A copy rather
-// than an import because internal/agent imports THIS package, so reading the real
-// value here would be a cycle; the numbers are policy the production path owns.
+// connectCapsForTest is a SMALL caps value, sized so the fixtures above cut on every
+// dimension and MaxTextBytes stays a hand-checkable 52 KiB. It is this file's own: the
+// production caps (internal/agent's liveTurnGETCaps) are sized in the megabytes so an
+// ordinary turn is never cut, which is exactly what a truncation test cannot use.
 func connectCapsForTest() SnapshotCaps {
 	return SnapshotCaps{
 		ReasoningBytes:  4 << 10,
@@ -412,14 +420,14 @@ func TestSnapshotCapped_HonoursEveryCapDimension(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newCapFixture(t)
-			msg, _, truncated, ok := fx.buf.SnapshotCapped(tc.caps)
+			snap, ok := fx.buf.SnapshotCapped(tc.caps)
 			if !ok {
 				t.Fatal("snapshot reported no content")
 			}
-			if !truncated {
+			if !snap.Truncated {
 				t.Errorf("SnapshotCapped(%+v) reported truncated = false over a 4 MiB turn", tc.caps)
 			}
-			tc.check(t, fx, msg)
+			tc.check(t, fx, snap.Message)
 		})
 	}
 }
@@ -439,7 +447,7 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 
 	for _, n := range []int{100, 101, 102} {
 		t.Run("cap "+strconv.Itoa(n), func(t *testing.T) {
-			msg, _, truncated, ok := buf.SnapshotCapped(SnapshotCaps{
+			snap, ok := buf.SnapshotCapped(SnapshotCaps{
 				ReasoningBytes:  n,
 				ContentBytes:    n,
 				BlockTextBytes:  n,
@@ -447,9 +455,10 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 				ToolOutputBytes: n,
 				Blocks:          64,
 			})
-			if !ok || !truncated {
-				t.Fatalf("ok = %v, truncated = %v, want true / true", ok, truncated)
+			if !ok || !snap.Truncated {
+				t.Fatalf("ok = %v, truncated = %v, want true / true", ok, snap.Truncated)
 			}
+			msg := snap.Message
 			for name, s := range map[string]string{"reasoning": msg.Reasoning, "content": msg.Content} {
 				if !utf8.ValidString(s) {
 					t.Errorf("%s is not valid UTF-8 after a %d-byte cap: %q", name, n, s)
@@ -482,15 +491,15 @@ func TestSnapshotCapped_CutsOnARuneBoundary(t *testing.T) {
 	}
 }
 
-// TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload is the arithmetic
-// the connect replay's per-connect budget depends on: a maximally-full capped snapshot's
-// REAL marshaled length has to sit inside MaxTextBytes plus an envelope, or a
-// budget that subtracts MaxTextBytes per snapshot under-counts and the cold
-// connect exceeds its own gate.
+// TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload is the arithmetic a byte
+// budget over a capped snapshot depends on: a maximally-full capped snapshot's REAL
+// marshaled length has to sit inside MaxTextBytes plus an envelope, or a budget that
+// subtracts MaxTextBytes per snapshot under-counts. liveTurnGETCaps states its ceiling
+// through this method, so the arithmetic has to hold.
 func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
 	caps := connectCapsForTest()
 	if got, want := caps.MaxTextBytes(), 52<<10; got != want {
-		t.Errorf("MaxTextBytes() = %d, want %d; the connect caps and the budget arithmetic disagree", got, want)
+		t.Errorf("MaxTextBytes() = %d, want %d; the test caps and the budget arithmetic disagree", got, want)
 	}
 	if got := (SnapshotCaps{ReasoningBytes: 1}).MaxTextBytes(); got != 0 {
 		t.Errorf("MaxTextBytes() with unbounded dimensions = %d, want 0 (unbounded); a partial sum "+
@@ -498,11 +507,11 @@ func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
 	}
 
 	fx := newCapFixture(t)
-	msg, _, truncated, ok := fx.buf.SnapshotCapped(caps)
-	if !ok || !truncated {
-		t.Fatalf("ok = %v, truncated = %v, want true / true", ok, truncated)
+	snap, ok := fx.buf.SnapshotCapped(caps)
+	if !ok || !snap.Truncated {
+		t.Fatalf("ok = %v, truncated = %v, want true / true", ok, snap.Truncated)
 	}
-	raw, err := json.Marshal(msg)
+	raw, err := json.Marshal(snap.Message)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -514,7 +523,7 @@ func TestSnapshotCaps_MaxTextBytesMatchesTheWorstCasePayload(t *testing.T) {
 	const envelopeAllowance = 8 << 10
 	if limit := caps.MaxTextBytes() + envelopeAllowance; len(raw) > limit {
 		t.Errorf("capped snapshot marshaled to %d bytes, want <= %d (MaxTextBytes %d + %d envelope); "+
-			"a per-connect budget built on MaxTextBytes would under-count",
+			"a budget built on MaxTextBytes would under-count",
 			len(raw), limit, caps.MaxTextBytes(), envelopeAllowance)
 	}
 }
@@ -540,11 +549,12 @@ func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
 		// everything older is dropped. Every OTHER dimension is left unbounded so a
 		// failure here can only be this one.
 		const total = 300 << 10
-		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: total})
+		snap, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: total})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
-		if !truncated {
+		msg := snap.Message
+		if !snap.Truncated {
 			t.Error("truncated = false, want true: the aggregate dropped calls, and a client " +
 				"reading a bounded payload as a complete one is what the flag exists to prevent")
 		}
@@ -576,11 +586,12 @@ func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
 
 	t.Run("an aggregate the sum fits under cuts nothing", func(t *testing.T) {
 		fx := newCapFixture(t)
-		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: 4 << 20})
+		snap, ok := fx.buf.SnapshotCapped(SnapshotCaps{ToolOutputTotalBytes: 4 << 20})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
-		if truncated {
+		msg := snap.Message
+		if snap.Truncated {
 			t.Error("truncated = true, want false: the whole payload fit, so nothing was withheld")
 		}
 		if got, want := len(msg.ToolCalls), fx.toolCalls; got != want {
@@ -594,13 +605,14 @@ func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
 	t.Run("a zero aggregate is UNBOUNDED, not cut-everything", func(t *testing.T) {
 		// The trap this pins: every other dimension in SnapshotCaps reads zero as
 		// unbounded, so an aggregate that read it as a zero BUDGET would silently drop
-		// every tool call for connectSnapshotCaps and for SnapshotCaps{} alike.
+		// every tool call for any caps value leaving it unset, SnapshotCaps{} included.
 		fx := newCapFixture(t)
-		msg, _, truncated, ok := fx.buf.SnapshotCapped(SnapshotCaps{})
+		snap, ok := fx.buf.SnapshotCapped(SnapshotCaps{})
 		if !ok {
 			t.Fatal("snapshot reported no content")
 		}
-		if truncated {
+		msg := snap.Message
+		if snap.Truncated {
 			t.Error("truncated = true, want false: SnapshotCaps{} is the unbounded snapshot")
 		}
 		if got, want := len(msg.ToolCalls), fx.toolCalls; got != want {
@@ -633,4 +645,127 @@ func TestSnapshotCaps_ToolOutputTotalBytes(t *testing.T) {
 			t.Errorf("MaxTextBytes() with a larger aggregate = %d, want %d: the product still binds", got, want)
 		}
 	})
+}
+
+// baseFixtureBlocks is how many blocks newBaseFixture builds, and the two per-block
+// sizes. Small on purpose: the property under test needs bytes in the tens, and
+// newCapFixture's 4 MiB would buy nothing here.
+const (
+	baseFixtureBlocks   = 12
+	baseFixtureThinking = 30
+	baseFixtureText     = 20
+)
+
+// newBaseFixture builds a buffer of baseFixtureBlocks blocks and stamps a DISTINCT
+// AgentSubtaskID on each one, which is what makes the identity assertion below
+// meaningful.
+//
+// Its own fixture rather than newCapFixture, for two reasons. That one uses
+// AgentSubtaskID to FORCE the block boundaries — four streams under one id apiece —
+// so its ids are not distinct per block and identity there would be ambiguous. And
+// the ids are overwritten AFTER the builder has split the blocks, so the overwrite
+// cannot change the shape it is describing.
+func newBaseFixture(tb testing.TB) *Buffer {
+	tb.Helper()
+	buf := New()
+	buf.StartTurn("m1")
+	for i := range baseFixtureBlocks / 2 {
+		sub := "stream-" + strconv.Itoa(i)
+		buf.AppendThinkingDelta(strings.Repeat("r", baseFixtureThinking), sub)
+		buf.AppendTextDelta(strings.Repeat("c", baseFixtureText), sub)
+	}
+	if len(buf.Blocks) != baseFixtureBlocks {
+		tb.Fatalf("fixture built %d blocks, want %d; the per-stream split changed and every "+
+			"expected base below is derived from that shape", len(buf.Blocks), baseFixtureBlocks)
+	}
+	for i := range buf.Blocks {
+		buf.Blocks[i].AgentSubtaskID = "blk-" + strconv.Itoa(i)
+	}
+	return buf
+}
+
+// TestSnapshotCapped_ReportsTheBlockBaseItDropped is the field's reason for existing:
+// both block caps keep the TAIL of the array and re-index it from zero, while a live
+// message_chunk keeps naming the ABSOLUTE index, so a client that adopted a capped
+// snapshot addressed every later chunk against the wrong array.
+//
+// The assertion is a THREE-PART property against the buffer's OWN array plus the
+// base's value, never byte-equality on Blocks[0] and never a second copy of the cap
+// arithmetic: the text cap REWRITES the boundary block in place, so the plain oracle
+// is false rather than merely fragile, and a base recomputed from the caps would
+// agree with a wrong implementation.
+func TestSnapshotCapped_ReportsTheBlockBaseItDropped(t *testing.T) {
+	tests := []struct {
+		name     string
+		caps     SnapshotCaps
+		wantBase int
+	}{
+		{
+			// 125 bytes admits blocks 11..7 whole (100 bytes) and leaves 5 for block 6,
+			// which is KEPT tail-truncated because the remainder is non-zero.
+			name:     "the text cap alone cuts",
+			caps:     SnapshotCaps{BlockTextBytes: 125},
+			wantBase: 6,
+		},
+		{
+			// The newest 4 of 12.
+			name:     "the count cap alone cuts",
+			caps:     SnapshotCaps{Blocks: 4},
+			wantBase: 8,
+		},
+		{
+			// The two dimensions SUM: the text cap leaves 6 blocks starting at 6, then
+			// the count cap drops 3 more off the front.
+			name:     "both cut, and the base is their sum",
+			caps:     SnapshotCaps{BlockTextBytes: 125, Blocks: 3},
+			wantBase: 9,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := newBaseFixture(t)
+			snap, ok := buf.SnapshotCapped(tc.caps)
+			if !ok {
+				t.Fatal("snapshot reported no content")
+			}
+			if !snap.Truncated {
+				t.Errorf("truncated = false while blocks were dropped; a reader takes the window "+
+					"for the whole turn (caps %+v)", tc.caps)
+			}
+			if got := snap.BlockBase; got != tc.wantBase {
+				t.Fatalf("BlockBase = %d, want %d: the base names the position in the buffer's own "+
+					"array that Blocks[0] came from, so a wrong one puts every rebased chunk at the "+
+					"wrong index", got, tc.wantBase)
+			}
+			got := snap.Message.Blocks
+			if len(got) == 0 {
+				t.Fatal("the snapshot carried no blocks, so nothing below is measuring the base")
+			}
+			base := snap.BlockBase
+			// IDENTITY: the base names a real position, checked against a field the caps
+			// cannot touch (capBlocks writes only Text and Thinking).
+			if got, want := got[0].AgentSubtaskID, buf.Blocks[base].AgentSubtaskID; got != want {
+				t.Errorf("Blocks[0].AgentSubtaskID = %q, want %q (buf.Blocks[%d]): the base does not "+
+					"name the block the window starts at", got, want, base)
+			}
+			// The BOUNDARY block is a TAIL of the buffer's own. Both fields, because
+			// tailBytes treats a spent budget as UNBOUNDED, so a block whose budget went
+			// on Text keeps its Thinking verbatim — a suffix holds either way where an
+			// equality would not.
+			if !strings.HasSuffix(buf.Blocks[base].Text, got[0].Text) {
+				t.Errorf("Blocks[0].Text is not a tail of buf.Blocks[%d].Text (%d vs %d bytes)",
+					base, len(got[0].Text), len(buf.Blocks[base].Text))
+			}
+			if !strings.HasSuffix(buf.Blocks[base].Thinking, got[0].Thinking) {
+				t.Errorf("Blocks[0].Thinking is not a tail of buf.Blocks[%d].Thinking (%d vs %d bytes)",
+					base, len(got[0].Thinking), len(buf.Blocks[base].Thinking))
+			}
+			// The REMAINDER is untouched, so the window really is a contiguous slice of
+			// the array starting at the base.
+			if want := buf.Blocks[base+1 : base+len(got)]; !slices.Equal(got[1:], want) {
+				t.Errorf("blocks after the boundary = %+v, want buf.Blocks[%d:%d] = %+v",
+					got[1:], base+1, base+len(got), want)
+			}
+		})
+	}
 }

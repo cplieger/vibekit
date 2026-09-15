@@ -162,6 +162,24 @@ function hitFloorPx(): number {
   return v;
 }
 
+/** The file badge's declared height in pixels for the tier currently set, resolved
+ *  the way `hitFloorPx` resolves its own token and for the same reason: a custom
+ *  property reads back as raw text, so only the engine can turn
+ *  `calc(var(--btn-h) - 2 * var(--sp-2))` into a length. Probing the TOKEN rather
+ *  than restating 20/28 is what makes a control-height retune move the assertion
+ *  instead of breaking it. */
+function badgeBoxPx(): number {
+  const probe = document.createElement("div");
+  probe.className = "tool-header";
+  const inner = document.createElement("div");
+  inner.style.blockSize = "var(--tool-badge-h)";
+  probe.appendChild(inner);
+  host.appendChild(probe);
+  const v = inner.offsetHeight;
+  probe.remove();
+  return v;
+}
+
 function headerOf(g: Element): HTMLElement {
   return g.querySelector<HTMLElement>(":scope > .tool-group-header")!;
 }
@@ -234,20 +252,24 @@ describe(
       }
     });
 
-    it("RENDERS a header and its member rows at one height on a coarse pointer too, because the badge measures the glyph beside it", async () => {
-      // OVERTURNS the case this replaces TWICE, and both readings were the same
-      // mistake — treating the badge's own box as the place the target has to live.
-      // First it asserted the coarse row was TALLER than its header and called that
-      // "not a regression": `.tool-file-link` is a real `<button>` declaring no size,
-      // so `61-mcp-tools.css`'s hit-target floor arrived as its BOX, 44px square
+    it("RENDERS a header and its member rows at one height on a coarse pointer too, because the badge fits the room the row already has", async () => {
+      // OVERTURNS the case this replaces THREE times, and the first two readings were
+      // the same mistake — treating the badge's own box as the place the target has to
+      // live. First it asserted the coarse row was TALLER than its header and called
+      // that "not a regression": `.tool-file-link` is a real `<button>` declaring no
+      // size, so `61-mcp-tools.css`'s hit-target floor arrived as its BOX, 44px square
       // around a 15.4px line box, and the row grew to 52px to contain it. Then it
       // pinned the chip at `--ctl-h-sm` and asserted 24px, which held at both tiers
       // for a row of a real group and nowhere else — see the bare-group case below
       // for the 40px lone row that left.
       //
-      // The badge reads `--icon-ui` now, so it is the kind glyph's height by
-      // construction and cannot reach any row's floor at either tier. Asserted
-      // against the GLYPH rather than a number, so a token retune moves both.
+      // Then it pinned the chip to the kind GLYPH beside it (`--icon-ui`), which fit
+      // and wasted the room: the glyph is not the tallest thing the row can carry, so
+      // a 15.4px line box sat in a 16px button inside a 36px row with no vertical
+      // padding at all. The badge reads `--tool-badge-h` now — the content box a
+      // STANDALONE header leaves, the tightest context — so it FILLS that room and
+      // still cannot grow any row. Asserted against a probe of the token rather than a
+      // number, so a control-height retune moves both.
       document.documentElement.dataset["pointer"] = "coarse";
       const g = await run(3);
       const head = h(headerOf(g));
@@ -255,9 +277,13 @@ describe(
       const chip = row.querySelector<HTMLElement>("button.tool-file-link")!;
       expect(
         h(chip),
-        "the badge is exactly the kind glyph beside it, which is the whole mechanism",
-      ).toBe(h(row.querySelector(".tool-header > .tool-icon")));
-      expect(h(chip), "so it stays well inside the row it sits in").toBeLessThan(head);
+        "the badge is exactly the room a standalone header leaves, which is the whole mechanism",
+      ).toBe(badgeBoxPx());
+      expect(
+        h(chip),
+        "so it is taller than the kind glyph it used to measure, which is what was reported",
+      ).toBeGreaterThan(h(row.querySelector(".tool-header > .tool-icon")));
+      expect(h(chip), "and it still stays inside the row it sits in").toBeLessThan(head);
       for (const [i, m] of members(g).entries()) {
         expect(
           h(m.querySelector(".tool-header")),
@@ -491,8 +517,10 @@ describe("a bare group renders as a plain tool card", { timeout: GROUP_TIMEOUT_M
     expect(h(badgedRow), "a badge may not make a lone card taller on a phone either").toBe(
       h(plainRow),
     );
-    expect(h(badge), "and the badge is still the kind glyph beside it").toBe(
-      h(badgedRow.querySelector(".tool-header > .tool-icon")),
-    );
+    expect(h(badge), "and the badge is exactly the room this header leaves").toBe(badgeBoxPx());
+    expect(
+      h(badgedRow),
+      "which puts a lone badged card exactly ON its floor rather than lifted to it — the boundary",
+    ).toBe(badgeBoxPx() + 2 * parseFloat(getComputedStyle(badgedRow).paddingBlockStart));
   });
 });

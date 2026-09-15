@@ -18,7 +18,7 @@ import (
 // Seeding an assistant message reads `completed`, and no assertion below would mean anything.
 func seedMidTurn(t *testing.T, s *Store, id vibekit.ChatID) {
 	t.Helper()
-	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(id)
 		c.Messages = []vibekit.Message{
 			{ID: "u1", Role: vibekit.RoleUser, Content: "do the thing", Ts: 1},

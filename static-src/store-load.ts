@@ -3,7 +3,13 @@
 import type { Session, ChatHeader, Message } from "./types.js";
 import { apiGetTyped, apiGetTypedOrError } from "./api-client.js";
 import { asObject, decodeArray, optBool, optNum, reqBool, type Decoder } from "./validators.js";
-import { decodeChatHeader, decodeMessage } from "./wire/decoders.gen.js";
+import {
+  decodeChatHeader,
+  decodeLiveTurn,
+  decodeMessage,
+  decodeSubjectStamp,
+} from "./wire/decoders.gen.js";
+import type { LiveTurn } from "./wire/types.gen.js";
 import { registerCleanup } from "./actions/index.js";
 import {
   setSessions,
@@ -17,8 +23,7 @@ import {
   chunkWatermark,
   setChunkWatermark,
   noteLiveTurnMessage,
-  noteTruncatedSnapshot,
-  clearTruncatedSnapshot,
+  noteAdoptedSnapshot,
   upsertMessage,
   relatchTurnVerdict,
   latchFieldsFor,
@@ -26,42 +31,51 @@ import {
   republishWindowToolCalls,
 } from "./store.js";
 import { healSettledChat } from "./turn-teardown.js";
-import { noteLoaded, syncEpoch } from "./tab-freshness.js";
+import { observeStamp } from "./subject-versions.js";
+import type { SubjectStamp } from "./wire/types.gen.js";
 
 // --- Inline decoders ---
-const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[] }> = (v) => {
+const decodeChatListResponseLocal: Decoder<{ chats?: ChatHeader[]; subject?: SubjectStamp }> = (
+  v,
+) => {
   const o = asObject(v, "$.chat_list");
-  const out: { chats?: ChatHeader[] } = {};
+  const out: { chats?: ChatHeader[]; subject?: SubjectStamp } = {};
   if (o["chats"] !== undefined) {
     out.chats = decodeArray(o["chats"], decodeChatHeader, "$.chat_list.chats");
+  }
+  // The `chats` digest stamp, observed once the list is committed below. Optional: a
+  // server from before the stamp still answers a usable list.
+  if (o["subject"] !== undefined && o["subject"] !== null) {
+    out.subject = decodeSubjectStamp(o["subject"]);
   }
   return out;
 };
 
-/** The chat's in-flight turn as the transcript GET carries it: the reply already accumulated
- *  server-side, which reaches the chat file only at turn end so `messages` cannot hold it. */
-interface LiveTurnPage {
-  readonly message: Message;
-  readonly chunk_seq: number;
-  readonly truncated: boolean;
-}
-
-/** Decode the optional `live_turn` sibling, optional-tolerant per this decoder's stated
- *  convention. Absent means either no turn is running or an older server, and both mean
- *  "nothing to adopt"; a MALFORMED one is refused by `decodeMessage` rather than half-read,
- *  because a message with no id is one the store cannot merge or dedup against. */
-function decodeLiveTurn(raw: unknown): LiveTurnPage | undefined {
-  if (raw === undefined || raw === null) {
+/** The in-flight turn this response carries, or NOTHING TO ADOPT — one outcome out of two
+ *  shapes, because the store has no third state for it.
+ *
+ *  ABSENT is the majority case: `internal/chat`'s router sets the key only while a turn is
+ *  running, and the generated decoder is a `Decoder<LiveTurn>` whose `asObject` refuses
+ *  undefined AND null by design.
+ *
+ *  REFUSED is a server older than one of the payload's REQUIRED fields. A throw out of the
+ *  enclosing decoder is a decode failure `apiGetTyped` collapses to null, which costs the
+ *  WHOLE window for every chat with a running turn, so it is answered here instead. It
+ *  yields no DEFAULT either: an unstated base is not a base of 0. Logged, or a refusal
+ *  reads as an idle chat. */
+function adoptableLiveTurn(v: unknown): LiveTurn | undefined {
+  if (v === undefined || v === null) {
     return undefined;
   }
-  const o = asObject(raw, "$.chat_get.live_turn");
-  return {
-    message: decodeMessage(o["message"]),
-    chunk_seq: optNum(o, "chunk_seq", "$.chat_get.live_turn") ?? 0,
-    // The server sends this unconditionally, so an absent marker means an older server,
-    // which capped nothing. It may never be read as "complete" when present.
-    truncated: o["truncated"] === true,
-  };
+  try {
+    return decodeLiveTurn(v);
+  } catch (e) {
+    console.warn(
+      "chat_get: decoder rejected live_turn:",
+      e instanceof Error ? e.message : String(e),
+    );
+    return undefined;
+  }
 }
 
 const decodeChatGetResponseLocal: Decoder<{
@@ -73,16 +87,23 @@ const decodeChatGetResponseLocal: Decoder<{
   turn_workflow_step: boolean | undefined;
   turn_offset: number | undefined;
   turn_segment_closed: boolean | undefined;
-  live_turn: LiveTurnPage | undefined;
+  live_turn: LiveTurn | undefined;
+  subject: SubjectStamp | undefined;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
+    // The `chat` digest stamp, read under the same lock as the window it describes, and
+    // observed only once that window is committed.
+    subject:
+      o["subject"] === undefined || o["subject"] === null
+        ? undefined
+        : decodeSubjectStamp(o["subject"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
     // The in-flight turn, which the window structurally cannot carry: it is the one thing
     // in this response that is not in the chat file yet.
-    live_turn: decodeLiveTurn(o["live_turn"]),
+    live_turn: adoptableLiveTurn(o["live_turn"]),
     // Every field below is optional-tolerant: an older server, or a proxy that strips
     // one, must not fail the whole chat load. `store.ts` turnLive is turn_open's one
     // reader; `turnBaseOf` is the window base's. UNDEFINED rather than false when absent,
@@ -120,15 +141,16 @@ function adoptTurnBase(
   session.turn_segment_closed = closed;
 }
 
-/** Adopt the fetched in-flight turn, or refuse it as stale. The four calls are the ones the
- *  `turn_state` handler makes (`handlers/messages.ts`): the same content through a second
- *  channel has to land in the same four places, or the two channels leave the store in
- *  different shapes.
+/** Adopt the fetched in-flight turn, or refuse it as stale. The marker and the upsert are
+ *  the two writes the live `message_created` door makes (`handlers/messages.ts`): the same
+ *  content through a second door has to land in the same places, or the two doors leave
+ *  the store in different shapes. This GET is the ONE channel that carries the in-flight
+ *  transcript — the connect carries `busy_chats` and no turn content.
  *
  *  THE GATE is the whole guard against a stale answer — the response is a point-in-time read,
  *  and `store.ts` chunkWatermarks states what adopting an older copy costs. A refusal changes
  *  nothing: the live stream is already ahead. An absent local mark passes. */
-function adoptLiveTurn(chatID: string, live: LiveTurnPage): void {
+function adoptLiveTurn(chatID: string, live: LiveTurn): void {
   if (live.message.id === "") {
     return;
   }
@@ -140,18 +162,17 @@ function adoptLiveTurn(chatID: string, live: LiveTurnPage): void {
   // The server holds this message in memory and nowhere else, so it is unpersisted by
   // construction — which is what a later refetch has to know before it may drop it.
   noteLiveTurnMessage(chatID, live.message.id);
-  if (live.truncated) {
-    noteTruncatedSnapshot(chatID, live.message.id);
-  } else {
-    // RETRACT a marker the other channel set for this same message. The two channels
-    // disagree BY DESIGN: a connect frame's `turn_state` is capped at 52 KiB and truncates
-    // routinely, while this GET carries the whole turn, so its `false` is a statement about
-    // the same reply rather than a missing field. The GET is the fresher answer, so it wins
-    // — and without this the note stays on screen claiming output is still coming for a
-    // message the reader is already holding whole. Keyed on the message id, so a marker
-    // held for a DIFFERENT message is untouched.
-    clearTruncatedSnapshot(chatID, live.message.id);
-  }
+  // ONE unconditional write, which is what makes this answer REPLACE the record an earlier
+  // GET left for this id rather than being merged with it. A later read outranks an
+  // earlier one — both facts are statements about the SAME reply and the later one is the
+  // fresher — so its `truncated: false` RETRACTS a marker an earlier answer set (without
+  // which the note stays on screen claiming output is still coming for a reply the reader
+  // already holds whole), and its base replaces the earlier window with this response's
+  // own. Keyed on the message id, so a record held for a DIFFERENT message is untouched.
+  noteAdoptedSnapshot(chatID, live.message.id, {
+    blockBase: live.block_base,
+    truncated: live.truncated,
+  });
   upsertMessage(chatID, live.message);
 }
 
@@ -193,6 +214,32 @@ const PAGE_MESSAGE_CAP = 50;
 // --- Abort controllers ---
 let listController: AbortController | null = null;
 const msgControllers = new Map<string, AbortController>();
+
+// Observability of the newest-page refetch, printed on every outcome; nothing branches on it.
+const loadOutcomes = { changed: 0, unchanged: 0, load_failed: 0 };
+
+// An open stream has no timing entry until its body ends, so the protocol is read off a
+// request that completes.
+function readNextHopProtocol(path: string): string {
+  const href = new URL(path, document.baseURI).href;
+  const entries = performance.getEntriesByName(href, "resource") as PerformanceResourceTiming[];
+  const last = entries.at(-1);
+  return last !== undefined && last.nextHopProtocol !== "" ? last.nextHopProtocol : "?";
+}
+
+function reportLoadOutcome(
+  chatID: string,
+  outcome: "changed" | "unchanged" | "load_failed",
+  path: string,
+): void {
+  loadOutcomes[outcome]++;
+  const line = `chat_get: ${chatID} ${outcome} changed=${loadOutcomes.changed} unchanged=${loadOutcomes.unchanged} load_failed=${loadOutcomes.load_failed} proto=${readNextHopProtocol(path)}`;
+  if (outcome === "load_failed") {
+    console.warn(line);
+  } else {
+    console.debug(line);
+  }
+}
 
 /** Whether `loadList` has ever succeeded. Read through `chatListLoaded`. */
 let listLoaded = false;
@@ -369,10 +416,14 @@ registerCleanup(() => {
 });
 
 // --- Load operations ---
-export async function loadList(): Promise<boolean> {
+/** `signal`, when given, is the revalidation's: it cancels this read beside the loader's
+ *  own supersede-the-previous controller. */
+export async function loadList(signal?: AbortSignal): Promise<boolean> {
   listController?.abort();
   const controller = new AbortController();
   listController = controller;
+  const combined =
+    signal === undefined ? controller.signal : AbortSignal.any([controller.signal, signal]);
 
   const sessionIndex = new Map<string, Session>();
   for (const s of getSessions()) {
@@ -380,8 +431,8 @@ export async function loadList(): Promise<boolean> {
   }
   const knownBefore = new Set(sessionIndex.keys());
 
-  const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, controller.signal);
-  if (controller.signal.aborted) {
+  const d = await apiGetTyped("/api/chats", decodeChatListResponseLocal, combined);
+  if (combined.aborted) {
     // `listReach` is deliberately NOT written here. This request was superseded —
     // by a `connected` refetch, or by the page unloading — and it never learned
     // anything about the server, so recording a verdict would put the abort's own
@@ -452,9 +503,9 @@ export async function loadList(): Promise<boolean> {
       // chat as never-loaded (or an evicted one as fresh).
       ...(existing?.residency !== undefined && { residency: existing.residency }),
       // The window BASE describes that same window, and it travels TOGETHER or not
-      // at all, matching `adoptTurnBase`'s half-present rule. A reconnect does not
-      // bump `syncEpoch`, so nothing refetches to replace a dropped base and the
-      // next repaint renumbers a paged chat from 1.
+      // at all, matching `adoptTurnBase`'s half-present rule. A reconnect moves no
+      // held version, so nothing refetches to replace a dropped base and the next
+      // repaint renumbers a paged chat from 1.
       ...(existing?.turn_offset !== undefined &&
         existing.turn_segment_closed !== undefined && {
           turn_offset: existing.turn_offset,
@@ -495,13 +546,21 @@ export async function loadList(): Promise<boolean> {
   listReach = "reachable";
   // The list landed, so any ladder still climbing toward it is answered.
   cancelListRetry();
+  // AFTER the commit: the version certifies the list the store now holds.
+  observeStamp(d.subject);
   return true;
 }
 
-export async function loadMessages(chatID: string, beforeID?: string): Promise<boolean> {
+export async function loadMessages(
+  chatID: string,
+  beforeID?: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
   msgControllers.get(chatID)?.abort();
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
+  const combined =
+    signal === undefined ? controller.signal : AbortSignal.any([controller.signal, signal]);
   const params = new URLSearchParams({
     limit: String(PAGE_MESSAGE_CAP),
     max_bytes: String(PAGE_BUDGET_BYTES),
@@ -515,22 +574,21 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
   // to drop it — a plan or event message persisted and broadcast inside that
   // window would otherwise vanish from the transcript until the next fetch.
   const knownBefore = new Set((get(chatID)?.messages ?? []).map((m) => m.id));
-  // The epoch too, and before rather than after for the mirror-image reason: a
-  // transport gap landing while this request is in flight may have dropped
-  // events the answer predates, so the window assembled from it must not claim
-  // to have survived that gap.
-  const epochAtStart = syncEpoch();
-  const d = await apiGetTyped(
-    `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
-    decodeChatGetResponseLocal,
-    controller.signal,
-  );
-  if (controller.signal.aborted) {
+  const path = `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`;
+  const d = await apiGetTyped(path, decodeChatGetResponseLocal, combined);
+  if (combined.aborted) {
     msgControllers.delete(chatID);
     return false;
   }
   if (d === null) {
     msgControllers.delete(chatID);
+    if (beforeID === undefined) {
+      const failed = get(chatID);
+      if (failed !== undefined) {
+        failed.residency = "load_failed";
+      }
+      reportLoadOutcome(chatID, "load_failed", path);
+    }
     return false;
   }
   const session = get(chatID);
@@ -581,7 +639,14 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     const kept = session.messages
       .slice(anchor > 0 ? anchor : 0)
       .filter((m) => !fetchedIDs.has(m.id) && (m.id === liveID || !knownBefore.has(m.id)));
+    // The byte comparison is the refetch-outcome measurement, bounded by the resident window.
+    const heldBytes = JSON.stringify(session.messages);
     session.messages = [...older, ...fetched, ...reorderKept(kept, liveID)];
+    reportLoadOutcome(
+      chatID,
+      JSON.stringify(session.messages) === heldBytes ? "unchanged" : "changed",
+      path,
+    );
     // A card already on screen does not read the array this line just replaced: its DOM
     // has one refresh channel, the per-call signal, and the repaint below writes none. So
     // the page's own calls go through that channel — which is what makes a card built from
@@ -636,11 +701,12 @@ export async function loadMessages(chatID: string, beforeID?: string): Promise<b
     }
     // A successful newest-page load is the ONE writer of `loaded`: the window
     // is now the server's answer, so an activation may trust it. An older-page
-    // prepend extends an already-trusted window and asserts nothing new. The
-    // epoch stamped is the one captured before the request, so a load that
-    // raced a gap records a claim that already reads stale.
+    // prepend extends an already-trusted window and asserts nothing new. The stamp
+    // is observed here, after the commit, and carries the server's epoch: a map
+    // bound to a different one refuses it, so an answer from a process that has
+    // since restarted records no claim.
     session.residency = "loaded";
-    noteLoaded("chat", chatID, epochAtStart);
+    observeStamp(d.subject);
   }
   // `load`, not `shape`: both branches above REPLACED or EXTENDED the window
   // with the server's own answer, so its rows are a replay and the paint must

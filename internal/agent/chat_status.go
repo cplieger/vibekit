@@ -2,10 +2,10 @@ package agent
 
 // Last-declared chat status per chat.
 //
-// This is the one thing the connect-time turn_state synthesis needs that the
-// assistant buffer does NOT hold: `chat_status` comes from KAS's focus_update
-// channel (update_session_information), a session event rather than turn
-// content, so it appears in no message and in no replay.
+// This is the one input the connect-time status_snapshot needs that the assistant
+// buffer does NOT hold: `chat_status` comes from KAS's focus_update channel
+// (update_session_information), a session event rather than turn content, so it
+// appears in no message and in no replay.
 //
 // Deliberately ephemeral and tiny: one entry per chat, MERGED on each event
 // (Merge owns why), dropped when the turn ends. Never persisted, matching the
@@ -15,14 +15,22 @@ package agent
 import (
 	"cmp"
 	"maps"
+	"slices"
 	"sync"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 type chatStatusCache struct {
 	byChat map[vibekit.ChatID]vibekit.ChatStatusPayload
-	mu     sync.Mutex
+	// versions holds the `status` counter. The projection it certifies is the
+	// RETAINED WAITING SET (what status_snapshot carries), so a write that moves
+	// only a non-waiting row does not mint: ClearAtTurnEnd never does, ClearWaiting
+	// and Clear do only when the row they remove is waiting_on_user, and Merge
+	// always does, because the frame it feeds is published to every client.
+	versions *subject.Versions
+	mu       sync.Mutex
 }
 
 func newChatStatusCache() *chatStatusCache {
@@ -38,25 +46,81 @@ func newChatStatusCache() *chatStatusCache {
 // content chunk (the agent declares intent before producing output), which is why this is
 // keyed on the chat rather than hung off a turn.
 func (c *chatStatusCache) Merge(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) vibekit.ChatStatusPayload {
+	merged, _ := c.MergeStamped(chatID, p)
+	return merged
+}
+
+// MergeStamped is Merge plus the `status` mint, both under c.mu, returning the
+// stamp the published frame carries. The one helper bus.emit is allowed to stamp
+// from: the version and the payload it certifies come out of one critical section.
+// A chat-less declaration merges against nothing and mints nothing; its stamp is
+// the current version, read in the same section.
+func (c *chatStatusCache) MergeStamped(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) (vibekit.ChatStatusPayload, *vibekit.SubjectStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if chatID == "" {
 		// A global event has no chat to merge against, and returning the zero payload here
 		// would blank the frame emit publishes.
-		return p
+		current, _ := c.registry().Current(subject.KindStatus, "")
+		return p, statusStamp(current)
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	// An entry exists iff the last declaration carried something. Only
 	// Runtime.DischargeWaiting produces a both-empty payload; handleFocusUpdate returns
 	// early on one, which is what keeps the discharge's frame distinguishable.
 	if p.Status == "" && p.Description == "" {
 		delete(c.byChat, chatID)
-		return p
+		return p, statusStamp(c.registry().BumpCounter(subject.KindStatus, ""))
 	}
 	prev := c.byChat[chatID]
 	p.Status = cmp.Or(p.Status, prev.Status)
 	p.Description = cmp.Or(p.Description, prev.Description)
 	c.byChat[chatID] = p
-	return p
+	return p, statusStamp(c.registry().BumpCounter(subject.KindStatus, ""))
+}
+
+// registry returns the versions the cache mints into, defaulting to a private one so
+// a cache built without wiring still returns honest stamps. Callers hold c.mu.
+func (c *chatStatusCache) registry() *subject.Versions {
+	if c.versions == nil {
+		c.versions = &subject.Versions{}
+	}
+	return c.versions
+}
+
+// statusStamp is the `status` stamp at version.
+func statusStamp(version string) *vibekit.SubjectStamp {
+	return vibekit.NewSubjectStamp(string(subject.KindStatus), "", version)
+}
+
+// waitingRowsLocked is the retained waiting_on_user set minus the chats in busy, in
+// chat order: a chat whose turn is running must still suppress a stale
+// waiting_on_user, and a PRIME's chat is covered the same way. Callers hold c.mu.
+func (c *chatStatusCache) waitingRowsLocked(busy map[vibekit.ChatID]openTurnFacts) []vibekit.StatusRow {
+	rows := make([]vibekit.StatusRow, 0, len(c.byChat))
+	for id, p := range c.byChat {
+		if _, isBusy := busy[id]; isBusy || p.Status != vibekit.ChatStatusWaitingOnUser {
+			continue
+		}
+		rows = append(rows, vibekit.StatusRow{ChatID: id, Status: p.Status, Description: p.Description})
+	}
+	slices.SortFunc(rows, func(a, b vibekit.StatusRow) int { return cmp.Compare(a.ChatID, b.ChatID) })
+	return rows
+}
+
+// SnapshotStamped is the status_snapshot payload with its `status` stamp, for the
+// v3 connect hook. The COUNTER IS READ FIRST, then the rows: a mutation landing
+// between the two puts its row in the set and its bump outside the stamp, so the
+// client holds a set at least as new as its version and the next digest answers
+// changed. The reverse order would allow a stamp newer than the set and a false
+// unchanged across a connection loss. Both reads are under c.mu here, so the order
+// is belt and braces for this store; it is normative for the pending snapshot,
+// whose three stores cannot share a section.
+func (c *chatStatusCache) SnapshotStamped(busy map[vibekit.ChatID]openTurnFacts) (vibekit.StatusSnapshotPayload, *vibekit.SubjectStamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	version, _ := c.registry().Current(subject.KindStatus, "")
+	rows := c.waitingRowsLocked(busy)
+	return vibekit.StatusSnapshotPayload{Rows: rows}, statusStamp(version)
 }
 
 // Get returns a chat's last status.
@@ -97,6 +161,11 @@ func (c *chatStatusCache) ClearAtTurnEnd(chatID vibekit.ChatID) {
 // declared it and ClearAtTurnEnd owns its removal: a steer arrives mid-turn, where
 // the live entry is the agent's own in_progress line rather than a claim the user
 // just answered.
+//
+// Removing a waiting row changes the certified projection, so it mints under c.mu:
+// without the bump a digest between this delete and the discharge's own frame read
+// unchanged for a set that shrank. The discharge's MergeStamped then bumps a second
+// time, which is one spurious changed and never a false unchanged.
 func (c *chatStatusCache) ClearWaiting(chatID vibekit.ChatID) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -104,13 +173,19 @@ func (c *chatStatusCache) ClearWaiting(chatID vibekit.ChatID) bool {
 		return false
 	}
 	delete(c.byChat, chatID)
+	c.registry().BumpCounter(subject.KindStatus, "")
 	return true
 }
 
 // Clear drops a chat's status unconditionally. For a chat going away (closed or
-// deleted), where no status can still be true of it.
+// deleted), where no status can still be true of it. Mints only when the row it
+// removes was the retained waiting_on_user claim, for ClearWaiting's reason.
 func (c *chatStatusCache) Clear(chatID vibekit.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	waiting := c.byChat[chatID].Status == vibekit.ChatStatusWaitingOnUser
 	delete(c.byChat, chatID)
+	if waiting {
+		c.registry().BumpCounter(subject.KindStatus, "")
+	}
 }

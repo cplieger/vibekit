@@ -36,7 +36,9 @@
     "actions/*.ts",
     "actions/__test-helpers__/*.ts",
     "__test-helpers__/*.ts",
-    "lib/**/*.ts"
+    "lib/**/*.ts",
+    "textsearch/*.ts",
+    "audit/*.ts"
   ],
   "exclude": [
     "vitest.config.ts",

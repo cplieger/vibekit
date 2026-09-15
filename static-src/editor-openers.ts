@@ -33,6 +33,7 @@ import {
 } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { registerCleanup } from "./actions/index.js";
+import { BUS_EDITOR_FILE_LOADED, emitBus } from "./bus.js";
 
 // --- Active-load cancellation ---
 
@@ -78,18 +79,18 @@ export function openFileDiff(
   });
 }
 
-/** Open a file's diff against a git ref, FETCHING both sides.
- *
- *  The counterpart to openFileDiff, which demands both contents up front. Here
- *  the caller has only a path — which is the shape every "this changed, let me
- *  look" affordance has: a turn's ledger row, a changed filename in a tool
- *  card. `fromGit: true` is what routes `open` into fetchGitDiffSources, so the
- *  pane fills itself and reports its own load failure.
- *
- *  An earlier openFileGitDiff died with the per-file-undo row it was attached
- *  to. This one exists for the opposite reason: a changed filename IS the link
- *  to its own diff now, so the openers a filename needs are load-bearing
- *  rather than incidental. */
+/** Open a file in a BACKGROUND tab: no activation, no URL write. Not `open()` with a
+ *  flag, whose tail (pending line, re-activation, `pushRoute`) is all about the tab
+ *  the reader is TAKEN to; the shared part is `ensureFileState`'s dirty-mark binding. */
+export function openFileInBackground(path: string): void {
+  const st = ensureFileState(path);
+  st.mode.value = isViewableImage(path) ? { kind: "image" } : { kind: "edit", editing: false };
+  void openEditorView(path, { activate: false });
+}
+
+/** Open a file's diff against a git ref, FETCHING both sides: `fromGit: true` routes
+ *  `open` into fetchGitDiffSources. The opener for a caller holding only a path, where
+ *  `openFileDiff` demands both contents up front. */
 export function openFileGitDiff(path: string, ref = "HEAD"): void {
   open(path, {
     mode: {
@@ -345,6 +346,7 @@ function failBufferLoad(state: FileState, message: string): void {
   state.error.value = message;
   state.loaded = true;
   restoreUI(state);
+  emitBus(BUS_EDITOR_FILE_LOADED, { path: state.path });
 }
 
 async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
@@ -387,6 +389,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   state.loaded = true;
   restoreUI(state);
   applyPendingLine(state.path);
+  emitBus(BUS_EDITOR_FILE_LOADED, { path: state.path });
 }
 
 /** Take the bytes on disk as this buffer's clean state, and let them decide the

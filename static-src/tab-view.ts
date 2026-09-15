@@ -21,7 +21,7 @@
 // the code that PRODUCES one from a subject is tab-materialize.ts.
 // ---------------------------------------------------------------------------
 
-import type { Route } from "./router.js";
+import type { Route } from "./route-path.js";
 // The nine tab kinds have ONE definition and it is the Go const block in
 // internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. Both tables below are typed as exhaustive records over it, so a new

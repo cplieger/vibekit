@@ -157,7 +157,7 @@ func (d *baseDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, b
 	return d.store.Get(ctx, id)
 }
 
-func (d *baseDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+func (d *baseDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
 	return d.store.Mutate(ctx, id, fn)
 }
 
@@ -227,7 +227,7 @@ func (d *baseDeps) SealTurnSegment(ctx context.Context, chatID vibekit.ChatID) b
 	if buf == nil {
 		return false
 	}
-	snap := buf.SplitSegment()
+	snap, _ := buf.SplitSegment()
 	if !snap.Started {
 		return false
 	}
@@ -348,7 +348,7 @@ func (d *baseDeps) StageConversationTurnSummary(ctx context.Context, chatID vibe
 }
 
 func (d *baseDeps) mutateUsage(ctx context.Context, chatID vibekit.ChatID, apply func(*vibekit.Usage)) {
-	_ = d.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, _ = d.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -468,7 +468,7 @@ func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)
 
 	// Pre-create a chat so Mutate finds it.
-	_ = deps.store.Mutate(ctx, chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
+	_, _ = deps.store.Mutate(ctx, chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
 
 	b.ReportAllocs()
 	for b.Loop() {

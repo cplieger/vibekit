@@ -4,6 +4,9 @@
 
 import { $ } from "./dom.js";
 import { el } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
+import { reconcile } from "./reconcile.js";
+import { sigChanged } from "./paint-sig.js";
 import {
   parseConflicts,
   resolveHunk,
@@ -84,122 +87,232 @@ export function renderConflictModeUI(state: FileState): void {
   renderConflictOverlay(state);
 }
 
+/** One element of the overlay: the live status line, one hunk's control row, or the
+ *  `<pre>` preview that follows a hunk carrying a suggestion. */
+type OverlayEntry =
+  | { readonly kind: "status"; readonly text: string }
+  | {
+      readonly kind: "hunk";
+      readonly index: number;
+      readonly hunk: ConflictHunk;
+      readonly loading: boolean;
+      readonly preview: string | null;
+      readonly error: string;
+    }
+  | { readonly kind: "preview"; readonly line: number; readonly text: string };
+
+function overlayEntries(conflict: ConflictFile, state: FileState): OverlayEntry[] {
+  const n = conflict.hunks.length;
+  const out: OverlayEntry[] = [
+    { kind: "status", text: `${String(n)} unresolved conflict${n === 1 ? "" : "s"}` },
+  ];
+  for (let i = 0; i < n; i++) {
+    const hunk = conflict.hunks[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    const s = state.suggestions.get(hunk.startLine);
+    out.push({
+      kind: "hunk",
+      index: i,
+      hunk,
+      loading: s?.loading === true,
+      preview: s?.preview ?? null,
+      error: s?.error ?? "",
+    });
+    if (s !== undefined && s.preview !== null) {
+      out.push({ kind: "preview", line: hunk.startLine, text: s.preview });
+    }
+  }
+  return out;
+}
+
+/** Repaint the per-hunk control overlay.
+ *
+ *  Keyed on a stable identity with the content repainted in `update`, never on the
+ *  rendered state: this re-runs for state belonging to ONE hunk, every row is a set
+ *  of real buttons, and the status line is an `aria-live` region a replacement is not
+ *  reliably re-announced from. Why the key may not carry content: `web.md` "A KEYED
+ *  RECONCILE IS NOT ENOUGH ON ITS OWN". */
 export function renderConflictOverlay(state: FileState): void {
   const overlay = $.editorConflictOverlay;
-  overlay.replaceChildren();
   if (state.mode.value.kind !== "conflict" || state.mode.value.conflict.hunks.length === 0) {
+    overlay.replaceChildren();
     overlay.classList.add("hidden");
     return;
   }
   const conflict = state.mode.value.conflict;
   overlay.classList.remove("hidden");
-  overlay.appendChild(
-    el(
-      "div",
-      {
-        className: "conflict-status",
-        // Live region: renderConflictOverlay re-runs after each resolution, so
-        // the changed count ("2 unresolved conflicts" → "1 …" → mode drops to
-        // edit) is announced to screen readers.
-        role: "status",
-        "aria-live": "polite",
-        "aria-atomic": "true",
+  reconcile(overlay, overlayEntries(conflict, state), {
+    key: (e: OverlayEntry) => entryKey(e),
+    mount: (e: OverlayEntry) => mountEntry(e, state),
+    update: (node: HTMLElement, e: OverlayEntry) => {
+      updateEntry(node, e, state);
+    },
+  });
+}
+
+function entryKey(e: OverlayEntry): string {
+  switch (e.kind) {
+    // STABLE across every count, so the live region survives and re-announces.
+    case "status":
+      return "status";
+    // The hunk's POSITION IN THE FILE, which is what makes it the same hunk. Its
+    // rendered state is deliberately not in here — see the re-seat note above.
+    case "hunk":
+      return join("hunk", String(e.hunk.startLine));
+    case "preview":
+      return join("preview", String(e.line));
+  }
+}
+
+/** Repaint a kept element. Guarded per element, so a repaint that changes nothing
+ *  touches nothing: the hunk rows are the ones that matter, since replacing a row's
+ *  children is what takes `:hover` and the keyboard's place off its buttons. */
+function updateEntry(node: HTMLElement, e: OverlayEntry, state: FileState): void {
+  switch (e.kind) {
+    case "status":
+      node.textContent = e.text;
+      return;
+    case "preview":
+      if (node.textContent !== e.text) {
+        node.textContent = e.text;
+      }
+      return;
+    case "hunk": {
+      if (!sigChanged(node, hunkSignature(e))) {
+        return;
+      }
+      const fresh = mountHunkRow(e, state);
+      node.setAttribute("aria-label", fresh.getAttribute("aria-label") ?? "");
+      node.replaceChildren(...Array.from(fresh.childNodes));
+      return;
+    }
+  }
+}
+
+function mountEntry(e: OverlayEntry, state: FileState): HTMLElement {
+  switch (e.kind) {
+    case "status":
+      return el(
+        "div",
+        {
+          className: "conflict-status",
+          // Live region: this repaints after each resolution, so the changed count
+          // ("2 unresolved conflicts" → "1 …" → mode drops to edit) is announced to
+          // screen readers.
+          role: "status",
+          "aria-live": "polite",
+          "aria-atomic": "true",
+        },
+        e.text,
+      );
+    case "preview":
+      return el("pre", { className: "conflict-suggest-preview" }, e.text);
+    case "hunk": {
+      const row = mountHunkRow(e, state);
+      // Record it here, or the FIRST update repaints a row that has not moved.
+      sigChanged(row, hunkSignature(e));
+      return row;
+    }
+  }
+}
+
+/** The signature of everything a hunk row renders BELOW its identity. Read at mount
+ *  and at every update from one place, so a first repaint cannot be spent rebuilding a
+ *  row that has not moved. */
+function hunkSignature(e: Extract<OverlayEntry, { kind: "hunk" }>): string[] {
+  return [e.hunk.ourLabel, e.hunk.theirLabel, e.loading ? "1" : "", e.preview ?? "", e.error];
+}
+
+function mountHunkRow(e: Extract<OverlayEntry, { kind: "hunk" }>, state: FileState): HTMLElement {
+  const { hunk, index: i, loading, preview, error } = e;
+  const lineNo = String(hunk.startLine + 1);
+  const ours = hunk.ourLabel || "HEAD";
+  const theirs = hunk.theirLabel || "incoming";
+  // role=group + aria-label so a screen reader announces the per-hunk button
+  // set with its line + side context (the visible title serves sighted users).
+  const row = el("div", {
+    className: "conflict-hunk-row",
+    role: "group",
+    "aria-label": `Conflict at line ${lineNo}: ${ours} vs ${theirs}`,
+  });
+  row.appendChild(
+    el("span", { className: "conflict-hunk-title" }, `Line ${lineNo}: ${ours} vs ${theirs}`),
+  );
+  // A hunk carrying a suggestion offers Accept/Reject INSTEAD of the three side
+  // choices: the preview is what the reader is deciding about, and its `<pre>` is a
+  // separate entry immediately after this row rather than a child of it.
+  if (preview !== null) {
+    row.appendChild(el("span", { className: "conflict-suggest-pill" }, "AI suggestion"));
+    row.appendChild(
+      resolveBtn(
+        "Accept",
+        () => {
+          acceptSuggestion(state, i);
+        },
+        `Accept the suggested merge for the conflict at line ${lineNo}`,
+      ),
+    );
+    row.appendChild(
+      resolveBtn(
+        "Reject",
+        () => {
+          rejectSuggestion(state, hunk.startLine);
+        },
+        `Reject the suggested merge for the conflict at line ${lineNo}`,
+      ),
+    );
+    return row;
+  }
+  row.appendChild(
+    resolveBtn(
+      "Ours",
+      () => {
+        applyResolution(state, i, "ours");
       },
-      `${String(conflict.hunks.length)} unresolved conflict${conflict.hunks.length === 1 ? "" : "s"}`,
+      `Accept ours (${ours}) for the conflict at line ${lineNo}`,
     ),
   );
-  for (let i = 0; i < conflict.hunks.length; i++) {
-    const hunk = conflict.hunks[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const lineNo = String(hunk.startLine + 1);
-    const ours = hunk.ourLabel || "HEAD";
-    const theirs = hunk.theirLabel || "incoming";
-    // role=group + aria-label so a screen reader announces the per-hunk button
-    // set with its line + side context (the visible title serves sighted users).
-    const row = el("div", {
-      className: "conflict-hunk-row",
-      role: "group",
-      "aria-label": `Conflict at line ${lineNo}: ${ours} vs ${theirs}`,
-    });
-    row.appendChild(
-      el("span", { className: "conflict-hunk-title" }, `Line ${lineNo}: ${ours} vs ${theirs}`),
-    );
-    const suggestion = state.suggestions.get(hunk.startLine);
-    if (suggestion !== undefined && suggestion.preview !== null) {
-      row.appendChild(el("span", { className: "conflict-suggest-pill" }, "AI suggestion"));
-      row.appendChild(
-        resolveBtn(
-          "Accept",
-          () => {
-            acceptSuggestion(state, i);
-          },
-          `Accept the suggested merge for the conflict at line ${lineNo}`,
-        ),
-      );
-      row.appendChild(
-        resolveBtn(
-          "Reject",
-          () => {
-            rejectSuggestion(state, hunk.startLine);
-          },
-          `Reject the suggested merge for the conflict at line ${lineNo}`,
-        ),
-      );
-      overlay.appendChild(row);
-      overlay.appendChild(el("pre", { className: "conflict-suggest-preview" }, suggestion.preview));
-      continue;
-    }
-    row.appendChild(
-      resolveBtn(
-        "Ours",
-        () => {
-          applyResolution(state, i, "ours");
-        },
-        `Accept ours (${ours}) for the conflict at line ${lineNo}`,
-      ),
-    );
-    row.appendChild(
-      resolveBtn(
-        "Theirs",
-        () => {
-          applyResolution(state, i, "theirs");
-        },
-        `Accept theirs (${theirs}) for the conflict at line ${lineNo}`,
-      ),
-    );
-    row.appendChild(
-      resolveBtn(
-        "Both",
-        () => {
-          applyResolution(state, i, "both");
-        },
-        `Keep both sides for the conflict at line ${lineNo}`,
-      ),
-    );
-    const suggestBtn = el(
-      "button",
-      {
-        className: "btn-small conflict-btn conflict-btn-suggest",
-        "data-tooltip": "Propose a merged version using the utility AI bridge",
-        "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
-        disabled: suggestion?.loading === true,
-        // BUSY, not unavailable: this button disables itself for the length of
-        // its own request and its label becomes "Suggesting…". Without the
-        // attribute it took the refusal face, dimming that very label. Declared
-        // rather than set through `setControlBusy` because this row is rebuilt
-        // per render, so the state is an attribute of the markup here.
-        ...(suggestion?.loading === true ? { "aria-busy": "true" } : {}),
+  row.appendChild(
+    resolveBtn(
+      "Theirs",
+      () => {
+        applyResolution(state, i, "theirs");
       },
-      suggestion?.loading === true ? "Suggesting..." : "Suggest",
-    );
-    suggestBtn.addEventListener("click", () => {
-      void requestSuggestion(state, i);
-    });
-    row.appendChild(suggestBtn);
-    if (suggestion !== undefined && suggestion.error !== "") {
-      row.appendChild(el("span", { className: "conflict-suggest-error" }, suggestion.error));
-    }
-    overlay.appendChild(row);
+      `Accept theirs (${theirs}) for the conflict at line ${lineNo}`,
+    ),
+  );
+  row.appendChild(
+    resolveBtn(
+      "Both",
+      () => {
+        applyResolution(state, i, "both");
+      },
+      `Keep both sides for the conflict at line ${lineNo}`,
+    ),
+  );
+  const suggestBtn = el(
+    "button",
+    {
+      className: "btn-small conflict-btn conflict-btn-suggest",
+      "data-tooltip": "Propose a merged version using the utility AI bridge",
+      "aria-label": `Suggest a merged resolution for the conflict at line ${lineNo}`,
+      disabled: loading,
+      // BUSY, not unavailable: this button disables itself for the length of
+      // its own request and its label becomes "Suggesting…". Without the
+      // attribute it took the refusal face, dimming that very label. Declared
+      // rather than set through `setControlBusy` because the row's key carries this
+      // state, so a change of it remounts the row.
+      ...(loading ? { "aria-busy": "true" } : {}),
+    },
+    loading ? "Suggesting..." : "Suggest",
+  );
+  suggestBtn.addEventListener("click", () => {
+    void requestSuggestion(state, i);
+  });
+  row.appendChild(suggestBtn);
+  if (error !== "") {
+    row.appendChild(el("span", { className: "conflict-suggest-error" }, error));
   }
+  return row;
 }
 
 function resolveBtn(label: string, onClick: () => void, ariaLabel?: string): HTMLElement {

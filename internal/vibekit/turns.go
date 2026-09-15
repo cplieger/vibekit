@@ -193,15 +193,15 @@ type TurnSummary struct {
 //
 // It exists because the in-flight reply reaches the chat file only at turn end, so the
 // window that response serves has no carrier for it: `turn_open` states that a turn is
-// running and the transcript that describes it was, until this field, reachable through
-// the SSE connect replay alone — a channel gated on a declaration the client makes
-// before it knows which chat it will show. A SIBLING field rather than an extra element
-// in `messages`, so `has_more`, `turn_offset`, `turn_segment_closed` and `message_count`
-// all keep meaning "what the file holds".
+// running, and this field is the ONE channel that carries the transcript describing it —
+// the SSE connect carries `busy_chats` and no turn content. A SIBLING field rather than
+// an extra element in `messages`, so `has_more`, `turn_offset`, `turn_segment_closed` and
+// `message_count` all keep meaning "what the file holds".
 //
-// A STRUCT rather than the four values SnapshotCapped answers with: two of those are
-// adjacent bools, and a transposed pair at the one call site compiles and is silent in
-// both directions.
+// A STRUCT mirroring buffer.Snapshot's own four fields — Message, ChunkSeq, BlockBase and
+// Truncated — so the one call site destructures that read and copies each fact BY NAME.
+// The positional form this replaced could hand two same-kind values over transposed, which
+// compiles and is silent in both directions.
 type LiveTurn struct {
 	// Message is the turn as accumulated so far, field-for-field the shape assembled at
 	// turn end so it renders byte-equivalently to the turn that replaces it.
@@ -209,24 +209,35 @@ type LiveTurn struct {
 	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). The
 	// client's dedup watermark: a chunk at or below it is already in here.
 	ChunkSeq int64 `json:"chunk_seq"`
+	// BlockBase is the ABSOLUTE index of Message.Blocks[0] in the turn's own block array.
+	// The cap keeps the TAIL of that array and re-indexes it from zero, while a live
+	// message_chunk keeps naming the absolute index (MessageChunkPayload.BlockIndex), so a
+	// client holding this window subtracts the base to place one.
+	//
+	// Unconditional like Truncated, and for the same reason: these are two facts about ONE
+	// transfer, so they cannot have different presence rules. A cut is the exceptional
+	// case, which makes a base of 0 the ordinary answer — and a POSITIVE one, stating that
+	// the window starts at 0.
+	//
+	// NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent base
+	// cannot be read as 0, which is the misalignment this field exists to remove.
+	BlockBase int `json:"block_base"`
 	// Truncated reports that the cap withheld part of Message, so the payload carries
 	// the TAIL of the turn and the rest arrives with message_appended.
 	//
-	// A `true` is the EXCEPTIONAL case on this channel, unlike on TurnStatePayload. The
-	// caps this field reports on (internal/agent's liveTurnGETCaps) are sized above the
-	// measured per-dimension maxima precisely so an ordinary turn is not cut, so what a
-	// `true` names is a turn past a ~10.1 MiB runaway ceiling rather than a routine tail.
+	// A `true` is the EXCEPTIONAL case. The caps this field reports on (internal/agent's
+	// liveTurnGETCaps) are sized above the measured per-dimension maxima precisely so an
+	// ordinary turn is not cut, so what a `true` names is a turn past a ~10.1 MiB runaway
+	// ceiling rather than a routine tail.
 	//
 	// A `false` is therefore load-bearing rather than merely an absence of withholding: it
 	// is a positive statement that this MESSAGE is whole, and it RETRACTS a truncation
-	// marker the connect channel set for the same message id. The two channels disagree by
-	// design — a connect frame's turn_state runs on connectSnapshotCaps at 52 KiB and
-	// truncates routinely — and this one is the fresher and wider answer, so a reader
-	// holding a marker for this message id must drop it (static-src/store-load.ts
-	// adoptLiveTurn).
+	// marker an earlier GET set for the same message id — a later, wider read outranks the
+	// earlier one, so a reader holding a marker for this message id must drop it
+	// (static-src/store-load.ts adoptLiveTurn).
 	//
-	// NEVER `omitempty`, for TurnStatePayload.Truncated's reason: an absent marker must
-	// not be readable as "complete", which is what makes a capped payload admissible.
+	// NEVER `omitempty`: an absent marker must not be readable as "complete", which is
+	// what makes a capped payload admissible.
 	Truncated bool `json:"truncated"`
 }
 

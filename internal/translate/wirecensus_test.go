@@ -278,13 +278,14 @@ func TestKnownKeysOf_CoversTheWholeWireBlock(t *testing.T) {
 			typ: reflect.TypeFor[acpKiroBlockShadow](),
 			want: []string{
 				"refusal", "checkpoint", "disclosedcontext", "policydenial", "kind",
-				"agentsubtaskid", "messageid", "timestamp", "notification", "workflow", "hookask",
+				"agentsubtaskid", "replayid", "usermessagetag", "messageid", "timestamp",
+				"notification", "workflow", "hookask",
 			},
 		},
 		"session_info_update._meta.kiro": {
 			typ: reflect.TypeFor[sessionInfoKiroShadow](),
 			want: []string{
-				"summarization", "usagepercentage", "workflow", "contextusage", "focus",
+				"summarization", "usagepercentage", "workflow", "contextusage", "focus", "hook",
 				"messageids", "messageid", "content", "notificationseverity", "kind",
 				"promptturnsummaries", "elapsedtime",
 			},

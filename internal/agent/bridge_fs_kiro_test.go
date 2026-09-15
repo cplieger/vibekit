@@ -360,7 +360,7 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	_ = h.chatStore.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = h.chatStore.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.SupervisedMode = true
 		return true
 	})

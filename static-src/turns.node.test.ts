@@ -9,7 +9,8 @@ import {
   turnFoldHides,
   type Turn,
 } from "./turns.js";
-import type { Message } from "./types.js";
+import { padBlock } from "./block-pad.js";
+import type { Block, Message } from "./types.js";
 
 function user(id: string, content: string, ts = 1000): Message {
   return { id, role: "user", content, ts } as Message;
@@ -323,8 +324,6 @@ describe("turnLedger", () => {
     const led = turnLedger(t!);
     expect(led.credits).toBe(0);
     expect(led.elapsedMs).toBe(0);
-    expect(led.commands).toBe(0);
-    expect(led.reads).toBe(0);
     expect(Object.keys(led.changedFiles)).toEqual([]);
   });
 
@@ -356,9 +355,16 @@ describe("turnLedger", () => {
       false,
     );
     const led = turnLedger(t!);
-    expect(led.commands).toBe(3);
-    // Counted across every message in the turn; `edit` and `search` are neither.
-    expect(led.reads).toBe(3);
+    // Counted across every message in the turn, per kind: the ledger no longer folds
+    // them into command/read aggregates, and `turnFacts` owns that ranking now.
+    expect(led.kindCounts).toEqual({
+      execute: 1,
+      shell: 1,
+      command: 1,
+      read: 3,
+      edit: 1,
+      search: 1,
+    });
   });
 
   // The info panel's inputs. These three cases pin the ABSENCE RULES rather than the
@@ -580,8 +586,15 @@ function fixtureMessages(rows: FixtureMessage[]): Message[] {
       extra.user_kind = fm.user_kind as NonNullable<Message["user_kind"]>;
     }
     if (fm.blocks !== undefined) {
-      (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID) => ({
+      // `text` is not a fixture field and is not part of the contract: every REAL block
+      // carries the content that created it, and a block with a kind and nothing behind
+      // it is a PAD — which `isStepMessage` skips, so without this every row here would
+      // stage a message whose blocks are all reservations. The Go reader needs no
+      // counterpart: a persisted message cannot hold a pad, so that side has no such
+      // predicate to be misled.
+      (extra as { blocks?: unknown }).blocks = fm.blocks.map((agentSubtaskID, i) => ({
         type: "text",
+        text: `block ${String(i)}`,
         agent_subtask_id: agentSubtaskID,
       }));
     }
@@ -981,5 +994,63 @@ describe("turnFailureText", () => {
         }),
       ]),
     ).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A RESERVED SLOT is not content.
+//
+// `padBlocks` reserves the DOM position of a block whose own frame has not
+// arrived, because the block mounter is append-only. Such a placeholder says
+// nothing about who produced the block that will fill it, so a predicate reading
+// the array has to skip it — and `isStepMessage` is a UNIVERSAL, so counting one
+// reservation as the parent agent's own work flips a step message into a
+// headerless turn card.
+//
+// Scoped to `isStepMessage` alone, deliberately. `carriesNothing` reads the same
+// array and has the same rule, and a case for it here could not fail: both
+// fixtures hold real blocks, so it answers false before and after.
+// ---------------------------------------------------------------------------
+
+describe("a padded block array", () => {
+  const STEP = "wf:w1:root";
+
+  function step(text: string): Block {
+    return { type: "text", text, agent_subtask_id: STEP };
+  }
+
+  /** One settled turn, then a step message. The settled turn is what makes
+   *  `opensHeaderlessTurn` reachable at all: without a closed segment before it the
+   *  step message joins the open turn whatever the predicate answers. */
+  function project(bs: Block[]): Turn[] {
+    return projectTurns(
+      [
+        user("u1", "run the release workflow"),
+        assistant("a1", { turn_outcome: "completed" }),
+        assistant("a2", { blocks: bs } as unknown as Partial<Message>),
+      ],
+      false,
+    );
+  }
+
+  it("reads a padded block array the same as an unpadded one", () => {
+    const padded = project([step("first"), padBlock(undefined), step("last")]);
+    const unpadded = project([step("first"), step("last")]);
+
+    // Hardcoded on both sides rather than compared against each other, so a rule that
+    // broke BOTH readings the same way cannot pass this.
+    expect(padded).toHaveLength(1);
+    expect(unpadded).toHaveLength(1);
+    expect(padded[0]?.trigger?.id).toBe("u1");
+    expect(unpadded[0]?.trigger?.id).toBe("u1");
+  });
+
+  it("still counts a REAL untagged block, so the skip is the pad's alone", () => {
+    // The negative control. Without it the case above passes just as well for a
+    // predicate that stopped reading the array at all.
+    const mixed = project([step("first"), { type: "text", text: "the chat's own work" }]);
+
+    expect(mixed).toHaveLength(2);
+    expect(mixed[1]?.trigger).toBeUndefined();
   });
 });

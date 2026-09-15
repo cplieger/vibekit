@@ -24,6 +24,15 @@ var errStoredNull = errors.New("settings: stored value is null")
 // the knowledge tool away from every existing install.
 const DefaultKnowledgeEnabled = true
 
+// DefaultNotifyPRStatus is OFF while its two siblings are ON: a pull request's CI
+// verdict is already on the forge and in the PR list, where the other two kinds
+// report work this server did while nobody was looking.
+const (
+	DefaultNotifyAgentFinished = true
+	DefaultNotifyPRStatus      = false
+	DefaultNotifyRunOutcome    = true
+)
+
 // EffectiveDefaults is the value in force for every client-rendered preference
 // when config.json says nothing about it.
 //
@@ -39,16 +48,20 @@ func EffectiveDefaults() vibekit.EffectiveSettings {
 		AgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		ChatRetentionDays: DefaultChatRetentionDays,
 		KnowledgeEnabled:  DefaultKnowledgeEnabled,
-		// The three per-kind push switches default ON, mirroring push.kindRegistry,
-		// while the master switch below defaults OFF. The polarity genuinely differs
-		// between them, which is why neither is safe for a client to guess.
-		NotifyAgentFinished: true,
-		NotifyPRStatus:      true,
-		NotifyRunOutcome:    true,
+		// The seed map's zero value is the one that must not be sent: a nil map
+		// marshals as null, and no field here is optional, so "no model has a
+		// remembered level yet" is the empty object.
+		LastEffortByModel: map[string]string{},
+		// The three per-kind push switches take their polarity from the Default*
+		// constants above, which are NOT uniform, while the master switch below
+		// defaults OFF. No polarity here is safe for a client to guess.
+		NotifyAgentFinished: DefaultNotifyAgentFinished,
+		NotifyPRStatus:      DefaultNotifyPRStatus,
+		NotifyRunOutcome:    DefaultNotifyRunOutcome,
 		// Everything else is its zero value, and each one is the right answer rather
-		// than an omission: no theme or browser path chosen, no remembered model or
-		// effort, push off until asked for, tool search off to match kiro-cli, memory
-		// off by standing veto, supervised and scheduled-auto-approve off (the latter
+		// than an omission: no theme or browser path chosen, no remembered model,
+		// push off until asked for, tool search off to match kiro-cli, memory off by
+		// standing veto, supervised and scheduled-auto-approve off (the latter
 		// fail-closed by decision), and info-level logs.
 	}
 }
@@ -122,8 +135,7 @@ func effectiveSetters(out *vibekit.EffectiveSettings) map[string]func(json.RawMe
 		KeyTheme:                func(r json.RawMessage) error { return decodeInto(&out.Theme, r) },
 		KeyFBPath:               func(r json.RawMessage) error { return decodeInto(&out.FBPath, r) },
 		KeyLastModel:            func(r json.RawMessage) error { return decodeInto(&out.LastModel, r) },
-		KeyLastEffort:           func(r json.RawMessage) error { return decodeInto(&out.LastEffort, r) },
-		KeyLastEffortModel:      func(r json.RawMessage) error { return decodeInto(&out.LastEffortModel, r) },
+		KeyLastEffortByModel:    func(r json.RawMessage) error { return decodeInto(&out.LastEffortByModel, r) },
 		KeyLastMergeMethod:      func(r json.RawMessage) error { return decodeInto(&out.LastMergeMethod, r) },
 		KeyKnowledgeEnabled:     func(r json.RawMessage) error { return decodeInto(&out.KnowledgeEnabled, r) },
 		KeyToolSearchEnabled:    func(r json.RawMessage) error { return decodeInto(&out.ToolSearchEnabled, r) },

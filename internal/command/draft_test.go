@@ -31,7 +31,7 @@ func draftReq(t *testing.T, chatID vibekit.ChatID, text string) *vibekit.ClientC
 
 func seedEmptyChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "a chat"
 		return true
 	}); err != nil {

@@ -41,7 +41,7 @@ func ownedBy(t *testing.T, owners map[string][]string) *Runtime {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
 	for chatID, sessions := range owners {
-		if err := store.Mutate(t.Context(), vibekit.ChatID(chatID), func(c *vibekit.Chat, _ bool) bool {
+		if _, err := store.Mutate(t.Context(), vibekit.ChatID(chatID), func(c *vibekit.Chat, _ bool) bool {
 			c.Name = chatID
 			for _, sid := range sessions {
 				c.RecordSession(sid)
@@ -117,7 +117,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Owned"
 		c.RecordSession("sess_retired")
 		c.RecordSession("sess_current")
@@ -304,7 +304,7 @@ func TestParseKASTime(t *testing.T) {
 func TestWorkflowRunAttribution(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Launcher"
 		c.RecordSession("sess_launched_from") // retired below
 		c.RecordSession("sess_now")

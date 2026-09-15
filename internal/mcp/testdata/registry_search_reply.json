@@ -1,0 +1,206 @@
+{
+  "_comment": [
+    "The two bodies GET /api/mcp/registry/search answers with: the 200 search reply, produced",
+    "by normalising the captured upstream reply in registry_search_upstream.json at a limit of",
+    "five (so the sixth row is the sentinel that sets truncated), and the 502 failure body for",
+    "an upstream 429 carrying a Retry-After.",
+    "",
+    "mcp.RegistrySearchResult, its entry family and mcp.RegistrySearchFailure are",
+    "wiregen-registered; TestRegistrySearchWireContract (Go) asserts these bytes, and",
+    "actions/mcp.node.test.ts (TypeScript) decodes both through the generated decoders.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/mcp/ -run TestRegistrySearchWireContract",
+    "then re-run the TS half: npx vitest --run actions/mcp.node.test.ts (from static-src/)."
+  ],
+  "search": {
+    "servers": [
+      {
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "version": "0.1.2",
+        "repository": "https://github.com/pulsemcp/mcp-servers",
+        "packages": [
+          {
+            "registry_type": "npm",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.2",
+            "env_vars": [
+              {
+                "name": "GCS_BUCKET",
+                "description": "Google Cloud Storage bucket name.",
+                "required": true
+              },
+              {
+                "name": "GCS_PROJECT_ID",
+                "description": "Google Cloud project ID."
+              },
+              {
+                "name": "GCS_CLIENT_EMAIL",
+                "description": "Service account email for inline credentials."
+              },
+              {
+                "name": "GCS_PRIVATE_KEY",
+                "description": "Service account private key for inline credentials.",
+                "secret": true
+              },
+              {
+                "name": "GOOGLE_APPLICATION_CREDENTIALS",
+                "description": "Path to Google Cloud service account key file."
+              },
+              {
+                "name": "GCS_ROOT_PATH",
+                "description": "Root path prefix to restrict access within bucket."
+              },
+              {
+                "name": "GCS_MAKE_PUBLIC",
+                "description": "Make uploaded files publicly accessible."
+              },
+              {
+                "name": "ENABLED_TOOLGROUPS",
+                "description": "Comma-separated tool groups: readonly or readwrite."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "version": "0.1.3",
+        "repository": "https://github.com/pulsemcp/mcp-servers",
+        "packages": [
+          {
+            "registry_type": "npm",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.3",
+            "env_vars": [
+              {
+                "name": "GCS_BUCKET",
+                "description": "Google Cloud Storage bucket name.",
+                "required": true
+              },
+              {
+                "name": "GCS_PROJECT_ID",
+                "description": "Google Cloud project ID."
+              },
+              {
+                "name": "GCS_CLIENT_EMAIL",
+                "description": "Service account email for inline credentials."
+              },
+              {
+                "name": "GCS_PRIVATE_KEY",
+                "description": "Service account private key for inline credentials.",
+                "secret": true
+              },
+              {
+                "name": "GOOGLE_APPLICATION_CREDENTIALS",
+                "description": "Path to Google Cloud service account key file."
+              },
+              {
+                "name": "GCS_ROOT_PATH",
+                "description": "Root path prefix to restrict access within bucket."
+              },
+              {
+                "name": "GCS_MAKE_PUBLIC",
+                "description": "Make uploaded files publicly accessible."
+              },
+              {
+                "name": "ENABLED_TOOLGROUPS",
+                "description": "Comma-separated tool groups: readonly or readwrite."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "version": "0.1.5",
+        "repository": "https://github.com/pulsemcp/mcp-servers",
+        "packages": [
+          {
+            "registry_type": "npm",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.5",
+            "env_vars": [
+              {
+                "name": "GCS_BUCKET",
+                "description": "Google Cloud Storage bucket name.",
+                "required": true
+              },
+              {
+                "name": "GCS_PROJECT_ID",
+                "description": "Google Cloud project ID."
+              },
+              {
+                "name": "GCS_CLIENT_EMAIL",
+                "description": "Service account email for inline credentials."
+              },
+              {
+                "name": "GCS_PRIVATE_KEY",
+                "description": "Service account private key for inline credentials.",
+                "secret": true
+              },
+              {
+                "name": "GOOGLE_APPLICATION_CREDENTIALS",
+                "description": "Path to Google Cloud service account key file."
+              },
+              {
+                "name": "GCS_ROOT_PATH",
+                "description": "Root path prefix to restrict access within bucket."
+              },
+              {
+                "name": "GCS_MAKE_PUBLIC",
+                "description": "Make uploaded files publicly accessible."
+              },
+              {
+                "name": "ENABLED_TOOLGROUPS",
+                "description": "Comma-separated tool groups: readonly or readwrite."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "io.github.Digital-Defiance/mcp-filesystem",
+        "description": "Advanced filesystem operations with batch ops, watching, search, checksums, and strict security.",
+        "version": "0.1.0",
+        "packages": [
+          {
+            "registry_type": "npm",
+            "identifier": "@ai-capabilities-suite/mcp-filesystem",
+            "version": "0.1.0"
+          }
+        ]
+      },
+      {
+        "name": "io.github.Digital-Defiance/mcp-filesystem",
+        "description": "Advanced filesystem operations with strict security boundaries for AI agents",
+        "version": "0.1.9",
+        "repository": "https://github.com/Digital-Defiance/ai-capabilities-suite",
+        "packages": [
+          {
+            "registry_type": "npm",
+            "identifier": "@ai-capabilities-suite/mcp-filesystem",
+            "version": "0.1.9",
+            "env_vars": [
+              {
+                "name": "WORKSPACE_ROOT",
+                "description": "Absolute path to workspace directory (all operations confined here)",
+                "format": "string",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "filtered": 0,
+    "truncated": true
+  },
+  "failure": {
+    "error": "registry unavailable",
+    "reason": "rate_limited",
+    "retry_after": 30
+  }
+}

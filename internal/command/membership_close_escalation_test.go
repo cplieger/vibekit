@@ -87,7 +87,7 @@ func newEscalationHostOver(store ChatStore, tabSet TabSet, retention retentionRe
 // before the record goes.
 func seedSessionedRecord(t *testing.T, store ChatStore, id vibekit.ChatID, chain ...string) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(id)
 		for _, sess := range chain {
 			c.RecordSession(sess)

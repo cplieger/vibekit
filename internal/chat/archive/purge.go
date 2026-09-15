@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/parallel"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -70,7 +71,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) PurgeResult {
 	outcomes := make([]purgeOutcome, len(valid))
 	deadlines := make([]time.Time, len(valid))
 	parallel.Bounded(ctx, valid, maxWorkers, func(i int, entry purgeEntry) {
-		outcomes[i], deadlines[i] = s.purgeOne(entry, cutoff, maxAge)
+		outcomes[i], deadlines[i] = s.purgeOne(ctx, entry, cutoff, maxAge)
 	})
 
 	var res PurgeResult
@@ -113,7 +114,7 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 // The returned deadline is non-zero only for a chat kept by AGE; an exempt chat
 // contributes none (see PurgeResult). Holds the per-chat mutex across the
 // stat+remove so a concurrent mutate cannot race the delete.
-func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
+func (s *Service) purgeOne(ctx context.Context, entry purgeEntry, cutoff time.Time, maxAge time.Duration) (purgeOutcome, time.Time) {
 	// A live bridge means active work; retention is about abandoned work.
 	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
 		return purgeKept, time.Time{}
@@ -150,12 +151,19 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time, maxAge time.Durat
 		m.Unlock()
 		return purgeKept, refTime.Add(maxAge)
 	}
-	if err := s.store.Remove(vibekit.ChatID(entry.name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	chatsVersion, err := s.store.Remove(vibekit.ChatID(entry.name))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		m.Unlock()
 		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
 		return purgeErr, time.Time{}
 	}
 	m.Unlock()
+	if s.broadcast != nil {
+		chatID := vibekit.ChatID(entry.name)
+		frame := vibekit.NewEvent(vibekit.EventChatDeleted, chatID, vibekit.ChatDeletedPayload{ID: entry.name})
+		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChats), "", chatsVersion)
+		s.broadcast(ctx, frame)
+	}
 	if s.onPurge != nil {
 		s.onPurge(vibekit.ChatID(entry.name), chain)
 	}

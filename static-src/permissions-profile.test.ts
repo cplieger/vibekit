@@ -491,3 +491,85 @@ describe("an empty Custom policy", () => {
     expect(statusText()).toBe("");
   });
 });
+
+// A `permissions_changed` frame usually changes nothing about the picker or the
+// table — KAS hot-reloads the file, and a profile write touches it twice — so a
+// repaint that rebuilt them threw away the keyboard's place and any open `<select>`
+// for no information at all. Both surfaces are keyed now: a row survives unless what
+// it renders moved. Object IDENTITY is the assertion, because a rebuilt row is
+// indistinguishable from a kept one by content.
+describe("a repaint keeps what it did not change", () => {
+  /** Element-by-element IDENTITY. `toEqual` over two arrays of DOM nodes compares them
+   *  STRUCTURALLY, so it passes for a rebuilt row holding the same markup — the exact
+   *  thing these cases exist to detect. */
+  function sameElements(after: readonly Element[], before: readonly Element[]): void {
+    expect(after).toHaveLength(before.length);
+    for (const [i, el] of before.entries()) {
+      expect(after[i], `element ${String(i)} was replaced`).toBe(el);
+    }
+  }
+
+  /** A second load with the same answer, as a `permissions_changed` frame produces. */
+  async function reload(v: PolicyView): Promise<void> {
+    mocks.apiGet.mockResolvedValue(v);
+    loadNativePolicy();
+    await flush();
+  }
+
+  it("keeps every profile radio, so focus and the checked state survive", async () => {
+    await mount(view("trusted"));
+    const before = radios();
+    radioFor("trusted").focus();
+
+    await reload(view("trusted"));
+
+    sameElements(radios(), before);
+    expect(document.activeElement).toBe(before[2]);
+  });
+
+  // The paint still comes from the server: a kept row is repainted, not left alone.
+  it("still moves the checked radio when the server's answer changed", async () => {
+    await mount(view("trusted"));
+    const before = radios();
+
+    await reload(view("guarded"));
+
+    sameElements(radios(), before);
+    expect(radioFor("guarded").checked).toBe(true);
+    expect(radioFor("trusted").checked).toBe(false);
+  });
+
+  it("keeps a rule row a frame left alone", async () => {
+    const rules = [userRule("fs_read"), userRule("shell")];
+    await mount(view("custom", rules));
+    const before = [...byId("native-policy-list").children];
+    expect(before.length).toBeGreaterThan(2);
+
+    await reload(view("custom", rules));
+
+    sameElements([...byId("native-policy-list").children], before);
+  });
+
+  // One rule's effect moving repaints THAT row IN PLACE and leaves its neighbour
+  // untouched. In place rather than remounted, because replacing a row mid-list
+  // re-seats every row before it — a property of the shared reconcile that
+  // `permissions-ui.ts` records at the call site.
+  it("repaints only the rule whose effect moved, in place", async () => {
+    const read = userRule("fs_read");
+    const shell = userRule("shell");
+    await mount(view("custom", [read, shell]));
+    const before = [...byId("native-policy-list").children];
+    const readSelect = before[1]?.querySelector("select");
+    expect(readSelect).not.toBeNull();
+
+    await reload(view("custom", [read, { ...shell, effect: "deny" }]));
+
+    // Every element survives, the edited one included.
+    sameElements([...byId("native-policy-list").children], before);
+    // The untouched row kept its own control, not just its box.
+    expect(before[1]?.querySelector("select")).toBe(readSelect);
+    // And the edited row tells the truth about its new effect, on both channels.
+    expect(before[2]?.className).toContain("native-rule-deny");
+    expect(before[2]?.querySelector<HTMLSelectElement>("select")?.value).toBe("deny");
+  });
+});

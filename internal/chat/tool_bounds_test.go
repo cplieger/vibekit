@@ -15,7 +15,7 @@ import (
 func persistedCall(t *testing.T, tc vibekit.ToolCall) vibekit.ToolCall {
 	t.Helper()
 	s, _ := newTestStore(t)
-	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = []vibekit.Message{callMessage(tc)}
 		return true
@@ -175,20 +175,21 @@ func TestStoreBound_RewriteKeepsTheFirstMeasurement(t *testing.T) {
 	full := strings.Repeat("o", persistBudget.outputBytes*3)
 	s, _ := newTestStore(t)
 	seed := func() error {
-		return s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		_, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Messages = []vibekit.Message{callMessage(vibekit.ToolCall{
 				ID: "tc1", Title: "Execute", Kind: vibekit.ToolKindExecute,
 				Status: vibekit.ToolCompleted, Output: full,
 			})}
 			return true
 		})
+		return err
 	}
 	if err := seed(); err != nil {
 		t.Fatalf("Setup: first Mutate: %v", err)
 	}
 	// A later, unrelated mutation: renaming the chat rewrites the whole file.
 	for i := range 3 {
-		if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = strings.Repeat("r", i+1)
 			return true
 		}); err != nil {

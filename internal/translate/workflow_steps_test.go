@@ -120,30 +120,28 @@ func TestRunProgress_EveryStepToolCallReportsProgress(t *testing.T) {
 	}
 }
 
-// TestRunProgress_AHookAskStillRefillsTheWindow pins the report's placement above the
-// card drop. hooks.showStatus off is a transcript decision and says nothing about whether
-// KAS is producing frames; reported under it, a display preference cancels a working run
-// whose step's frames are hook asks. The internal-tool drop below it is the same class.
-func TestRunProgress_AHookAskStillRefillsTheWindow(t *testing.T) {
+// TestRunProgress_ADroppedCardStillRefillsTheWindow pins the report's placement above
+// the card drop. Whether a card reaches the transcript is a rendering decision and says
+// nothing about whether KAS is producing frames; reported under it, a display decision
+// cancels a working run whose step's frames are internal bookkeeping.
+func TestRunProgress_ADroppedCardStillRefillsTheWindow(t *testing.T) {
 	base, _ := newEventCaptureDeps()
-	deps := &hookStatusDeps{baseDeps: base, enabled: false}
-	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
+	tr := New(rolesOf(base), withIDGenerator(func() string { return "id" }))
 
-	frame := stepToolFrame("hook-ask-1", "wf_1", "step-a", []string{"wf", "step-a"})
+	frame := stepToolFrame("cloud-1", "wf_1", "step-a", []string{"wf", "step-a"})
 	meta := frame["_meta"].(map[string]any)["kiro"].(map[string]any)
-	meta["hookAsk"] = map[string]any{"kind": "pre-tool-use", "toolName": "fs_write"}
-	frame["kind"] = "other"
+	meta["toolId"] = "fetch_cloud_config"
 
 	tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"), mustJSON(t, frame), FrameAttribution{})
 
 	if want := []string{"wf_1"}; !slices.Equal(base.runProgress, want) {
-		t.Errorf("progress reported = %v, want %v: hooks.showStatus is a rendering setting, "+
-			"so it must not decide whether a run's idle window is refilled",
+		t.Errorf("progress reported = %v, want %v: a rendering guard must not decide "+
+			"whether a run's idle window is refilled",
 			base.runProgress, want)
 	}
-	// The card itself still goes, because that half IS the setting's job.
+	// The card itself still goes, because that half IS the guard's job.
 	if n := len(base.bufStore.GetOrInit(vibekit.ChatID("c1")).ToolCalls); n != 0 {
-		t.Errorf("buffered tool calls = %d, want 0: the hook-ask card is still suppressed", n)
+		t.Errorf("buffered tool calls = %d, want 0: the internal-tool card is still dropped", n)
 	}
 }
 

@@ -23,7 +23,7 @@ import {
   tabStatusFor,
   relatchTurnVerdict,
   upsertHeader,
-  noteTruncatedSnapshot,
+  noteAdoptedSnapshot,
   isTruncatedSnapshot,
   noteLiveTurnMessage,
   liveTurnMessage,
@@ -135,12 +135,14 @@ vi.mock("../failure-notice.js", () => ({
 // the factory above this file's own top-level initializers, so a plain `const` is in
 // its temporal dead zone at that moment and the whole file dies in module linking
 // with a generic "there was an error when mocking a module".
-const { mockNotifyIfHidden, notifyGate } = vi.hoisted(() => ({
+const { mockNotifyIfHidden, mockCloseNotificationsFor, notifyGate } = vi.hoisted(() => ({
   mockNotifyIfHidden: vi.fn(),
+  mockCloseNotificationsFor: vi.fn(() => Promise.resolve()),
   notifyGate: { agentFinished: false },
 }));
 vi.mock("../notify.js", () => ({
   notifyIfHidden: mockNotifyIfHidden,
+  closeNotificationsFor: mockCloseNotificationsFor,
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => notifyGate.agentFinished,
   NOTIFY_TITLE: "vibekit",
@@ -413,7 +415,7 @@ describe("turn_ended side effects", () => {
   it("clears the capped-snapshot markers on turn end", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
-    noteTruncatedSnapshot("chat-1", "m1");
+    noteAdoptedSnapshot("chat-1", "m1", { blockBase: 0, truncated: true });
     expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
@@ -1351,7 +1353,11 @@ describe("the permission-class asks always notify", () => {
     ["user_input_needed", { request_id: 3, options: [] }, "The agent has a question"],
   ])("%s notifies with no per-kind gate", (event, payload, body) => {
     fireSSE(event, "chat-1", payload);
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", body);
+    // No `run_id` on any of these payloads, so `askTarget` falls to the envelope chat.
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", body, {
+      kind: "chat",
+      chatID: "chat-1",
+    });
   });
 
   it("uses the turn-approval wording when the ask carries files", () => {
@@ -1360,7 +1366,10 @@ describe("the permission-class asks always notify", () => {
       options: [],
       files: [{ path: "a.go", action_id: "act-1" }],
     });
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes", {
+      kind: "chat",
+      chatID: "chat-1",
+    });
   });
 });
 
@@ -1413,7 +1422,10 @@ describe("the agent-finished notification reads the severity", () => {
         expect(mockNotifyIfHidden).not.toHaveBeenCalled();
         return;
       }
-      expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", want);
+      expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", want, {
+        kind: "chat",
+        chatID,
+      });
     });
   }
 
@@ -1523,7 +1535,10 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-none", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+      kind: "chat",
+      chatID: "defer-none",
+    });
   });
 
   // One busy conversation must not mute the rest of the workspace.
@@ -1533,7 +1548,10 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-other", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+      kind: "chat",
+      chatID: "defer-other",
+    });
   });
 
   // A manual or scheduled launch is parentless, so its lease names no chat and its
@@ -1544,7 +1562,10 @@ describe("the notification waits for the work, not just the turn", () => {
 
     fireSSE("turn_ended", "defer-parentless", { stop_reason: "end_turn", outcome: "completed" });
 
-    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished");
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "seeded: Agent finished", {
+      kind: "chat",
+      chatID: "defer-parentless",
+    });
   });
 
   // The switch decides WHETHER the reader is told; the deferral decides WHEN. A cue
@@ -1598,5 +1619,42 @@ describe("decision_settled handler", () => {
     // The handler routes and nothing else: the dock owns the queue, so the
     // arguments arriving unchanged IS the contract.
     expect(mockCollapseSettled).toHaveBeenCalledWith("chat-1", "user_input", 42, "unattended");
+  });
+
+  it("retracts the banners about the settled chat, and only there", () => {
+    mockCollapseSettled.mockReturnValueOnce("");
+    fireSSE("decision_settled", "chat-1", {
+      kind: "permission",
+      settled_by: "user",
+      request_id: 43,
+    });
+    expect(mockCloseNotificationsFor).toHaveBeenCalledTimes(1);
+    expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "chat", chatID: "chat-1" });
+    // The Cedar policy reload names no ask, so it retracts nothing.
+    mockCloseNotificationsFor.mockClear();
+    fireSSE("permissions_changed", "", { status: "ok", errors: [] });
+    expect(mockCloseNotificationsFor).not.toHaveBeenCalled();
+  });
+
+  it("retracts a run-attributed ask's banner by the run the dock recorded for it", () => {
+    // The frame carries the chat the ask travelled on; the banner was tagged by the
+    // run it was about (`askTarget`), and the dock is what still knows which run.
+    mockCollapseSettled.mockReturnValueOnce("wf_1");
+    fireSSE("decision_settled", "chat-1", {
+      kind: "permission",
+      settled_by: "user",
+      request_id: 44,
+    });
+    expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "run", workflowID: "wf_1" });
+  });
+
+  it("falls back to the chat's banner for an ask this dock never held", () => {
+    mockCollapseSettled.mockReturnValueOnce(undefined);
+    fireSSE("decision_settled", "chat-1", {
+      kind: "elicitation",
+      settled_by: "moot",
+      request_id: 45,
+    });
+    expect(mockCloseNotificationsFor).toHaveBeenCalledWith({ kind: "chat", chatID: "chat-1" });
   });
 });

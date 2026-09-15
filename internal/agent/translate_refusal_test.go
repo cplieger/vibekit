@@ -269,7 +269,7 @@ func TestTranslateACPEvent_HandlerTableIsIDAware(t *testing.T) {
 // see one of these three. Do not read this test as the guard against that.
 func TestTranslateACPEvent_AskMethodsDispatchOnce(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	id := int64(31338)
 
 	h.translateACPEvent("c1", &vibekit.RPCResponse{

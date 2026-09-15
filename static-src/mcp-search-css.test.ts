@@ -33,6 +33,9 @@ const stubs = vi.hoisted(() => ({
 vi.mock("./dom.js", () => ({ byId: stubs.byId }));
 vi.mock("./actions/mcp.js", () => ({
   searchRegistry: { cancel: () => undefined, dispatch: async () => null },
+  // Present-but-undefined so real-ESM linking succeeds: the module under test
+  // imports the name and nothing here reaches the error branch that reads it.
+  registryFailureOf: undefined,
 }));
 vi.mock("./actions/index.js", () => ({
   subscribeToActions: () => () => undefined,
@@ -42,9 +45,7 @@ vi.mock("./actions/index.js", () => ({
 }));
 
 import { renderRegistryResult, initSearchPanel } from "./mcp-panels-search.js";
-import type { RegistrySearchResult } from "./actions/mcp.js";
-
-type Entry = RegistrySearchResult["servers"][number];
+import type { RegistryEntry as Entry } from "./wire/types.gen.js";
 
 /** The ring `40-a11y.css` puts on every focusable control: 2px at a 1px offset,
  *  so it paints in the 3px immediately outside the control's border box. */

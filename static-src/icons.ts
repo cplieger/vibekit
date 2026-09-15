@@ -33,6 +33,13 @@ const PATH_SEND = '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>';
 /** The pin's outline and its filled twin share this path: `fill` is the only
  *  difference, which is what makes the state read as the same mark, filled. */
 const PATH_PIN = '<path d="M12 17v5M9 10.76V5a2 2 0 012-2h2a2 2 0 012 2v5.76l2 3.24H7l2-3.24z"/>';
+/** The open book, shared by `ICON_TAB_DOCS` (the configuration browser and the sidebar
+ *  button that opens it) and `ICON_TOOL_READ` (the read-family tool card). The design
+ *  record — why every corner is an arc, why the flaps rise 1.5, and what the shape may
+ *  not become — is at `ICON_TAB_DOCS`, and the two SHARE this constant rather than
+ *  carrying a copy each so nothing has to hold two spellings equal. */
+const PATH_BOOK_OPEN =
+  '<path d="M12 4.5C9 3.5 6 3 4.5 3Q3 3 3 4.5V18Q3 19.5 4.5 19.5C6 19.5 9 20 12 21C15 20 18 19.5 19.5 19.5Q21 19.5 21 18V4.5Q21 3 19.5 3C18 3 15 3.5 12 4.5Z"/><path d="M12 4.5v16.5"/>';
 
 // A TIER PAIR IS SUFFIXED `_UI`, NEVER A PIXEL COUNT. These four pairs were spelled
 // `_14`, `_16` and — for the X — with a second CONCEPT NAME, so one mark had two names
@@ -248,10 +255,19 @@ export const ICON_SAVE_FAIL = svg(
 );
 // --- Tool-call icons ---
 
-const ICON_TOOL_READ = svg(
-  "ui",
-  '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
-);
+/** The read family — files, and through `readSubject` also processes, folders and
+ *  diagnostics — draws the SAME open book as the configuration browser, deliberately
+ *  (user ruling, 2026-09). It was Lucide's two-path book-open, and the two are one
+ *  mark: measured at the shipped 16px against `ICON_SUBAGENT_INTROSPECT`, which is
+ *  also Lucide's book-open at the time, the two were indistinguishable — and both
+ *  render in the TRANSCRIPT, a tool card and a delegate card deep enough in one turn to
+ *  sit on the same screen. That collision is gone from both sides in the same change:
+ *  introspect left the book family for a graduation cap, and this glyph is now the
+ *  browser's own drawing. What the share costs instead is one silhouette across two
+ *  REGISTERS — sidebar chrome and transcript content — which is the cheaper trade and
+ *  the reason it is allowed here at all; `vibekit-ui.md` "ONE CONCEPT, ONE DRAWING"
+ *  carries the ruling. */
+const ICON_TOOL_READ = svg("ui", PATH_BOOK_OPEN);
 const ICON_TOOL_EDIT = svg("ui", PATH_PENCIL);
 const ICON_TOOL_DELETE = svg("ui", PATH_TRASH);
 const ICON_TOOL_MOVE = svg(
@@ -441,11 +457,27 @@ export const ICON_TAB_AGENT = svg(
 // fall back to ICON_TAB_AGENT (the shared hexagon). Mapping: roles.ts
 // iconForSubagent.
 //
-// Introspect (Lucide "book-open") — answers questions about Kiro from the
-// official docs.
+// Introspect (Lucide "graduation-cap") — answers questions about Kiro from the
+// official docs. It was Lucide's book-open, and it LEFT the book family on the ruling
+// that gave `ICON_TOOL_READ` the browser's book (2026-09): those two were one mark at
+// 16px and both render in the transcript, so the collision had to be broken on one
+// side or the other. This side moved, because the book belongs to the surface that
+// browses documents and this delegate merely consults them.
+//
+// A cap rather than a question mark, and the alternatives were rendered before
+// choosing. `circle-question` is the most direct reading and is refused: it is a ring
+// with a small central mark, which is `ICON_INFO`'s silhouette one surface away — the
+// same defect, moved from the book family to the circle family, where `ICON_TOOL_FETCH`
+// and `ICON_TAB_HISTORY` already sit. A `?` also cannot be drawn inside anything at
+// this tier (one unit is 0.667 CSS px, so a contained glyph's mark lands near 4 px and
+// its curves muddy), and drawn BARE it is a hook and a dot with no silhouette at all.
+// `library` reads as four bars, `bookmark` says saved rather than answered, `life-buoy`
+// is a fourth ring, and `scroll-text` carries interior lines 4 units apart, under the
+// ~2 CSS px clearance an interior gap needs. The cap's shapes are large, its outline is
+// unlike anything else in the set, and it is Lucide verbatim.
 export const ICON_SUBAGENT_INTROSPECT = svg(
   "ui",
-  '<path d="M12 7v14"/><path d="M3 18a1 1 0 01-1-1V4a1 1 0 011-1h5a4 4 0 014 4 4 4 0 014-4h5a1 1 0 011 1v13a1 1 0 01-1 1h-6a3 3 0 00-3 3 3 3 0 00-3-3z"/>',
+  '<path d="M21.42 10.922a1 1 0 00-.019-1.838L12.83 5.18a2 2 0 00-1.66 0L2.6 9.08a1 1 0 000 1.832l8.57 3.908a2 2 0 001.66 0z"/><path d="M22 10v6"/><path d="M6 12.5V16a6 3 0 0012 0v-3.5"/>',
 );
 // Context gatherer (Lucide "search") — explores the codebase read-only.
 export const ICON_SUBAGENT_GATHERER = svg(
@@ -577,22 +609,37 @@ export const ICON_TAB_HISTORY = svg("ui", '<circle cx="12" cy="12" r="9"/><path 
  *  a CLOSED book was the other candidate the user offered and is declined below, and
  *  an added page line per side was legible enlarged and muddied the middle at 16px.
  *
+ *  ONE CURVE, TRANSLATED — NEVER MIRRORED — SO EVERY FLAP RISES FROM THE SPINE TO ITS
+ *  OUTER TIP. The bottom pair is the top pair moved down by the spine's own length, so
+ *  all four edges are the same drawing and both flaps curve the same way. Reflecting
+ *  the bottom about y=12 instead is the one thing that must not happen: it points the
+ *  bottom flaps down while the top ones point up, which the user rejected on sight,
+ *  and it renders as a spool rather than a book.
+ *
+ *  THE RISE IS 1.5, HALF OF WHAT IT WAS (user ruling, 2026-09; it was 3, and the flaps
+ *  were reported as angled too steeply). One dial: the tips hold the ceiling at y=3 and
+ *  the spine's bottom holds the floor at y=21, so shrinking the rise pulls the bottom
+ *  tips down from 18 to 19.5 and the spine's top down with them, and the ink stays
+ *  18x18 with no re-centring. Zero is the end of that dial and is NOT available: level
+ *  ends leave a rounded rectangle with a divider, which is the closed book declined
+ *  below, and at the `ui` tier one unit is 0.667 CSS px, so a rise under about 1.5
+ *  renders as that same rectangle anyway. Rendered at 3 / 2.25 / 1.5 / 0.75 at the
+ *  shipped 16px before settling here.
+ *
  *  The straight strokes still sit on the 3-unit grid — x=3, x=12 and x=21, this row's
  *  crisp pixel grid, whose reasoning is on the shell button in static/index.html —
  *  and the ink is still 18x18 on 3..21, the toolbar's own median extent. Only the
- *  corner arcs use half units (4.5/16.5), which are arc endpoints rather than
+ *  corner arcs use half units (4.5/18/19.5), which are arc endpoints rather than
  *  structural strokes, so nothing the grid governs moved.
  *
- *  A THIRD book drawing, deliberately, and this is why it stays OPEN: the other two
- *  are Lucide's two book-opens and `ICON_REPO` is its closed book, so drawing a
- *  closed one here would give that silhouette two meanings — the defect
- *  `vibekit-ui.md` records at the two wrenches. Their silhouette is a flat top over a
- *  spine dipping below the page bottoms; this one is bowed page edges over a rounded
- *  cover at each end. */
-export const ICON_TAB_DOCS = svg(
-  "ui",
-  '<path d="M12 6C9 4 6 3 4.5 3Q3 3 3 4.5V16.5Q3 18 4.5 18C6 18 9 19 12 21C15 19 18 18 19.5 18Q21 18 21 16.5V4.5Q21 3 19.5 3C18 3 15 4 12 6Z"/><path d="M12 6v15"/>',
-);
+ *  THE ONLY OPEN BOOK IN THE APP, and it stays OPEN because `ICON_REPO` is the closed
+ *  one: drawing a closed book here would give that silhouette two meanings — the defect
+ *  `vibekit-ui.md` records at the two wrenches. It was one of THREE open books, all
+ *  three near-identical at 16px and each meaning something else; the other two are
+ *  resolved (2026-09) rather than merely distinguished — `ICON_TOOL_READ` shares this
+ *  drawing through `PATH_BOOK_OPEN`, and the introspect subagent left for a graduation
+ *  cap. So the book family is now two marks: this open one and the closed one. */
+export const ICON_TAB_DOCS = svg("ui", PATH_BOOK_OPEN);
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */

@@ -64,7 +64,7 @@ vi.mock("./tabs.js", () => ({
   getActiveTabId: vi.fn(() => ""),
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
-  toggleGitView: vi.fn(),
+  openGitView: vi.fn(),
   // run-view's own three. `hasTab` is the eviction exemption's reader (no tab is
   // open), `parentChatRef` the launching chat a run tab nests under (none), and
   // `openTab` the door behind the empty-step link, which no case here clicks —

@@ -13,7 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // configTemplateTimeout bounds the template round-trip: the first call may lazily
@@ -102,12 +102,17 @@ func (rt *Runtime) handleConfigTemplate(w http.ResponseWriter, r *http.Request) 
 			out = templateToResponse(&tpl)
 		}
 	}
-	if modes := rt.catalog.Modes(); len(modes) > 0 {
+	modes, models, stamp := rt.catalog.ModesModelsStamped()
+	if len(modes) > 0 {
 		out.response.Modes = modes
 	}
-	if models := rt.catalog.Models(); len(models) > 0 {
+	if len(models) > 0 {
 		out.response.Models = models
 	}
+	// One read for both lists and the version they were read under, so the stamp cannot
+	// certify a catalog a second reader has already replaced.
+	stamp.Epoch = rt.Epoch()
+	out.response.Subject = stamp
 	webhttp.WriteJSON(w, withCatalogVerdict(out))
 }
 

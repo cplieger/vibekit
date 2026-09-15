@@ -9,8 +9,8 @@
 // one slot can serve a value that has two controls.
 //
 // A key with no slot is a silent no-op, which is what `theme`, `fb_path`,
-// `last_model` and `last_effort` are: each is written from outside Settings, and
-// the control the user just moved is the confirmation.
+// `last_model` and `last_effort_by_model` are: each is written from outside
+// Settings, and the control the user just moved is the confirmation.
 //
 // Usage: `showSaving(keys)` before the async write, then `showSaved(keys)` or
 // `showError(keys)` when it answers.

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
-// Tests for handlers/system.ts: the BUS_TRANSPORT_GAP reconcile handler and
-// the mode_changed SSE handler.
+// Tests for handlers/system.ts: the BUS_RECONCILE body, the two connect-hook
+// snapshot handlers and the mode_changed SSE handler.
 //
 // Drives the REAL store and asserts the resulting session state (thinking
 // flags cleared, current mode reflected). The loader (store-load.ts) and
@@ -25,7 +25,7 @@ import {
   tabStatusFor,
   transcriptStale,
 } from "../store.js";
-import { noteLoaded, syncEpoch } from "../tab-freshness.js";
+import { observeStamp, _resetForTest as resetVersions } from "../subject-versions.js";
 import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
 import {
   liveRunsForChat,
@@ -40,11 +40,11 @@ import type * as RunStore from "../run-store.js";
 import type * as ApiClient from "../api-client.js";
 
 vi.mock("../store-load.js", () => ({
-  loadList: () => mockLoadList(),
+  loadList: (signal?: AbortSignal) => mockLoadList(signal),
   loadMessages: mockLoadMessages,
   scheduleListRetry: () => mockScheduleListRetry(),
 }));
-const mockLoadList = vi.fn(() => Promise.resolve(true));
+const mockLoadList = vi.fn((_signal?: AbortSignal) => Promise.resolve(true));
 const mockLoadMessages = vi.fn(() => Promise.resolve(true));
 // The gap door's answer to a failed list load. A spy, because the LADDER is
 // store-load.test.ts's subject (it owns the reach gate, the delays and the bound);
@@ -68,8 +68,8 @@ vi.mock("../tabs.js", () => ({
   setGitTab: undefined,
   setSettingsTab: undefined,
   setTabDirty: undefined,
-  toggleGitView: undefined,
-  toggleSettingsView: undefined,
+  openGitView: undefined,
+  openSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   refreshActiveView: mockRefreshActiveView,
@@ -95,10 +95,6 @@ vi.mock("../session-context.js", () => ({
   setLastModel: undefined,
   restoreLastModel: vi.fn(),
   restoreLastEffort: vi.fn(),
-  // Present-but-undefined for the same linking reason as setLastModel above: the
-  // effort picker in this graph imports both, and neither is on a path under test.
-  getLastEffort: undefined,
-  setLastEffort: undefined,
   // Present-but-undefined so real-ESM linking succeeds: another module in this
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
@@ -166,8 +162,10 @@ vi.mock("../api-client.js", async (importOriginal) => ({
 // turn index, and turn-rail.ts also pulls in scroll.ts, whose module-level
 // initialisation demands a real #messages scroller.
 const mockRefreshTurnRail = vi.fn(() => Promise.resolve());
+const mockInvalidateTurnRails = vi.fn();
 vi.mock("../turn-rail.js", () => ({
   refreshTurnRail: mockRefreshTurnRail,
+  invalidateTurnRails: mockInvalidateTurnRails,
   pointTurnRail: vi.fn(),
   mountTurnRail: undefined,
   resetTurnRail: undefined,
@@ -181,24 +179,34 @@ vi.mock("../model-switcher.js", () => ({
 }));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
-// both transport:gap and mode_changed.
+// both transport:reconcile and mode_changed. `decodeEnvelope` and `dispatch` are the
+// REAL ones: the pending_snapshot handler's whole job is to push each item through
+// that door, and a stub there would assert only that the handler called something.
 import { fireSSE, createBusMock } from "./__test-helpers__/sse-capture.js";
+import type * as Bus from "../bus.js";
 const busHandlers = new Map<string, (...args: unknown[]) => void>();
-vi.mock("../bus.js", () =>
-  createBusMock({
+const dispatched: unknown[] = [];
+vi.mock("../bus.js", async (importOriginal) => {
+  const real = await importOriginal<typeof Bus>();
+  return createBusMock({
     // Present-but-undefined so real-ESM linking succeeds: another module in this
     // graph imports the name, and Browser Mode links for real rather than reading
     // properties off a namespace object. `undefined` is what the node runner gave
     // these, so no path under test changes behavior.
     emitBus: undefined,
-    lookupSSEDecoder: undefined,
+    lookupSSEDecoder: real.lookupSSEDecoder,
+    registerSSEDecoder: real.registerSSEDecoder,
+    decodeEnvelope: real.decodeEnvelope,
+    dispatch: vi.fn((evt: unknown) => {
+      dispatched.push(evt);
+    }),
     onBus: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       busHandlers.set(event, handler);
     }),
-    BUS_TRANSPORT_GAP: "transport:gap",
+    BUS_RECONCILE: "transport:reconcile",
     BUS_PAGE_RESUMED: "page:resumed",
-  }),
-);
+  });
+});
 
 // Import after mocks so system.ts registers its handlers against the bus mock.
 await import("./system.js");
@@ -227,8 +235,10 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
   };
 }
 
-function fireGap(): void {
-  busHandlers.get("transport:gap")?.({ lastSeen: 0, floor: 0, head: 0 });
+function fireReconcile(cause = "full:hello"): AbortSignal {
+  const signal = new AbortController().signal;
+  busHandlers.get("transport:reconcile")?.({ cause, signal });
+  return signal;
 }
 
 function fireResume(): void {
@@ -243,8 +253,10 @@ beforeEach(() => {
   // answer is what a 404 gives, and what the real decoders' callers already handle.
   mockApiGet.mockResolvedValue(null);
   mockApiGetTyped.mockResolvedValue(null);
+  dispatched.length = 0;
   setSessions([]);
   resetWorkspace();
+  resetVersions();
 });
 
 // The handshake is the only channel that states where the workspace is, and every
@@ -284,8 +296,8 @@ describe("connected handshake", () => {
 // The handshake's two NEGATIVE statements, neither of which any other frame carries.
 //
 // `busy_chats` is the only thing that ever says a chat this client believes is working is
-// not: a turn that died with the previous process gets no turn_state, so before this the
-// stale `thinking` stood until the reader prompted that chat again. `live_runs` is the
+// not: a turn that died with the previous process emits no terminal frame, so before this
+// the stale `thinking` stood until the reader prompted that chat again. `live_runs` is the
 // inventory the client used to fetch three serialized round trips behind whoami.
 //
 // Both are guarded by their own STATED flag rather than by the list being non-empty,
@@ -377,18 +389,18 @@ describe("the connect handshake adopts the live-run inventory off the frame", ()
     // it repopulates, so reading a withheld list as empty would drop every live run.
     setSessions([makeSession("a")]);
     fireConnected({ live_runs_stated: false });
-    expect(mockApiGetTyped).toHaveBeenCalledWith("/api/runs/live", expect.any(Function));
+    expect(mockApiGetTyped).toHaveBeenCalledWith("/api/runs/live", expect.any(Function), undefined);
   });
 });
 
-describe("BUS_TRANSPORT_GAP handler", () => {
+describe("BUS_RECONCILE handler", () => {
   it("clears the thinking flag on every session", () => {
     setSessions([
       makeSession("a", { thinking: true }),
       makeSession("b", { thinking: false }),
       makeSession("c", { thinking: true }),
     ]);
-    fireGap();
+    fireReconcile();
     expect(get("a")?.thinking).toBe(false);
     expect(get("b")?.thinking).toBe(false);
     expect(get("c")?.thinking).toBe(false);
@@ -396,7 +408,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
 
   it("reloads the header list", () => {
     setSessions([makeSession("a")]);
-    fireGap();
+    fireReconcile();
     expect(mockLoadList).toHaveBeenCalled();
   });
 
@@ -406,14 +418,14 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     // up there is no later `connected` to re-read it.
     setSessions([makeSession("a")]);
     mockLoadList.mockReturnValue(Promise.resolve(false));
-    fireGap();
+    fireReconcile();
     await mockLoadList();
     expect(mockScheduleListRetry).toHaveBeenCalledTimes(1);
   });
 
   it("arms nothing when the reload landed", async () => {
     setSessions([makeSession("a")]);
-    fireGap();
+    fireReconcile();
     await mockLoadList();
     expect(mockScheduleListRetry).not.toHaveBeenCalled();
   });
@@ -425,7 +437,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     // the degrade rule (a failed rebuild keeps event-fed state) is
     // run-store.test.ts's subject.
     setSessions([makeSession("a")]);
-    fireGap();
+    fireReconcile();
     expect(mockRebuildLiveRuns).toHaveBeenCalledTimes(1);
   });
 
@@ -435,7 +447,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   // ticking. A gap is the one moment the client knows it missed frames.
   it("re-reads every cached run, because the progress frames it missed were applied ones", () => {
     setSessions([makeSession("a")]);
-    fireGap();
+    fireReconcile();
     expect(mockInvalidateCachedRuns).toHaveBeenCalledTimes(1);
   });
 
@@ -444,24 +456,37 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   // apart — `rebuildLiveRuns` invalidates each live run only once
   // `/api/runs/live` has answered — so the token is the only thing that can say
   // they are the same event. What the token MEANS is run-store.test.ts's subject.
-  it("threads ONE cause through both of its run readers", () => {
+  it("threads ONE cause and the run's signal through both of its run readers", () => {
     setSessions([makeSession("a")]);
-    fireGap();
+    const signal = fireReconcile();
 
     const cause = mockInvalidateCachedRuns.mock.calls[0]?.[0];
     expect(typeof cause).toBe("string");
     expect(cause).not.toBe("");
-    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(cause);
+    expect(mockRebuildLiveRuns).toHaveBeenCalledWith(cause, signal);
   });
 
-  it("mints a DIFFERENT cause per gap, or the second gap would refetch nothing", () => {
+  it("derives the token from the cause, so two reconciles are two tokens", () => {
     setSessions([makeSession("a")]);
-    fireGap();
-    fireGap();
+    fireReconcile("full:hello");
+    fireReconcile("must_refetch");
 
     const first = mockInvalidateCachedRuns.mock.calls[0]?.[0];
     const second = mockInvalidateCachedRuns.mock.calls[1]?.[0];
     expect(second).not.toBe(first);
+  });
+
+  it("passes the run's signal to the list read and the catalog read", () => {
+    setSessions([makeSession("a")]);
+    const signal = fireReconcile();
+    expect(mockLoadList).toHaveBeenCalledWith(signal);
+    expect(mockFetchCatalog).toHaveBeenCalledWith({ signal });
+  });
+
+  it("drops every held turn-rail index, which no stamp certifies", () => {
+    setSessions([makeSession("a")]);
+    fireReconcile();
+    expect(mockInvalidateTurnRails).toHaveBeenCalledTimes(1);
   });
 
   // The catalog left ChatHeader for one workspace-global holder, and nothing
@@ -471,7 +496,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   // whatever boot answered, until a reload.
   it("re-reads the mode/model catalog, which no frame announces", () => {
     setSessions([makeSession("a")]);
-    fireGap();
+    fireReconcile();
     expect(mockFetchCatalog).toHaveBeenCalledTimes(1);
   });
 
@@ -483,8 +508,8 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   // instance. Restoring it in any form would restore that: the two answers race,
   // and a chat absent from one of them is not evidence its tab was closed.
   //
-  // A gap is answered by re-reading the TAB collection instead (app.ts wires
-  // `transport:gap` to `listTabs`), and a chat the server deleted has already had
+  // A reconcile is answered by re-reading the TAB collection instead (app.ts wires
+  // `transport:reconcile` to `listTabs`), and a chat the server deleted has already had
   // its tabs closed by the membership coordinator, under the same lock that removed
   // the record.
   it("closes NO tab, whatever the chat list came back holding", async () => {
@@ -492,7 +517,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     setSessions([makeSession("s1")]);
     mockHasTab.mockReturnValue(true);
 
-    fireGap();
+    fireReconcile();
     // Flush the loadList continuation, which is where the reconcile used to run.
     await mockLoadList();
 
@@ -506,7 +531,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     // there is nothing left here to reach it with.
     expect.assertions(2);
     setSessions([makeSession("s1")]);
-    fireGap();
+    fireReconcile();
     await mockLoadList();
     expect(mockHasTab).not.toHaveBeenCalled();
     expect(mockCloseTab).not.toHaveBeenCalled();
@@ -518,7 +543,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   it("refreshes the active view exactly once", () => {
     setSessions([makeSession("active-chat")]);
     setActive("active-chat");
-    fireGap();
+    fireReconcile();
     expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
   });
 
@@ -530,110 +555,76 @@ describe("BUS_TRANSPORT_GAP handler", () => {
   it("refetches no chat window of its own, even one the store still calls active", () => {
     setSessions([makeSession("bg-1"), makeSession("last-viewed"), makeSession("bg-2")]);
     setActive("last-viewed");
-    fireGap();
+    fireReconcile();
     expect(mockLoadMessages).not.toHaveBeenCalled();
     expect(mockRefreshTurnRail).not.toHaveBeenCalledWith("last-viewed");
     expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
   });
 
   // Nothing else in this handler reaches the dispatcher, so a resume's whole effect on it
-  // is this one call. It bumps NO epoch: a resume dropped no frames, so an answer that
-  // spanned the suspension still describes the server's state — what it drops is the
-  // freshness RECORDS, in the case below.
-  it("refreshes the active view on a page resume, and bumps no epoch", () => {
-    setSessions([makeSession("a")]);
-    const before = syncEpoch();
+  // is this one call. It forgets NOTHING: the chat kinds are answered by the adapter's
+  // digest, and the views whose kind has no subject read stale on their own.
+  it("refreshes the active view on a page resume, and forgets no held version", () => {
+    const fresh = makeSession("a", { residency: "loaded" });
+    setSessions([fresh]);
+    observeStamp({ kind: "chat", ref: "a", version: "1" });
     fireResume();
     expect(mockRefreshActiveView).toHaveBeenCalledTimes(1);
-    expect(syncEpoch()).toBe(before);
+    expect(transcriptStale(get("a")!)).toBe(false);
   });
 
-  // The in-app switch gap: the resume nudge reaches the ACTIVE view only, so a background
-  // chat marked `loaded` at the current epoch read fresh for the life of the document and
-  // switching back to it cost zero fetches — showing the window as it was before the page
-  // was suspended.
-  it("makes a background chat refetch at its next activation after a resume", () => {
-    const fresh = makeSession("bg", { residency: "loaded" });
-    setSessions([fresh]);
-    noteLoaded("chat", "bg", syncEpoch());
-    setActive("");
-    expect(transcriptStale(get("bg")!)).toBe(false);
-
-    fireResume();
-
-    expect(transcriptStale(get("bg")!)).toBe(true);
-  });
-
-  it("drops the records before the refresh goes out", () => {
-    // Order is the contract, for the gap handler's reason read the other way round: the
-    // active view's own gate is `viewStale`, so a refresh dispatched while its record
-    // still stood would be gated out and the resume would nudge nothing at all.
-    const fresh = makeSession("active-chat", { residency: "loaded" });
-    setSessions([fresh]);
-    noteLoaded("chat", "active-chat", syncEpoch());
-    setActive("active-chat");
-    let staleAtRefresh = false;
-    mockRefreshActiveView.mockImplementationOnce(() => {
-      staleAtRefresh = transcriptStale(get("active-chat")!);
+  // The held versions are the stream's to clear: the reconcile is emitted AFTER the bind
+  // that emptied the map, so a background chat already reads stale by the time this body
+  // runs, and the body must not empty the docks either — the fresh hello's own snapshot
+  // frames replace those sets, and clearing them here would race the frames.
+  it("leaves the decision dock and the steers to the snapshot frames", async () => {
+    const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
+    _resetForTest();
+    setSessions([makeSession("a")]);
+    pushDecision({
+      kind: "permission",
+      chatID: "a",
+      runID: "",
+      requestID: 1,
+      payload: { request_id: 1, title: "run a command", options: [] } as never,
+      submit: vi.fn(),
     });
+    recordSteerQueued("a", { id: "steer-a", text: "one", origin: "user" });
 
-    fireResume();
+    fireReconcile();
 
-    expect(staleAtRefresh).toBe(true);
-  });
-
-  it("marks every loaded window stale by bumping the sync epoch", () => {
-    // The lazy half of the reconcile: nothing refetches a background chat here,
-    // so the bump is what guarantees its next activation does.
-    const fresh = makeSession("bg", { residency: "loaded" });
-    setSessions([fresh]);
-    noteLoaded("chat", "bg", syncEpoch());
-    setActive("");
-    expect(transcriptStale(get("bg")!)).toBe(false);
-
-    fireGap();
-    expect(transcriptStale(get("bg")!)).toBe(true);
-  });
-
-  it("bumps the epoch before the refresh goes out", () => {
-    // Order is the contract: a heal that started before the bump would stamp
-    // the OLD epoch and read stale forever; one started after stamps the new
-    // one and counts as fresh. The loader's own capture discipline is
-    // store-load.test.ts's subject — this pins the door's sequencing.
-    setSessions([makeSession("active-chat")]);
-    setActive("active-chat");
-    const before = syncEpoch();
-    let epochAtRefresh = -1;
-    mockRefreshActiveView.mockImplementationOnce(() => {
-      epochAtRefresh = syncEpoch();
-    });
-
-    fireGap();
-    expect(epochAtRefresh).toBe(before + 1);
+    expect(hasPendingDecision("a")).toBe(true);
+    expect(steerCount("a")).toBe(1);
   });
 
   it("clears the finished-turn latch, for the same reason it clears thinking", async () => {
     // The latch normally stands until the next turn, but "the next turn" may have
     // happened inside the outage, so a green dot after a gap is a claim this client
-    // can no longer support. The busy chats that ARE still running get an
-    // authoritative turn_state in the connect replay; a finished one gets nothing,
-    // which is the accepted cost of not guessing.
+    // can no longer support. The busy chats that ARE still running are named in the
+    // handshake's `busy_chats`; a finished one gets nothing, which is the accepted cost
+    // of not guessing.
     const { setTurnDone, setTurnFailed, tabStatusFor } = await import("../store.js");
     setSessions([makeSession("a"), makeSession("b")]);
     setTurnDone("a");
     setTurnFailed("b");
 
-    fireGap();
+    fireReconcile();
     expect(tabStatusFor(get("a"))).toBe("idle");
     expect(tabStatusFor(get("b"))).toBe("idle");
   });
+});
 
-  it("drops every unanswered ask, because the connect replay re-pushes the live ones", async () => {
-    // `streamInitialState` lists the whole pending set — all three ask kinds — on
-    // EVERY connect, and it writes those frames after the `connected` frame this
-    // handler runs off. So clearing is safe and self-healing, where keeping an ask
-    // whose answering frame was among the lost events left the chat reporting
-    // `input` forever.
+// ---------------------------------------------------------------------------
+// The connect hook's pending set: WHOLE, possibly empty, replaced atomically. Every
+// item is an envelope the live path would have published, so it re-dispatches
+// through the real envelope door and its real handler.
+// ---------------------------------------------------------------------------
+
+describe("pending_snapshot handler", () => {
+  it("drops every unanswered ask, because the snapshot carries every live one", async () => {
+    // An ask whose answering frame this client never saw (answered on another device
+    // while this one was away) leaves no frame behind; only the whole current set takes
+    // it off the screen.
     const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
     _resetForTest();
     setSessions([makeSession("a")]);
@@ -647,16 +638,14 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     });
     expect(hasPendingDecision("a")).toBe(true);
 
-    fireGap();
+    fireSSE("pending_snapshot", "", { items: [] });
     expect(hasPendingDecision("a")).toBe(false);
   });
 
   it("drops a RUN-keyed ask too, which the per-session sweep cannot reach", async () => {
-    // The sweep above walks `getSessions()`, and `run:<workflowId>` is no chat, so
-    // a parentless run's ask — and any ask the server reconstructed for a run
-    // nothing hosts — escaped it. The replay re-offers what is still open and does
-    // NOT replay the settle, so an ask answered during the outage kept its card:
-    // the click then answered 409 and the dock spliced a closed question.
+    // The sweep walks `getSessions()`, and `run:<workflowId>` is no chat, so a
+    // parentless run's ask — and any ask the server reconstructed for a run nothing
+    // hosts — would escape it.
     const { pushDecision, runPendingAsks, _resetForTest } = await import("../decision-dock.js");
     _resetForTest();
     setSessions([makeSession("a")]);
@@ -678,31 +667,25 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     });
     expect(runPendingAsks("wf_1").count).toBe(1);
 
-    fireGap();
+    fireSSE("pending_snapshot", "", { items: [] });
     expect(runPendingAsks("wf_1").count).toBe(0);
   });
 
-  it("clears every session's steers, because they are claims it can no longer support", () => {
-    // Steers are KAS's state and the gap means the frames that resolved or
-    // dropped them may be among the lost ones. A chip saying "the agent hasn't
-    // read this" is an assertion about the server; after an outage this client
-    // cannot make it, so it stops making it. Same reasoning as clearing
-    // `thinking` on every chat above.
+  it("clears every session's steers, because the snapshot re-offers the waiting ones", () => {
+    // A chip saying "the agent hasn't read this" is an assertion about the server; the
+    // snapshot is the server saying which are still waiting, under their own ids.
     setSessions([makeSession("a"), makeSession("b", { thinking: true })]);
     recordSteerQueued("a", { id: "steer-a", text: "one", origin: "user" });
     recordSteerQueued("b", { id: "steer-b", text: "two", origin: "user" });
 
-    fireGap();
+    fireSSE("pending_snapshot", "", { items: [] });
     expect(steerCount("a")).toBe(0);
     expect(steerCount("b")).toBe(0);
   });
 
-  // The OTHER half of the same door, characterized because it is what makes the
-  // clear above admissible: a mark is a fact already established (the agent read
-  // this, or a boundary dropped it unread), and its lifetime is the loaded
-  // transcript rather than the turn. Clearing the dock without touching the
-  // record is the whole difference between "may still be queued" and "gone".
   it("leaves the transcript marks alone, because those are facts and not claims", () => {
+    // A mark is a fact already established (the agent read this, or a boundary dropped
+    // it unread), and its lifetime is the loaded transcript rather than the turn.
     setSessions([makeSession("a")]);
     setActive("a");
     appendMessage("a", { id: "u-1", role: "user", ts: 1, content: "go" });
@@ -717,7 +700,7 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     promoteSteer("a", "steer-read", "read one", "user");
     recordSteerQueued("a", { id: "steer-waiting", text: "unresolved", origin: "user" });
 
-    fireGap();
+    fireSSE("pending_snapshot", "", { items: [] });
 
     expect(steerCount("a"), "the dock is forgotten").toBe(0);
     expect(
@@ -725,6 +708,165 @@ describe("BUS_TRANSPORT_GAP handler", () => {
       "the record survives",
     ).toEqual(["steer-read"]);
     expect(steerMarks("a")[0]?.dropped, "and claims nothing about delivery").toBeUndefined();
+  });
+
+  it("re-dispatches every item through the envelope door, in order, after the clears", () => {
+    setSessions([makeSession("a")]);
+    fireSSE("pending_snapshot", "", {
+      items: [
+        { type: "permission_needed", chat_id: "a", payload: { request_id: 1 } },
+        { type: "steer_queued", chat_id: "a", payload: { id: "s1", text: "t" } },
+      ],
+    });
+    expect(dispatched.map((e) => (e as { type: string }).type)).toEqual([
+      "permission_needed",
+      "steer_queued",
+    ]);
+    expect((dispatched[0] as { chat_id?: string }).chat_id).toBe("a");
+  });
+
+  it("drops one malformed item and keeps dispatching the rest", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fireSSE("pending_snapshot", "", {
+      items: [{ chat_id: "a" }, { type: "steer_queued", chat_id: "a", payload: { id: "s1" } }],
+    });
+    expect(dispatched.map((e) => (e as { type: string }).type)).toEqual(["steer_queued"]);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
+  it("retracts every chat and run banner the snapshot does not name, whether or not this tab held the ask", async () => {
+    // The fresh hello's snapshot still names b's ask and wf_2's; a's and wf_1's were
+    // answered while this client was away and their banners come down. a's ask was never
+    // rendered here — a tab that slept through the ask is the one holding the banner, so
+    // its own decision state cannot be the gate. b's stays: the item re-offers it, and a
+    // retraction there would close the banner for a live question. The registration is
+    // faked so the tags closed are observable.
+    const { pushDecision, _resetForTest } = await import("../decision-dock.js");
+    const { _setRegistrationForTest } = await import("../notify.js");
+    _resetForTest();
+    const closed: string[] = [];
+    _setRegistrationForTest(() =>
+      Promise.resolve({
+        getNotifications: () =>
+          Promise.resolve(
+            [
+              "vibekit:a",
+              "vibekit:b",
+              "vibekit:run:wf_1",
+              "vibekit:run:wf_2",
+              "vibekit:pr:x#1",
+            ].map((tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification),
+          ),
+      }),
+    );
+    try {
+      setSessions([makeSession("a"), makeSession("b")]);
+      pushDecision({
+        kind: "permission",
+        chatID: "b",
+        runID: "",
+        requestID: 1,
+        payload: { request_id: 1, title: "run a command", options: [] } as never,
+        submit: vi.fn(),
+      });
+      fireSSE("pending_snapshot", "", {
+        items: [
+          { type: "permission_needed", chat_id: "b", payload: { request_id: 1 } },
+          // Chat-parented, so the envelope's chat id is the launching chat and the
+          // run's tag has to be derived from the payload rather than read off it.
+          {
+            type: "run_input_needed",
+            chat_id: "c",
+            payload: {
+              workflow_id: "wf_2",
+              ask_id: "reconciled:root/review",
+              node_id: "review",
+              step_session_id: "sess_step",
+              agent_name: "reviewer",
+              question: "",
+              asked_at: "2026-09-03T10:00:00Z",
+            },
+          },
+        ],
+      });
+      await vi.waitFor(() => {
+        expect(closed).toEqual(["vibekit:a", "vibekit:run:wf_1"]);
+      });
+    } finally {
+      _setRegistrationForTest(null);
+    }
+  });
+
+  it("keeps a step's permission banner under the RUN's tag, which is the tag it was shown under", async () => {
+    // `handlers/turn.ts` tags a request-shaped ask by `askTarget(chatID, run_id)`: a
+    // step's ask is ABOUT its run, so its banner sits in the run's slot, not the
+    // launching chat's. The sweep has to compute the same tag or it closes the banner
+    // for a live question and leaves the chat's slot, which holds nothing, alone.
+    const { _setRegistrationForTest } = await import("../notify.js");
+    const closed: string[] = [];
+    _setRegistrationForTest(() =>
+      Promise.resolve({
+        getNotifications: () =>
+          Promise.resolve(
+            ["vibekit:a", "vibekit:run:wf_3"].map(
+              (tag) => ({ tag, close: () => closed.push(tag) }) as unknown as Notification,
+            ),
+          ),
+      }),
+    );
+    try {
+      setSessions([makeSession("a")]);
+      fireSSE("pending_snapshot", "", {
+        items: [
+          {
+            type: "permission_needed",
+            chat_id: "a",
+            payload: { request_id: 1, run_id: "wf_3", node_id: "review" },
+          },
+        ],
+      });
+      await vi.waitFor(() => {
+        expect(closed).toEqual(["vibekit:a"]);
+      });
+    } finally {
+      _setRegistrationForTest(null);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The connect hook's retained waiting-status set: every chat's agent status is
+// REPLACED from it, so a `waiting_on_user` answered elsewhere clears and one still
+// owed comes back on a second device.
+// ---------------------------------------------------------------------------
+
+describe("status_snapshot handler", () => {
+  it("sets the status of every chat a row names", () => {
+    setSessions([makeSession("a"), makeSession("b")]);
+    fireSSE("status_snapshot", "", {
+      rows: [{ chat_id: "a", status: "waiting_on_user", description: "needs a key" }],
+    });
+    expect(get("a")?.agent_status).toBe("waiting_on_user");
+    expect(get("a")?.agent_status_text).toBe("needs a key");
+  });
+
+  it("clears the status of every chat no row names", () => {
+    setSessions([
+      makeSession("a", { agent_status: "waiting_on_user", agent_status_text: "old" }),
+      makeSession("b", { agent_status: "in_progress", agent_status_text: "working" }),
+    ]);
+    fireSSE("status_snapshot", "", { rows: [] });
+    expect(get("a")?.agent_status ?? "").toBe("");
+    expect(get("a")?.agent_status_text ?? "").toBe("");
+    expect(get("b")?.agent_status ?? "").toBe("");
+  });
+
+  it("ignores a row for a chat the store does not hold", () => {
+    setSessions([makeSession("a")]);
+    expect(() =>
+      fireSSE("status_snapshot", "", { rows: [{ chat_id: "ghost", status: "waiting_on_user" }] }),
+    ).not.toThrow();
+    expect(get("a")?.agent_status ?? "").toBe("");
   });
 });
 
@@ -758,7 +900,7 @@ describe("mode_changed handler", () => {
 // already held.
 // ---------------------------------------------------------------------------
 
-describe("the gap reconcile runs the shared turn teardown", () => {
+describe("the reconcile runs the shared turn teardown", () => {
   beforeEach(() => {
     mockRefreshTurnRail.mockClear();
     mockDrainModelSwitchQueue.mockClear();
@@ -769,14 +911,14 @@ describe("the gap reconcile runs the shared turn teardown", () => {
     setActive("");
     noteLiveTurnMessage("chat-1", "m-live");
 
-    fireGap();
+    fireReconcile();
 
     expect(liveTurnMessage("chat-1")).toBeUndefined();
     expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-1");
     // And every chat, not only the active one: a gap describes the connection.
     expect(mockDrainModelSwitchQueue).toHaveBeenCalledWith("chat-2");
-    // The rail left the shared teardown: a gap makes every chat's index equally
-    // unsupportable, which the epoch bump records, so no per-chat GET goes out
+    // The rail left the shared teardown: a reconcile makes every chat's index equally
+    // unsupportable, which `invalidateTurnRails` records, so no per-chat GET goes out
     // here (with no active chat, none at all) — each rail heals on activation.
     expect(mockRefreshTurnRail).not.toHaveBeenCalled();
   });
@@ -789,7 +931,7 @@ describe("the gap reconcile runs the shared turn teardown", () => {
     setTurnDone("chat-1");
     setTurnFailed("chat-2");
 
-    fireGap();
+    fireReconcile();
 
     expect(tabStatusFor(get("chat-1"))).toBe("idle");
     expect(tabStatusFor(get("chat-2"))).toBe("idle");

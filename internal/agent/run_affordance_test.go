@@ -205,7 +205,7 @@ func TestChatForSession_ResolvesARunsParentWithoutALiveBridge(t *testing.T) {
 	seed := func(t *testing.T, sessions ...string) *Runtime {
 		t.Helper()
 		h, cs, _ := newTestHub()
-		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "Nightly publish"
 			for _, s := range sessions {
 				c.RecordSession(s)
@@ -255,7 +255,7 @@ func TestAffordance_ChatParentedRunIsHostedByItsChatsBridge(t *testing.T) {
 			"workflowId": "wf_1", "status": "running", "parentSessionId": "sess_owned",
 		}),
 	}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Nightly publish"
 		c.RecordSession("sess_owned")
 		return true

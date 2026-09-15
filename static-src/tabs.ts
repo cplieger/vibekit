@@ -48,7 +48,7 @@
 // ---------------------------------------------------------------------------
 
 import { pushRoute } from "./router.js";
-import type { Route, SettingsTab, GitTab, DocsTab } from "./router.js";
+import type { Route, SettingsTab, GitTab, DocsTab } from "./route-path.js";
 // The nine tab kinds have ONE definition and it is the Go const block in
 // internal/vibekit/domain_tabs.go, emitted here by wire-codegen as a registered
 // enum. It was a hand-written union derived from TAB_VIEWS' keys, which is two
@@ -62,7 +62,11 @@ import type { TabKind, TabSubject, TabsChangedPayload } from "./types.js";
 // that paints from them.
 import { TAB_ICONS, TAB_VIEWS, type TabDotStatus, type TabViewSpec } from "./tab-view.js";
 import { materializeTab, subagentRef, subjectForRoute } from "./tab-materialize.js";
-import { viewStale } from "./tab-freshness.js";
+import { viewStale } from "./view-freshness.js";
+// A PATH-SPACE normaliser rather than a feature behaviour. router.ts refuses the same
+// import because a route table sits UNDER the feature line and this file does not.
+// Acyclic: files-shared.ts imports only api-client.js and @cplieger/reactive.
+import { normalizeDirPath } from "./files-shared.js";
 import {
   registerTabsTarget,
   permute,
@@ -112,7 +116,7 @@ export type { TabKind };
 
 /** Re-exported for the same reason: the definition lives in tab-view.ts with the
  *  rest of the view contract. */
-export type { TabDotStatus, TabViewSpec };
+export type { TabDotStatus };
 
 /** One row of the strip: the shared half, the local half, and the two things
  *  this device is allowed to say about a tab on its own.
@@ -1475,18 +1479,14 @@ export function tabIdFor(kind: TabKind, ref = ""): string {
   return state.tabs.find((t) => t.subject.kind === kind && t.subject.ref === ref)?.subject.id ?? "";
 }
 
-/** The open tab's id for the subject a URL route names, or "" when none is open.
- *
- *  What a BACK or FORWARD press has to ask before it applies a route: a history
- *  entry names a location this browser was at, which is not the same thing as a
- *  location that still exists. Answering "" is the whole signal — the router
- *  redirects rather than opening the tab the entry names.
- *
- *  Here rather than in app.ts because the projection is what knows, and both
- *  halves of the answer already live in this module's neighbours: the route-to-
- *  subject mapping is the factory's inverse (`subjectForRoute`) and the lookup is
- *  `tabIdFor`. */
+/** The open tab's id for the subject a URL route names, or "" when none is open —
+ *  which is what makes a BACK press REDIRECT rather than re-open a tab the entry
+ *  names and the reader has since closed. A files route resolves through
+ *  `filesTabForRoute`, naming a folder rather than a subject. */
 export function tabIdForRoute(route: Route): string {
+  if (route.kind === "files") {
+    return filesTabForRoute(route.path).id;
+  }
   const { kind, ref } = subjectForRoute(route);
   return tabIdFor(kind, ref);
 }
@@ -2428,6 +2428,15 @@ export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<
   setSettingsTab(tab);
 }
 
+/** Open Settings on the given sub-tab (default: General). NEVER closes it, which
+ *  is why it exists beside the toggle: navigation, routing and a link out of a
+ *  modal express an intent to OPEN, and a toggle would dismiss the panel it was
+ *  pointing at. */
+export async function openSettingsView(tab: SettingsTab = "general"): Promise<void> {
+  await openTab({ kind: "settings" });
+  setSettingsTab(tab);
+}
+
 /** Switch the Settings panel to a specific sub-tab. No-op when Settings is not
  *  open.
  *
@@ -2436,7 +2445,7 @@ export async function toggleSettingsView(tab: SettingsTab = "general"): Promise<
  *  correction channel over the route the factory built. Router-driven navigation
  *  reads it that way too — it must change the inner tab without toggling. */
 export function setSettingsTab(tab: SettingsTab): void {
-  setSingletonRoute("settings", { kind: "settings", tab });
+  setTabRoute(tabIdFor("settings"), { kind: "settings", tab });
 }
 
 export async function toggleGitView(tab: GitTab = "changes"): Promise<void> {
@@ -2444,31 +2453,49 @@ export async function toggleGitView(tab: GitTab = "changes"): Promise<void> {
   setGitTab(tab);
 }
 
+/** Open the git view on the given sub-tab (default: Changes). NEVER closes it;
+ *  the twin of openSettingsView, for the same reason. */
+export async function openGitView(tab: GitTab = "changes"): Promise<void> {
+  await openTab({ kind: "git" });
+  setGitTab(tab);
+}
+
 /** Switch the git view's sub-tab route. No-op when the git view isn't open.
  *  Mirrors setSettingsTab for the same reason. */
 export function setGitTab(tab: GitTab): void {
-  setSingletonRoute("git", { kind: "git", tab });
+  setTabRoute(tabIdFor("git"), { kind: "git", tab });
 }
 
-export async function toggleFilesView(): Promise<void> {
-  await toggleSingleton("files");
-}
-
-/** Bring the file browser forward. NEVER closes it, which is the whole reason
- *  this exists beside the toggle.
+/** Toggle the file browser, opening at `openAt` when none is open.
  *
- *  "Toggle" and "go to" are different verbs, and this module already draws that
- *  line for sub-tabs (setSettingsTab, setGitTab, setDocsTab all refuse to
- *  toggle). The files view had only the toggle, so a caller whose intent was "the
- *  browser has to be visible for what I am about to show in it" closed it instead
- *  whenever it already was — which is what find-in-files did from the browser's
- *  own search button, leaving the bar open over a departed view. */
-export async function showFilesView(): Promise<void> {
-  const open = tabIdFor("files");
-  if (open !== "" && state.active === open) {
+ *  NOT `toggleSingleton`: the files kind is multi-instance, so there is no single
+ *  tab to look up by kind alone. Three-way — close the ACTIVE browser, else bring
+ *  the most recent one forward, else open one at the folder the caller resolved. */
+export async function toggleFilesView(openAt: string): Promise<void> {
+  const row = activeOrRecentFilesTab();
+  if (row !== undefined) {
+    if (state.active === row.subject.id) {
+      await closeTab(row.subject.id);
+    } else {
+      activateTab(row.subject.id);
+    }
     return;
   }
-  await openTab({ kind: "files" });
+  await openTab({ kind: "files", ref: openAt });
+}
+
+/** Bring the file browser forward, opening at `openAt` when none is open. NEVER
+ *  closes it, which is the whole reason this exists beside the toggle: "go to" and
+ *  "toggle" are different verbs, as setSettingsTab/setGitTab/setDocsTab already are. */
+export async function openFilesView(openAt: string): Promise<void> {
+  const row = activeOrRecentFilesTab();
+  if (row !== undefined) {
+    if (state.active !== row.subject.id) {
+      activateTab(row.subject.id);
+    }
+    return;
+  }
+  await openTab({ kind: "files", ref: openAt });
 }
 
 export async function toggleHistoryView(): Promise<void> {
@@ -2477,7 +2504,7 @@ export async function toggleHistoryView(): Promise<void> {
 
 /** Switch the docs browser's sub-tab route. No-op when it isn't open. */
 export function setDocsTab(tab: DocsTab): void {
-  setSingletonRoute("docs", { kind: "docs", tab });
+  setTabRoute(tabIdFor("docs"), { kind: "docs", tab });
 }
 
 /** Toggle the Kiro configuration browser, landing on the given sub-tab. */
@@ -2486,14 +2513,13 @@ export async function toggleDocsView(tab: DocsTab = "steering"): Promise<void> {
   setDocsTab(tab);
 }
 
-/** Point a singleton's LOCAL route at a sub-tab.
+/** Point ONE row's LOCAL route somewhere, by id.
  *
  *  The spec is replaced rather than mutated, because a `TabViewSpec` is a
  *  readonly snapshot: every other field of it is immutable by contract, and the
  *  route is the one the client corrects. Emits only when the tab is active, since
  *  the route subscriber is what pushes the URL. */
-function setSingletonRoute(kind: TabKind, route: Route): void {
-  const id = tabIdFor(kind);
+function setTabRoute(id: string, route: Route): void {
   const row = rowOfID(id);
   if (row === undefined) {
     return;
@@ -2502,6 +2528,68 @@ function setSingletonRoute(kind: TabKind, route: Route): void {
   if (state.active === id) {
     emit();
   }
+}
+
+/** Point ONE file browser's local route at the folder it is showing, by ref.
+ *
+ *  `showView` pushes the active row's route on EVERY projection mutation, so a row
+ *  whose route does not track its content is overwritten by the next unrelated emit.
+ *  By REF rather than by the active row, because `applyRoute` points a tab it is
+ *  about to activate, where an active-row lookup would silently no-op. */
+export function setFilesRoute(ref: string, path: string): void {
+  setTabRoute(filesTabIdFor(ref), { kind: "files", path });
+}
+
+/** The files kind's own `tabIdFor`: the tab whose ref names this FOLDER, or "".
+ *
+ *  Both sides are normalised, because a `subject.ref` arrives from the persisted set
+ *  bounded only by MaxRefBytes while every value downstream of the factory is
+ *  `normalizeDirPath` output. A verbatim compare therefore has two key spaces, and a
+ *  non-canonical ref would resolve to "" here while the state, the route and the
+ *  label all resolved to the folder. */
+export function filesTabIdFor(ref: string): string {
+  return filesRowForRef(ref)?.subject.id ?? "";
+}
+
+/** The files row whose ref names this folder, in the normalised space. */
+function filesRowForRef(ref: string): TabRow | undefined {
+  const dir = normalizeDirPath(ref);
+  return state.tabs.find(
+    (t) => t.subject.kind === "files" && normalizeDirPath(t.subject.ref) === dir,
+  );
+}
+
+/** The active files row, else the most recently activated one, else the first in
+ *  strip order, else "".
+ *
+ *  ALSO `filesTabForRoute`'s rungs 2 and 3, so a route, the sidebar button and
+ *  Ctrl-F cannot disagree about which browser is "the" browser. */
+function activeOrRecentFilesTab(): TabRow | undefined {
+  const active = rowOfID(state.active);
+  if (active?.subject.kind === "files") {
+    return active;
+  }
+  for (const id of activationHistory) {
+    const row = rowOfID(id);
+    if (row?.subject.kind === "files") {
+      return row;
+    }
+  }
+  return state.tabs.find((t) => t.subject.kind === "files");
+}
+
+/** The files tab a `/files/<path>` route resolves to, and its NORMALISED ref.
+ *
+ *  Three rungs: the tab opened at that folder, else the ACTIVE files tab, else the
+ *  most recently activated one; `{id:"", ref:""}` when none is open, which is what
+ *  refuses a history entry for a browser nobody has. A folder is content any browser
+ *  can show, so this is not `subjectForRoute`, which stays the factory's inverse for
+ *  the OPEN direction. */
+export function filesTabForRoute(path: string): { id: string; ref: string } {
+  const row = filesRowForRef(path) ?? activeOrRecentFilesTab();
+  return row === undefined
+    ? { id: "", ref: "" }
+    : { id: row.subject.id, ref: normalizeDirPath(row.subject.ref) };
 }
 
 // --- Multi-instance openers ---

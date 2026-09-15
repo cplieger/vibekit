@@ -1,9 +1,9 @@
 // The server pre-pass that makes the DOM search honest: which URL it asks for,
 // and what it does with the answer.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SearchHit } from "./chat-search.js";
+import type { Hit, SearchResult } from "./wire/types.gen.js";
 
-const apiGet = vi.fn<(url: string) => Promise<{ hits?: SearchHit[] } | null>>();
+const apiGetTyped = vi.fn<(url: string, decode: (v: unknown) => unknown) => Promise<unknown>>();
 const openForSearch = vi.fn();
 // The chat id is declared because fold-state.ts's clearSearchOpened takes one and
 // the wrapper below forwards it; a nullary mock types its own call log as empty.
@@ -12,14 +12,15 @@ const clearSearchOpened = vi.fn((_chatID: string) => true);
 // cause explicitly (`shape`), and the assertion needs to see it.
 const bumpMessages = vi.fn((_chatID: string, _cause?: string) => undefined);
 
-vi.mock("./api-client.js", () => ({ apiGet: (url: string) => apiGet(url) }));
+vi.mock("./api-client.js", () => ({
+  apiGetTyped: (url: string, decode: (v: unknown) => unknown) => apiGetTyped(url, decode),
+  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
+  // this graph and this name is imported somewhere in it. No case here calls it.
+  apiGet: vi.fn(),
+}));
 vi.mock("./fold-state.js", () => ({
   openForSearch: (chatID: string, id: string) => openForSearch(chatID, id),
   clearSearchOpened: (chatID: string) => clearSearchOpened(chatID),
-  // Present-but-inert so real-ESM linking succeeds: the tab projection widened
-  // this graph and these names are imported somewhere in it. No case here calls
-  // them.
-  apiGetTyped: vi.fn(),
 }));
 vi.mock("./store.js", () => ({
   bumpMessages: (id: string, cause?: string) => bumpMessages(id, cause),
@@ -31,11 +32,10 @@ const {
   revealHitTurn,
   searchHitTurns,
   searchHitCount,
-  searchHitTotal,
   initSearchRevealBuilder,
 } = await import("./chat-search.js");
 
-function hit(over: Partial<SearchHit> = {}): SearchHit {
+function hit(over: Partial<Hit> = {}): Hit {
   return {
     message_id: "a1",
     turn_message_id: "u1",
@@ -49,6 +49,21 @@ function hit(over: Partial<SearchHit> = {}): SearchHit {
   };
 }
 
+/** A server reply carrying these hits. `matched` defaults to the list's own
+ *  length, which is the uncut answer; a case staging a cut sets it higher. */
+function reply(hits: Hit[], over: Partial<SearchResult> = {}): SearchResult {
+  return { matches: hits, scanned: 4, matched: hits.length, truncated: false, ...over };
+}
+
+/** Stage what the fetch answers. A body goes through the caller's OWN decoder,
+ *  so a fixture drifting from the wire shape fails here rather than passing on a
+ *  cast; `null` is the failed fetch. */
+function answer(body: SearchResult | null): void {
+  apiGetTyped.mockImplementation((_url, decode) =>
+    Promise.resolve(body === null ? null : decode(body)),
+  );
+}
+
 /** The three injected surfaces, declared once because they are MODULE state in
  *  chat-search.ts: a case that armed its own would leak it into the next. The
  *  suite's `mockReset` restores each implementation before every test. */
@@ -59,8 +74,8 @@ const forWalk = vi.fn((_chatID: string, _turnID: string) => Promise.resolve());
 const endWalk = vi.fn((_chatID: string) => undefined);
 
 beforeEach(() => {
-  apiGet.mockReset();
-  apiGet.mockResolvedValue({ hits: [] });
+  apiGetTyped.mockReset();
+  answer(reply([]));
   initSearchRevealBuilder(reveal, forWalk, endWalk);
   resetServerSearch();
   endWalk.mockClear();
@@ -69,31 +84,37 @@ beforeEach(() => {
 describe("runServerSearch: the request", () => {
   it("asks the chat's own search endpoint with the encoded query", async () => {
     await runServerSearch("c 1", "why retry?");
-    expect(apiGet).toHaveBeenCalledWith("/api/chats/c%201/search?q=why%20retry%3F");
+    expect(apiGetTyped).toHaveBeenCalledWith(
+      "/api/chats/c%201/search?q=why%20retry%3F",
+      expect.any(Function),
+    );
   });
 
   it("omits the case parameter by default, so an unset flag keeps the old behaviour", async () => {
     await runServerSearch("c1", "retry");
-    expect(apiGet.mock.calls[0]?.[0]).not.toContain("case=");
+    expect(apiGetTyped.mock.calls[0]?.[0]).not.toContain("case=");
   });
 
   it("sends case=1 when the reader asked to match case", async () => {
     await runServerSearch("c1", "Retry", true);
-    expect(apiGet).toHaveBeenCalledWith("/api/chats/c1/search?q=Retry&case=1");
+    expect(apiGetTyped).toHaveBeenCalledWith(
+      "/api/chats/c1/search?q=Retry&case=1",
+      expect.any(Function),
+    );
   });
 
   it("does not call the server for an empty chat id or a blank query", async () => {
     await runServerSearch("", "retry");
     await runServerSearch("c1", "   ");
-    expect(apiGet).not.toHaveBeenCalled();
+    expect(apiGetTyped).not.toHaveBeenCalled();
   });
 });
 
 describe("runServerSearch: the reveal", () => {
   it("opens each hit's turn by its OPENING message id", async () => {
-    apiGet.mockResolvedValue({
-      hits: [hit({ turn_message_id: "u1" }), hit({ message_id: "a2", turn_message_id: "u3" })],
-    });
+    answer(
+      reply([hit({ turn_message_id: "u1" }), hit({ message_id: "a2", turn_message_id: "u3" })]),
+    );
     await runServerSearch("c1", "retry");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u1");
     expect(openForSearch).toHaveBeenCalledWith("c1", "u3");
@@ -106,13 +127,13 @@ describe("runServerSearch: the reveal", () => {
     // Two hits inside ONE turn and one in another: the on-demand build runs per
     // TURN, not per hit — a turn's body only exists once — and every build
     // lands before the bump so the walker's re-run sees the rows.
-    apiGet.mockResolvedValue({
-      hits: [
+    answer(
+      reply([
         hit({ turn_message_id: "u1" }),
         hit({ message_id: "a2", turn_message_id: "u1" }),
         hit({ message_id: "a3", turn_message_id: "u3" }),
-      ],
-    });
+      ]),
+    );
     const order: string[] = [];
     forWalk.mockImplementation((_chatID: string, turnID: string) => {
       order.push(`build:${turnID}`);
@@ -131,15 +152,13 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("does not build for a hit the server could not resolve to a turn opener", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn_message_id: "" })] });
+    answer(reply([hit({ turn_message_id: "" })]));
     await runServerSearch("c1", "retry");
     expect(forWalk).not.toHaveBeenCalled();
   });
 
   it("records the hit turns and their counts for the rail and the folded rows", async () => {
-    apiGet.mockResolvedValue({
-      hits: [hit({ turn: 2 }), hit({ turn: 2, message_id: "a2" }), hit({ turn: 5 })],
-    });
+    answer(reply([hit({ turn: 2 }), hit({ turn: 2, message_id: "a2" }), hit({ turn: 5 })]));
     await runServerSearch("c1", "retry");
     expect([...searchHitTurns()].sort((a, b) => a - b)).toEqual([2, 5]);
     expect(searchHitCount(2)).toBe(2);
@@ -148,19 +167,53 @@ describe("runServerSearch: the reveal", () => {
   });
 
   it("leaves the previous reveal in place when the fetch fails", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
-    apiGet.mockResolvedValue(null);
+    answer(null);
     const out = await runServerSearch("c1", "retry");
     // A failed fetch must not collapse turns out from under a reader mid-search:
     // the previous run's reveal and counts stay exactly as they were.
-    expect(out).toEqual([]);
+    expect(out).toBeNull();
     expect(searchHitCount(2)).toBe(1);
     expect([...searchHitTurns()]).toEqual([2]);
   });
 
+  it("answers the server's envelope whole, tally included", async () => {
+    // The caller's counter and note read `matched` and `scanned` off the answer it
+    // adopts, so the reply travels as one value rather than a list beside two
+    // accessors that could describe a different answer. A cut is what `matched`
+    // exceeding the list says, and nothing here re-derives it.
+    answer(reply([hit(), hit({ message_id: "a2" })], { scanned: 24, matched: 347 }));
+    expect(await runServerSearch("c1", "retry")).toEqual({
+      matches: [hit(), hit({ message_id: "a2" })],
+      scanned: 24,
+      matched: 347,
+      truncated: false,
+    });
+  });
+
+  it("answers null when the fetch failed, so a caller can keep what it had", async () => {
+    // The distinction the caller's whole standing answer rests on: an empty
+    // envelope is "this query matched nothing", and the failed request never said
+    // that. One here replaced the reader's navigable set with nothing, marked it
+    // owned for a query the server never answered, and left the note describing
+    // the previous answer beside a zero-length list.
+    answer(null);
+    expect(await runServerSearch("c1", "retry")).toBeNull();
+  });
+
+  it("answers an empty envelope for an empty question, because that IS an answer", async () => {
+    // No chat and a blank query are not failures: nothing was asked, so nothing was
+    // read, nothing matched and nothing was cut, and a caller adopting this is
+    // adopting the truth.
+    const nothing = { matches: [], scanned: 0, matched: 0, truncated: false };
+    expect(await runServerSearch("", "retry")).toEqual(nothing);
+    expect(await runServerSearch("c1", "   ")).toEqual(nothing);
+    expect(apiGetTyped).not.toHaveBeenCalled();
+  });
+
   it("drops the reveal and the counts on reset, declaring the re-fold's shape", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
     bumpMessages.mockClear();
     resetServerSearch();
@@ -177,7 +230,7 @@ describe("runServerSearch: the reveal", () => {
     // them — and it must not depend on another question's answer. `clearSearchOpened`
     // returns false whenever the set is already empty (`resetFoldState`, a second
     // reset), which would leave every grant standing with no gesture left to end it.
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
     clearSearchOpened.mockReturnValue(false);
     endWalk.mockClear();
@@ -191,7 +244,7 @@ describe("runServerSearch: the reveal", () => {
     // every hit turn's head AND its search-opened turns stayed open, with no search running.
     // The function takes no chat argument now, so no caller can name the wrong one; what
     // this pins is that all THREE effects name the chat the search ran in.
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 2 })] });
+    answer(reply([hit({ turn: 2 })]));
     await runServerSearch("c1", "retry");
     endWalk.mockClear();
     clearSearchOpened.mockClear();
@@ -204,49 +257,8 @@ describe("runServerSearch: the reveal", () => {
     expect(bumpMessages).toHaveBeenCalledWith("c1", "shape");
   });
 
-  it("records the session-wide total, which is what the counter reports", async () => {
-    // Every hit, not every turn: two hits in one turn are two the reader could be
-    // looking for. This is the figure `formatCount` needs so the overlay can stop
-    // printing "No matches" over content the walker merely could not reach.
-    apiGet.mockResolvedValue({
-      hits: [hit({ turn: 2 }), hit({ turn: 2 }), hit({ turn: 5 })],
-    });
-    await runServerSearch("c1", "x");
-    expect(searchHitTotal()).toBe(3);
-  });
-
-  it("has no total before a search and none after a reset", async () => {
-    expect(searchHitTotal()).toBe(0);
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 1 })] });
-    await runServerSearch("c1", "x");
-    expect(searchHitTotal()).toBe(1);
-    resetServerSearch();
-    // Zero rather than stale: the counter falls back to the DOM number, which is
-    // the honest answer once there is no server opinion standing.
-    expect(searchHitTotal()).toBe(0);
-  });
-
-  it("clears the total for a blank query, which resets rather than searches", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 1 })] });
-    await runServerSearch("c1", "x");
-    expect(searchHitTotal()).toBe(1);
-    await runServerSearch("c1", "   ");
-    expect(searchHitTotal()).toBe(0);
-  });
-
-  it("keeps the previous total when the fetch fails", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn: 1 }), hit({ turn: 3 })] });
-    await runServerSearch("c1", "x");
-    apiGet.mockResolvedValue(null);
-    await runServerSearch("c1", "x");
-    // Same reasoning as the reveal: a transient failure must not collapse the
-    // reader's search out from under them, and a total of 0 would re-arm the
-    // "No matches" skin over content that is still there.
-    expect(searchHitTotal()).toBe(2);
-  });
-
   it("skips a hit the server could not resolve to a turn opener", async () => {
-    apiGet.mockResolvedValue({ hits: [hit({ turn_message_id: "" })] });
+    answer(reply([hit({ turn_message_id: "" })]));
     await runServerSearch("c1", "retry");
     expect(openForSearch).not.toHaveBeenCalled();
   });

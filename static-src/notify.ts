@@ -5,6 +5,8 @@
 // ---------------------------------------------------------------------------
 
 import { isIOS, isStandalone } from "./platform.js";
+import { openPushTarget } from "./notification-open.js";
+import { pushTargetTag, settleableTag, type PushTarget } from "./push-subject.js";
 import { registerPush, unsubscribePush } from "./actions/notify.js";
 import { registerCleanup } from "./actions/index.js";
 import { createNotifyAsk, type NotifyAsk } from "./notify-ask.js";
@@ -47,14 +49,24 @@ export const KEYED_PUSH_KINDS: Readonly<
   run_outcome: "notify_run_outcome",
 };
 
+/** The default for each keyed kind, matching `settings.Default*` on the server.
+ *
+ *  `pr_status` is OFF while its two siblings are ON: a pull request's CI verdict is
+ *  already on the forge and in the PRs tab, where the other two report work this
+ *  server did while nobody was looking. Exported because `settings-notifications.ts`
+ *  reads it to decide which kinds the master switch turns on. */
+export const KEYED_PUSH_DEFAULTS: Readonly<Record<keyof typeof KEYED_PUSH_KINDS, boolean>> = {
+  agent_finished: true,
+  pr_status: false,
+  run_outcome: true,
+};
+
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
-/** Per-kind enabled state for the KEYED kinds only. Defaults match the server's
- *  registry (both DefaultOn), so a config.json that predates a kind behaves the
- *  same way the server does. */
-const kindEnabled = new Map<string, boolean>(
-  Object.keys(KEYED_PUSH_KINDS).map((kind) => [kind, true]),
-);
+/** Per-kind enabled state for the KEYED kinds only, seeded from
+ *  KEYED_PUSH_DEFAULTS so a config.json that predates a kind behaves the same way
+ *  the server does — including for the kind whose default is OFF. */
+const kindEnabled = new Map<string, boolean>(Object.entries(KEYED_PUSH_DEFAULTS));
 let notifyUICallback: (() => void) | null = null;
 let pushState: PushState = { kind: "idle" };
 
@@ -277,11 +289,13 @@ export function installNotifyAskGesture(): () => void {
  *  a prompt the reader answered has to leave Settings agreeing with the answer, or the
  *  next cue is refused by a switch they never chose and the app looks broken.
  *
- *  Only the MASTER key is patched. The per-kind switches are their own choices and
- *  default on, so a cue that armed the ask has its own kind on by construction; a
- *  grant must not silently re-enable a channel the reader turned off. (The Settings
- *  toggle enables all of them, because there the user is answering about the whole
- *  feature rather than about the one cue that fired.)
+ *  Only the MASTER key is patched. A cue that armed the ask had its own kind on
+ *  because the CUE FIRED: every keyed cue site checks its kind before it reaches
+ *  notifyIfHidden, and the ask is armed inside that call. So there is nothing
+ *  per-kind left to turn on here, and a grant must not silently re-enable a channel
+ *  the reader turned off. (The Settings toggle enables the default-ON kinds, because
+ *  there the user is answering about the whole feature rather than about the one cue
+ *  that fired.)
  *
  *  Push is subscribed only after the server confirms: a subscription under a master
  *  switch the server never accepted would deliver notifications the settings page
@@ -356,7 +370,15 @@ export function unregisterPush(): void {
   });
 }
 
-export function notifyIfHidden(title: string, body: string): boolean {
+/** The page-created notifications still on screen, by tag. `getNotifications` does
+ *  not see a page-created Notification, so this map is what lets a retraction reach
+ *  one when the ask it announced is answered elsewhere. */
+const shown = new Map<string, Notification>();
+
+/** Show a foreground notification when the page is hidden. `target` tags it with the
+ *  same tag the service worker gives the push for that target, so the retraction on
+ *  the settled ask reaches both. */
+export function notifyIfHidden(title: string, body: string, target: PushTarget): boolean {
   // The arm LEADS every gate below, because each of them is a way this call can want
   // to notify and not be able to — the switch off, the page in front of the reader,
   // the permission unanswered. This is the one funnel every cue passes through, which
@@ -371,19 +393,95 @@ export function notifyIfHidden(title: string, body: string): boolean {
   if (!("Notification" in window) || Notification.permission !== "granted") {
     return false;
   }
+  const tag = pushTargetTag(target);
   try {
     const n = new Notification(title, {
       body,
       icon: "/favicon.svg",
-      tag: "vibekit",
+      tag,
     });
     n.addEventListener("click", () => {
       window.focus();
       n.close();
+      openPushTarget(target);
     });
+    n.addEventListener("close", () => {
+      if (shown.get(tag) === n) {
+        shown.delete(tag);
+      }
+    });
+    shown.set(tag, n);
     return true;
   } catch {
     return false;
+  }
+}
+
+/** The registration whose notifications the page can read; null where there is none
+ *  (no service worker, or a test that stubs the API away). */
+export type NotificationRegistration = Pick<ServiceWorkerRegistration, "getNotifications">;
+
+let registrationFor: () => Promise<NotificationRegistration | null> = defaultRegistration;
+
+// getRegistration, not `ready`: `ready` never settles where registration failed or
+// was refused, and a retraction awaiting it would hang for the page's life.
+async function defaultRegistration(): Promise<NotificationRegistration | null> {
+  if (!("serviceWorker" in navigator)) {
+    return null;
+  }
+  return (await navigator.serviceWorker.getRegistration()) ?? null;
+}
+
+/** Point the retraction at another registration; tests only. */
+export function _setRegistrationForTest(
+  fn: (() => Promise<NotificationRegistration | null>) | null,
+): void {
+  registrationFor = fn ?? defaultRegistration;
+}
+
+/** Retract every notification about `target`: the banner the service worker showed
+ *  for a push (found through the registration by its tag) and the foreground one this
+ *  page showed while hidden. Called where the ask it announced is settled on every
+ *  other surface, so a person coming back to the device finds no banner for a
+ *  question already answered. A push in flight when the page reconnected lands after
+ *  this, as a page message on a focused window and as a banner otherwise; the
+ *  server's per-subject debounce is what bounds that to one. */
+export async function closeNotificationsFor(target: PushTarget): Promise<void> {
+  const tag = pushTargetTag(target);
+  const page = shown.get(tag);
+  if (page !== undefined) {
+    shown.delete(tag);
+    page.close();
+  }
+  const reg = await registrationFor().catch(() => null);
+  if (reg === null) {
+    return;
+  }
+  for (const n of await reg.getNotifications({ tag })) {
+    n.close();
+  }
+}
+
+/** Retract every chat and run banner whose tag is not in `live`, the tags of the asks
+ *  a fresh hello's pending set still lists. The set is the whole truth about live
+ *  asks, so a chat or run it does not name has none; whatever sits in that tray slot
+ *  is stale, an ask answered while this page was away or a finished note for work
+ *  the reader has now come back to. One registration read for the whole sweep. */
+export async function closeNotificationsExcept(live: ReadonlySet<string>): Promise<void> {
+  for (const [tag, n] of shown) {
+    if (settleableTag(tag) && !live.has(tag)) {
+      shown.delete(tag);
+      n.close();
+    }
+  }
+  const reg = await registrationFor().catch(() => null);
+  if (reg === null) {
+    return;
+  }
+  for (const n of await reg.getNotifications()) {
+    if (settleableTag(n.tag) && !live.has(n.tag)) {
+      n.close();
+    }
   }
 }
 

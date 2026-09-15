@@ -637,14 +637,11 @@ describe("focus and reachability", { timeout: testTimeoutFor(FRAME_BUDGET_MS) },
     await settledFrames();
 
     // The find walker roots at the ACTIVE view (find-in-chat resolves
-    // `.transcript-view.is-active`), so A's text is unreachable while parked.
-    // normalize() first: the streaming markdown renderer leaves a word split
-    // across text nodes, and the engine matches per node — the subject here is
-    // the WALK SCOPE, not tokenization.
+    // `.transcript-view.is-active`), so A's text is unreachable while parked; the
+    // subject here is the WALK SCOPE.
     const { FindEngine } = await import("./find-engine.js");
     const active = messagesEl.querySelector<HTMLElement>(":scope > .transcript-view.is-active");
     expect(active).toBe(viewOf(b));
-    active?.normalize();
     const engine = new FindEngine(active ?? messagesEl);
     engine.search("needle", false);
     expect(engine.total).toBe(0);

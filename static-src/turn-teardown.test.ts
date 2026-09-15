@@ -31,7 +31,7 @@ import {
   isTruncatedSnapshot,
   liveTurnMessage,
   noteLiveTurnMessage,
-  noteTruncatedSnapshot,
+  noteAdoptedSnapshot,
   removeChat,
   setChunkWatermark,
   setSessions,
@@ -79,7 +79,7 @@ function midTurn(outcome: TurnOutcome = "failed"): void {
   setThinking(CHAT, true);
   setChunkWatermark(CHAT, LIVE_MSG, 7);
   noteLiveTurnMessage(CHAT, LIVE_MSG);
-  noteTruncatedSnapshot(CHAT, LIVE_MSG);
+  noteAdoptedSnapshot(CHAT, LIVE_MSG, { blockBase: 0, truncated: true });
 }
 
 beforeEach(() => {

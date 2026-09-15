@@ -113,10 +113,16 @@ func (f *fakeChatStatus) DischargeWaiting(_ context.Context, chatID vibekit.Chat
 // TestDispatch_DischargesOnlyAnAnswer drives the dispatcher per command type, because
 // the hook is the dispatcher's and no handler was edited: a rule applied once at
 // dispatch cannot be pinned by testing a handler.
+//
+// The three structured channels are dischargeByAnswer, so each needs BOTH halves here:
+// the affirmative payload clears the claim (that is the defect being fixed — an agent
+// that asked through a card and got an answer used to keep the amber dot for the life of
+// the chat), and the walk-away, the unknown action and the absent payload all keep it.
 func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 	cases := []struct {
 		name    string
 		cmdType vibekit.CommandType
+		payload string
 		handler Handler
 		want    bool
 	}{
@@ -132,22 +138,90 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			cmdType: vibekit.CmdPrompt,
 		},
 		{
-			name:    "an answer to the agent's own menu does not",
+			name:    "an answer to the agent's own menu clears the claim",
+			cmdType: vibekit.CmdUserInputResponse,
+			payload: `{"request_id":7,"action":"answered","answer":"blue"}`,
+			want:    true,
+		},
+		{
+			// Dismissing advances the agent without the user answering, so whether they
+			// still owe one is the ambiguity that keeps the claim.
+			name:    "a dismissed question does not",
+			cmdType: vibekit.CmdUserInputResponse,
+			payload: `{"request_id":7,"action":"dismissed"}`,
+		},
+		{
+			name:    "an answered action with no answer text does not",
+			cmdType: vibekit.CmdUserInputResponse,
+			payload: `{"request_id":7,"action":"answered"}`,
+		},
+		{
+			name:    "a permission selection clears the claim",
+			cmdType: vibekit.CmdPermissionResponse,
+			payload: `{"request_id":7,"option_id":"allow_once"}`,
+			want:    true,
+		},
+		{
+			// The kind is on the REQUEST, so a reject is indistinguishable here — and it
+			// is the user deciding too, which is what ends the wait.
+			name:    "a permission reject clears it as well, because deciding is answering",
+			cmdType: vibekit.CmdPermissionResponse,
+			payload: `{"request_id":7,"option_id":"reject_once"}`,
+			want:    true,
+		},
+		{
+			name:    "a permission reply naming no option does not",
+			cmdType: vibekit.CmdPermissionResponse,
+			payload: `{"request_id":7}`,
+		},
+		{
+			name:    "an accepted MCP elicitation clears the claim",
+			cmdType: vibekit.CmdElicitationResponse,
+			payload: `{"request_id":7,"action":"accept","content":{"colour":"blue"}}`,
+			want:    true,
+		},
+		{
+			// decline and cancel resolve the request having answered nothing it asked.
+			name:    "a declined elicitation does not",
+			cmdType: vibekit.CmdElicitationResponse,
+			payload: `{"request_id":7,"action":"decline"}`,
+		},
+		{
+			name:    "a cancelled elicitation does not",
+			cmdType: vibekit.CmdElicitationResponse,
+			payload: `{"request_id":7,"action":"cancel"}`,
+		},
+		{
+			// An action outside the channel's vocabulary is an unknown signal, and an
+			// unknown signal keeps the claim rather than guessing at it.
+			name:    "an elicitation action nobody declared does not",
+			cmdType: vibekit.CmdElicitationResponse,
+			payload: `{"request_id":7,"action":"maybe"}`,
+		},
+		{
+			name:    "a structured answer with no payload at all does not",
 			cmdType: vibekit.CmdUserInputResponse,
 		},
 		{
-			name:    "a permission answer does not",
+			name:    "a structured answer whose payload does not parse does not",
 			cmdType: vibekit.CmdPermissionResponse,
-		},
-		{
-			name:    "an MCP elicitation answer does not",
-			cmdType: vibekit.CmdElicitationResponse,
+			payload: `"not an object"`,
 		},
 		{
 			name:    "a steer whose handler failed answered nothing",
 			cmdType: vibekit.CmdSteer,
 			handler: func(context.Context, *vibekit.ClientCommand) (any, error) {
 				return nil, StatusError(http.StatusConflict, ErrMissingChatID)
+			},
+		},
+		{
+			// Same rule on the widened channels: the discharge sits after the handler,
+			// so an answer the handler refused reaches no claim.
+			name:    "an answer whose handler failed does not",
+			cmdType: vibekit.CmdUserInputResponse,
+			payload: `{"request_id":7,"action":"answered","answer":"blue"}`,
+			handler: func(context.Context, *vibekit.ClientCommand) (any, error) {
+				return nil, StatusError(http.StatusConflict, errAlreadyAnswered)
 			},
 		},
 	}
@@ -162,19 +236,25 @@ func TestDispatch_DischargesOnlyAnAnswer(t *testing.T) {
 			}
 			d.Register(tc.cmdType, handler)
 
-			body := `{"type":"` + string(tc.cmdType) + `","chat_id":"c-abc123"}`
+			body := `{"type":"` + string(tc.cmdType) + `","chat_id":"c-abc123"`
+			if tc.payload != "" {
+				body += `,"payload":` + tc.payload
+			}
+			body += `}`
 			req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(body))
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)
 
 			if tc.want {
 				if len(status.discharged) != 1 || status.discharged[0] != "c-abc123" {
-					t.Errorf("discharged %v, want exactly [c-abc123]", status.discharged)
+					t.Errorf("%s payload %s discharged %v, want exactly [c-abc123]",
+						tc.cmdType, tc.payload, status.discharged)
 				}
 				return
 			}
 			if len(status.discharged) != 0 {
-				t.Errorf("discharged %v, want nothing", status.discharged)
+				t.Errorf("%s payload %s discharged %v, want nothing",
+					tc.cmdType, tc.payload, status.discharged)
 			}
 		})
 	}

@@ -8,7 +8,7 @@ import { initAllModals } from "./modals.js";
 import { toggleSettingsView, toggleGitView } from "./tabs.js";
 import { initGitBadge } from "./git-badge.js";
 import { getGitTab } from "./git-tabs.js";
-import { restoreFileBrowser } from "./files.js";
+import { noteDefaultBrowsePath } from "./files.js";
 import { restoreShell } from "./shell.js";
 import { initTools, loadToolsList } from "./tools.js";
 import { restoreNotifications } from "./notify.js";
@@ -244,9 +244,10 @@ export function restoreAll(s: EffectiveSettings): void {
   if (shellOpen()) {
     restoreShell();
   }
-  if (s.fb_path !== "") {
-    restoreFileBrowser(s.fb_path);
-  }
+  // UNCONDITIONAL: "" is a real value meaning "nothing recorded", and the recorder
+  // maps it to the mounts listing, so a guard would leave the recorder uncalled on a
+  // fresh volume for no gain.
+  noteDefaultBrowsePath(s.fb_path);
   // Editor tabs are NOT restored from here any more, and there is no second list
   // of open paths to restore them from: an editor tab's path IS its subject's
   // `ref`, so the tab set that `listTabs` adopts at boot already names every open
@@ -420,7 +421,13 @@ export function initPostAuthUI(): void {
 function initLogoutButton(): void {
   bindLoadingState("settings.logout", $.logoutBtn);
   $.logoutBtn.addEventListener("click", () => {
-    void logout.dispatch({ emailEl: $.userEmail, stAuthEl: $.stAuth });
+    // The action takes an INJECTED render callback plus the verdict it replaces,
+    // rather than the two elements it used to write directly: `renderIdentity` is
+    // the one writer of the auth row and its separator now, so a logout that wrote
+    // `stAuth.textContent` itself would put "not signed in" into a row that stays
+    // hidden. The callback is injected because settings.ts imports that action, so
+    // importing renderIdentity there would close a cycle.
+    void logout.dispatch({ render: renderIdentity, prev: currentIdentity() });
   });
 }
 
@@ -629,22 +636,60 @@ export function initDiagnostics(): void {
 
 // --- User display ---
 
-/** The status card's auth line, one phrase per arm. `unavailable` gets its own:
- *  reading "not signed in" for it is the mistake the third arm exists to remove. */
+/** The card's auth line, and it is only ever an ERROR now.
+ *
+ *  `signed_in` says nothing: the address the trigger carries IS that statement, so a
+ *  "signed in" row beside it rendered one fact twice. The two arms left are exactly
+ *  the ones that leave that address EMPTY, so this row is what explains the blank —
+ *  which is why `unavailable` stays on the list rather than being folded away with
+ *  the success case. Its wording is unchanged; widening it to carry the verdict's
+ *  `reason` is a separate decision. */
 const AUTH_LINE: Readonly<Record<IdentityVerdict["state"], string>> = {
-  signed_in: "signed in",
+  signed_in: "",
   signed_out: "not signed in",
   unavailable: "unknown",
 };
+
+/** The verdict this module last rendered, held so the logout action can restore it
+ *  on a refusal. Nothing else retains it: `boot.ts`'s `adoptIdentity` and
+ *  `app.ts`'s login-success path both call `renderIdentity` and drop the value, so
+ *  before this the only record of the previous state was the address string in the
+ *  DOM — which cannot tell `signed_out` from `unavailable`, both of which render an
+ *  empty address. */
+let lastVerdict: IdentityVerdict = { state: "unavailable", reason: "not resolved yet" };
 
 /** Paint the sidebar identity row and the status card's auth line.
  *
  *  Takes the VERDICT rather than an email because three answers reach it and only
  *  one carries an address. Writing `textContent` also drops the authored pending
- *  shimmer (index.html #user-email), so every arm resolves the region. */
+ *  shimmer (index.html #user-email), so every arm resolves the region.
+ *
+ *  The ONE writer of the identity row AND the auth row. */
 export function renderIdentity(v: IdentityVerdict): void {
+  lastVerdict = v;
   $.userEmail.textContent = v.state === "signed_in" ? v.email : "";
-  $.stAuth.textContent = AUTH_LINE[v.state];
+  setAuthLine(AUTH_LINE[v.state]);
+}
+
+/** What `renderIdentity` last rendered. Exported for the logout action's rollback,
+ *  which receives the VALUE rather than this accessor — the action takes
+ *  `{ render, prev }`, so it never reads module state of its own. */
+export function currentIdentity(): IdentityVerdict {
+  return lastVerdict;
+}
+
+/** ONE writer of the auth row AND its separator. Two elements, one fact: a hidden
+ *  row above a visible separator leaves the card with a rule pointing at nothing,
+ *  and that is a defect a second writer reintroduces by forgetting one of them.
+ *
+ *  Both hide through the `hidden` ATTRIBUTE and need no author rule, unlike
+ *  `.pill-account`: `.pill-detail` and `.pill-sep` declare no `display`, and the
+ *  `.pill-status-content .pill-sep` override sets only width/height/background, so
+ *  the UA sheet's `[hidden] { display: none }` has nothing author-origin to lose to. */
+function setAuthLine(text: string): void {
+  $.stAuth.textContent = text;
+  $.stAuth.hidden = text === "";
+  $.stAuthSep.hidden = text === "";
 }
 
 // --- Experimental flag toggles (Settings → General) ---

@@ -23,7 +23,7 @@ vi.mock("./editor-openers.js", () => ({
   },
 }));
 vi.mock("./tabs.js", () => ({
-  toggleGitView: (tab: string) => {
+  openGitView: (tab: string) => {
     calls.push(`gitview:${tab}`);
     return Promise.resolve();
   },
@@ -81,7 +81,7 @@ describe("openChangeSet", () => {
     // in a surface that already exists, and the git view already lists every
     // changed file and opens each one's diff.
     //
-    // ONE call, and that is the change: `toggleGitView(tab)` applies the sub-tab
+    // ONE call, and that is the change: `openGitView(tab)` applies the sub-tab
     // itself, through the same setter the router uses, so a caller that also poked
     // `setGitTab` would be a second definition of where this lands. A singleton's
     // ref is empty, so a subject cannot carry a sub-tab and the correction channel

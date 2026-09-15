@@ -7,9 +7,16 @@
 // agreeing, which is exactly the kind of thing that drifts. THE MECHANICAL
 // PROPERTY: the bar grows the band upward and shrinks the transcript by exactly its
 // own height, covering nothing (26-dock.css states it for the dock; this is the
-// third region to rely on it). THE MOTION: `running` spins and `waiting` is the
+// third region to rely on it). THE MOTION: `working` beats and `waiting` is the
 // same ring standing still, which is the app's in-flight axis, and `getAnimations()`
-// is the only honest reader of it.
+// is the only honest reader of it — the animation lives on a ::before overlay, so it
+// is reachable through `{ subtree: true }` and through nothing else.
+//
+// The glyph's LOOK is not this file's subject and deliberately not asserted here: it
+// is the workflow mark's, shared by selector list with the tab strip's two marks
+// (12-tabs.css "The workflow mark"), and `tab-dot.test.ts` measures that share across
+// all three surfaces. What is measured here is the mark's BOX inside the row, which
+// is a property of this bar's own grid.
 //
 // The HIT FLOOR is measured here too, because the row deliberately declares no
 // `min-height` of its own: the zero-specificity floor in 61-mcp-tools.css is what
@@ -32,6 +39,19 @@ function lengthPx(root: HTMLElement, expr: string): number {
   probe.remove();
   return px;
 }
+
+/** Row state -> the workflow mark's own status, mirroring `run-bar.ts`'s
+ *  `runMarkStatus`. A transcription, and it is bounded on both sides: the PRODUCER's
+ *  half is pinned against real rows in `run-bar.test.ts` ("marks its glyph with the
+ *  tab strip's status for every live state"), and a state absent from this map gets
+ *  no attribute, which is the same "nothing to show" the unknown row is here to
+ *  measure. Importing the real function instead would drag the store, the dock, the
+ *  clock registry and the run view into a stylesheet test. */
+const MARK_STATUS: Record<string, string | undefined> = {
+  running: "working",
+  waiting: "waiting",
+  input: "input",
+};
 
 let style: HTMLStyleElement;
 let host: HTMLElement;
@@ -101,7 +121,19 @@ function mountBand(states: readonly string[]): {
     ]) {
       const span = document.createElement("span");
       span.className = cls;
-      span.textContent = cls === "run-bar-name" ? "nightly sweep" : "x";
+      // THE GLYPH IS KEYED ON ITS OWN `data-status`, in the WORKFLOW MARK's
+      // vocabulary rather than the row's — the two differ for the state that matters
+      // most (`running` on the row, `working` on the mark, which is the tab strip's
+      // word), and 12-tabs.css paints all three surfaces off that attribute. It
+      // carries no text, so the mark is the whole content.
+      if (cls === "run-bar-glyph") {
+        const mark = MARK_STATUS[state];
+        if (mark !== undefined) {
+          span.dataset["status"] = mark;
+        }
+      } else {
+        span.textContent = cls === "run-bar-name" ? "nightly sweep" : "x";
+      }
       btn.appendChild(span);
     }
     li.appendChild(btn);
@@ -204,35 +236,54 @@ describe("the run bar's geometry", () => {
 });
 
 describe("the run bar's state column", () => {
-  it("spins the running ring at the shared period and holds the waiting one still", () => {
+  it("beats the working mark and holds the waiting one still", () => {
+    // The IN-FLIGHT AXIS, restated for the mark: motion means work is moving, and
+    // `waiting` is the same ring standing still. What CHANGED is the motion itself —
+    // it was a conic arc spinning at `--spin-dur`, and it is now the activity dot's
+    // own glow beat on a masked overlay at `--dot-beat-dur`, because the bar's glyph
+    // shares 12-tabs.css's rules rather than carrying a look of its own. Asserted at
+    // the KEYFRAME name and the shared period, so a beat retuned in that block moves
+    // the token and this stays true, while a second period declared here fails.
     const { rows } = mountBand(["running", "waiting"]);
     const [running, waiting] = rows;
     const glyph = (row: HTMLElement | undefined): Element | null =>
       row?.querySelector(".run-bar-glyph") ?? null;
 
-    const spinning = glyph(running)?.getAnimations({ subtree: true }) ?? [];
-    expect(spinning.length, "the running ring animates").toBe(1);
-    const anim = spinning[0];
-    expect(anim === undefined ? "" : (anim as CSSAnimation).animationName).toBe("vk-spin");
-    const timing = anim?.effect?.getComputedTiming();
-    expect(timing?.duration).toBe(600);
+    // `{ subtree: true }` because the animation is on the ::before overlay, which is
+    // the only way a ring can beat without its bright core filling its own hole.
+    const beating = glyph(running)?.getAnimations({ subtree: true }) ?? [];
+    expect(beating.length, "the working mark beats").toBe(1);
+    const anim = beating[0];
+    expect(anim === undefined ? "" : (anim as CSSAnimation).animationName).toBe("vk-dot-beat");
+    const seconds = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--dot-beat-dur"),
+    );
+    expect(seconds, "--dot-beat-dur resolves").toBeGreaterThan(0);
+    expect(anim?.effect?.getComputedTiming().duration).toBe(seconds * 1000);
 
     expect(glyph(waiting)?.getAnimations({ subtree: true }).length).toBe(0);
     host.remove();
   });
 
-  it("draws both in-flight rings at the dot token's size", () => {
-    const { rows } = mountBand(["running", "waiting"]);
+  it("draws the mark itself at the dot token's size, and reserves that box with no state", () => {
+    // The MARK is the element now, not a ::before ring inside it: `box-sizing:
+    // border-box` is what lets a 2px band paint inside `--dot-size` rather than
+    // around it, so the element's own box is the assertion. The stateless row is in
+    // the sweep deliberately — that is what "reserved box, nothing to show" means,
+    // and it is what keeps the name from stepping sideways when the first fetch
+    // lands.
+    const { rows } = mountBand(["running", "waiting", "input", "unknown"]);
+    const dot = lengthPx(host, "var(--dot-size)");
+    expect(dot).toBeGreaterThan(0);
     for (const row of rows) {
       const glyph = row.querySelector(".run-bar-glyph");
       expect(glyph).not.toBeNull();
       if (glyph === null) {
         continue;
       }
-      const ring = getComputedStyle(glyph, "::before");
-      const dot = lengthPx(host, "var(--dot-size)");
-      expect(Number.parseFloat(ring.inlineSize)).toBeCloseTo(dot, 1);
-      expect(Number.parseFloat(ring.blockSize)).toBeCloseTo(dot, 1);
+      const box = glyph.getBoundingClientRect();
+      expect(box.width, `${row.dataset["state"]} width`).toBeCloseTo(dot, 1);
+      expect(box.height, `${row.dataset["state"]} height`).toBeCloseTo(dot, 1);
     }
     host.remove();
   });

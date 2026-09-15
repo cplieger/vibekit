@@ -296,6 +296,38 @@ describe("the steer stack", () => {
     ]);
   });
 
+  // ORIGIN has to be in both keys, and the sequence below is the real one: a row
+  // receives TWO confirmations from two channels — the POST reply (`origin: "user"`,
+  // hardcoded, it is this device's own POST) and the SSE frame (resolved server-side).
+  // Whichever lands second changes origin ALONE, so with `origin` missing from the
+  // dock's `sig` computed nothing re-renders, and with it missing from `syncActions`'
+  // per-row key the re-render skips rebuilding the controls. Both blind spots stack,
+  // and together they turn a one-round-trip mislabel into a permanent one: the arrow
+  // stays withheld until something forces a full render, which is what made switching
+  // tabs and back look like the fix.
+  it("adds the arrow when only the origin changed", () => {
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "agent" });
+    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "user" });
+    expect(actions(firstRow())).toEqual([
+      "Send this message now",
+      "Edit this message",
+      "Discard this message",
+    ]);
+  });
+
+  // The other direction, because the ledger's TTL genuinely expires: a corrected row
+  // must not keep an arrow it has stopped earning. Same two keys, same failure if
+  // either omits origin — and here the stale control would ACT, cancelling the turn.
+  it("withdraws the arrow when only the origin changed", () => {
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "user" });
+    expect(actions(firstRow())).toContain("Send this message now");
+
+    recordSteerQueued("chat-1", { id: "steer-m-1", text: "one", origin: "agent" });
+    expect(actions(firstRow())).toEqual(["Edit this message", "Discard this message"]);
+  });
+
   // --- The message gets the room -------------------------------------------
 
   // The row is full width and the text clamps in CSS, so nothing is cut in the
@@ -706,39 +738,12 @@ describe("the row across its own confirmation", () => {
       ).toBeCloseTo(before, 2);
     });
   }
-
-  // The clamp keys its state to the text element, so keeping the node keeps a
-  // measured verdict AND an expansion the reader asked for. Rebuilding threw both
-  // away and re-guessed from character count on a detached node.
-  it("keeps a message the reader opened open through the confirmation", async () => {
-    const long = "rebase onto main and re-run the census against both bundles first ".repeat(6);
-    recordSteerSent("chat-1", "m-1", long);
-    const row = firstRow();
-    const more = row.querySelector<HTMLButtonElement>(".steer-more");
-    if (more === null) {
-      throw new Error("no .steer-more");
-    }
-    await vi.waitFor(() => {
-      expect(more.hidden, "the opener is offered for a message past four lines").toBe(false);
-    });
-    more.click();
-    expect(row.querySelector(".steer-text")?.hasAttribute("data-clamped")).toBe(false);
-
-    recordSteerQueued("chat-1", { id: "steer-m-1", text: long, origin: "user" });
-
-    expect(firstRow()).toBe(row);
-    expect(
-      row.querySelector(".steer-text")?.hasAttribute("data-clamped"),
-      "still open, and the opener still says so",
-    ).toBe(false);
-    expect(more.textContent).toBe("Show less");
-  });
 });
 
-// The clamp, measured against real layout under the shipped stylesheet — the only
-// thing that can answer "does this row overflow four lines". The stack element is
-// the module's own (captured at init), so these cases re-parent it into a narrow
-// host rather than building a second one.
+// The clamp is CSS-only and has no opener, so what real layout answers here is
+// whether the row is clipped to four lines with no control to open it. The stack
+// element is the module's own (captured at init), so these cases re-parent it into
+// a narrow host rather than building a second one.
 describe("the row's clamp", () => {
   let styleEl: HTMLStyleElement;
   let host: HTMLElement;
@@ -776,74 +781,49 @@ describe("the row's clamp", () => {
     return t;
   }
 
-  function moreEl(row: HTMLElement): HTMLButtonElement {
-    const b = row.querySelector<HTMLButtonElement>(".steer-more");
-    if (b === null) {
-      throw new Error("no .steer-more");
-    }
-    return b;
-  }
-
-  /** Wait for the opener to reach `hidden`, for a verdict that must CHANGE. */
-  async function settles(row: HTMLElement, hidden: boolean, why: string): Promise<void> {
-    await vi.waitFor(() => {
-      expect(moreEl(row).hidden, why).toBe(hidden);
-    });
-  }
-
-  /** Two frames span one full resize delivery, for a verdict that must NOT
-   *  change. */
-  async function observerRuns(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    });
-  }
-
   const LONG = "rebase onto main and re-run the census against both bundles first ".repeat(6);
 
-  it("offers no opener for a message that fits", async () => {
-    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs", origin: "user" });
-    await observerRuns();
-    expect(moreEl(firstRow()).hidden).toBe(true);
-  });
-
-  it("offers one for a message that does not, with the whole text still in the DOM", async () => {
+  it("clamps a long message to four lines with the whole text still in the DOM", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
-    await settles(row, false, "offered for a message past four lines");
     expect(textEl(row).textContent).toContain("bundles first");
     expect(textEl(row).scrollHeight).toBeGreaterThan(textEl(row).clientHeight);
+    // The count is a stylesheet fact now, with no TypeScript constant to pair it
+    // against, so this is where four is pinned.
+    expect(
+      getComputedStyle(textEl(row)).getPropertyValue("-webkit-line-clamp").trim(),
+      "clipped to four lines",
+    ).toBe("4");
   });
 
-  it("un-clamps on the click", async () => {
+  // Fails if the opener comes back under any class name: a reader who wants the
+  // whole message clicks Edit.
+  it("offers no control to expand a clamped message", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
-    await settles(row, false, "offered");
+    expect(row.querySelector(".steer-more")).toBeNull();
+    for (const btn of row.querySelectorAll("button")) {
+      expect(btn.classList.contains("steer-act"), "every control is an action").toBe(true);
+    }
+  });
 
-    moreEl(row).click();
-    expect(textEl(row).hasAttribute("data-clamped")).toBe(false);
-    expect(moreEl(row).textContent).toBe("Show less");
+  // The two channels differ by one trim: `data-tooltip` carries the raw text and
+  // the accessible name runs it through `oneLine`.
+  it("keeps the whole message reachable in the tooltip and the accessible name", () => {
+    recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
+    const row = firstRow();
+    expect(row.dataset["tooltip"]).toBe(LONG);
+    expect(row.getAttribute("aria-label")).toBe(`Sent, waiting for the agent: ${LONG.trim()}`);
   });
 
   // The row is a grid whose middle track is `minmax(0, 1fr)`, and that is what
   // keeps the actions on the row: an `auto` middle track sizes to the text and
-  // pushes them off. Opening the clamp grows the row's HEIGHT, so the controls
-  // have to still be in their own column afterwards.
-  it("keeps every control on the row at the expanded height", async () => {
+  // pushes them off.
+  it("keeps every control on the row at the clamped height", () => {
     recordSteerQueued("chat-1", { id: "steer-1", text: LONG, origin: "user" });
     const row = firstRow();
-    await settles(row, false, "offered");
     expect(actions(row).length, "one unread message, so Edit is offered too").toBe(3);
 
-    const before = row.getBoundingClientRect().height;
-    moreEl(row).click();
-    await observerRuns();
-
-    expect(row.getBoundingClientRect().height, "the row grew").toBeGreaterThan(before);
     const textBox = textEl(row).getBoundingClientRect();
     for (const btn of row.querySelectorAll<HTMLElement>(".steer-act")) {
       const box = btn.getBoundingClientRect();

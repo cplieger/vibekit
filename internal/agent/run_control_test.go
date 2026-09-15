@@ -104,7 +104,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 			}),
 			methodKiroWorkflowPause: json.RawMessage(`{"paused":true}`),
 		}
-		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "A"
 			for _, s := range sessions {
 				c.RecordSession(s)
@@ -187,7 +187,7 @@ func TestHostBridge_ReachesAnAgentLaunchedRunThroughItsChat(t *testing.T) {
 	t.Run("an unreadable run inventory refuses rather than guessing", func(t *testing.T) {
 		h, cs, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
-		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true
@@ -300,7 +300,7 @@ func TestHealPaused_ResumesAnInvoluntaryPauseTheMomentKASReportsIt(t *testing.T)
 			methodKiroWorkflowInspect: reply,
 			methodKiroWorkflowResume:  json.RawMessage(`{}`),
 		}
-		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true

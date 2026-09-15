@@ -262,7 +262,7 @@ func TestAbandonInFlightTurn_EndsTheTurnThatNeverStarted(t *testing.T) {
 	ctx := t.Context()
 
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
-	_, before := h.bus.fanout.Bounds()
+	before := h.bus.fanout.Position().Head
 	h.AbandonInFlightTurn(ctx, "c1", epoch, vibekit.StopReasonInterrupted, "Too many requests, please wait before trying again.")
 
 	ends := payloadsOfType[vibekit.TurnEndedPayload](t, bufferedSince(h, before), vibekit.EventTurnEnded)

@@ -187,12 +187,6 @@ function buildCompactionBreak(icon: string, label: string, summary: string): HTM
       chevronEl(),
       el("span", { className: "compaction-icon" }, icon),
       el("span", { className: "compaction-label" }, label),
-      el(
-        "span",
-        { className: "compaction-note" },
-        el("span", { className: "compaction-dot" }, "·"),
-        "summary",
-      ),
     ),
     body,
   );

@@ -345,10 +345,16 @@ function ownDeclarations(body: string): string[] {
   return buf.split(";").map((d) => d.trim());
 }
 
-describe("the selected state carries fill, edge and ink together", () => {
+describe("the selected state carries fill and ink together", () => {
   const FILL = /^(background|background-color)\s*:\s*var\(--c-selected-bg\)/;
 
-  it("never sets the selected fill without its border and ink", () => {
+  // TWO channels, not three. The edge was the third until a Chromium census over
+  // the assembled sheet found it painting on 16 of the treatment's 25 selectors
+  // and landing on an unreserved `border: none` on 7 of them, so this test had
+  // been demanding a declaration that provably did nothing for every icon toggle
+  // in the app. 70-selection.css's header carries the whole census; what the
+  // test still holds is that a fill never ships without a legible ink.
+  it("never sets the selected fill without its ink", () => {
     const broken: string[] = [];
     for (const sheet of appSheets) {
       for (const rule of rules(sheet.text)) {
@@ -365,22 +371,17 @@ describe("the selected state carries fill, edge and ink together", () => {
           if (!decls.some((d) => FILL.test(d))) {
             continue;
           }
-          const hasEdge = decls.some((d) => /^border(-color)?\s*:/.test(d));
-          const hasInk = decls.some((d) => /^color\s*:/.test(d));
-          if (!hasEdge || !hasInk) {
-            const missing = [!hasEdge && "border-color", !hasInk && "color"]
-              .filter(Boolean)
-              .join(" + ");
-            broken.push(`${sheet.name}:${rule.line} ${block.selector} is missing ${missing}`);
+          if (!decls.some((d) => /^color\s*:/.test(d))) {
+            broken.push(`${sheet.name}:${rule.line} ${block.selector} is missing color`);
           }
         }
       }
     }
     expect(
       broken,
-      "A selected surface that fills without colouring its edge and its ink is " +
-        "how nine different selected-state recipes happened. Set all three, or " +
-        "add the selector to the shared rule in css/70-selection.css.",
+      "A selected surface that fills without colouring its ink is how nine " +
+        "different selected-state recipes happened. Set both, or add the " +
+        "selector to the shared rule in css/70-selection.css.",
     ).toEqual([]);
   });
 
@@ -401,7 +402,7 @@ describe("the selected state carries fill, edge and ink together", () => {
         }
         const offset = rule.line;
         rule.body.split("\n").forEach((line, i) => {
-          if (/var\(--c-selected-(bg|border|fg)\)/.test(line)) {
+          if (/var\(--c-selected-(bg|fg)\)/.test(line)) {
             elsewhere.push(`${sheet.name}:${offset + i}`);
           }
         });
@@ -454,26 +455,23 @@ describe("an achromatic colour leaves its hue powerless", () => {
 });
 
 describe("an ink is only paired with a fill it clears", () => {
-  // Two inks are sized against the PAGE and are not general-purpose, so pairing
-  // them with a raised fill is a rule violation rather than a taste call. That
-  // makes it a stylesheet question, which is why it lives here instead of in
-  // scripts/css-contrast.py: the script can only measure the cross product of
-  // every token against every surface, and reporting a combination the app does
-  // not contain puts standing failures in its output.
-  //
-  // The hint ink measures 4.771:1 on the second rung, 3.601:1 on the third and
-  // 2.699:1 on the top one — the second rung clears AA since the 63->66 lift,
-  // the top two cannot at any lift (01-tokens.css states the two-rung contract).
-  // Seven rules paired it with a raised fill anyway — a picker's metadata, a
-  // badge, two gutters, a group label, a footer and a link badge — and each was
-  // found by grep rather than by a gate.
-  const RAISED = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-(?:tertiary|elevated)\)/;
+  // The ink ramp is authored against the hovered box, so every text ink clears
+  // every rung text sits on — the page, the card, the box, the band at rest and
+  // the hover washes over the first three (ink-ramp.node.test.ts holds that
+  // table). THREE surfaces are outside that set and host primary and secondary
+  // only: --c-bg-elevated, the hovered band and the selected fill. Two of them are
+  // states the stylesheet gate cannot pair with an ink from one block; the
+  // elevated fill is a resting declaration, so pairing the hint ink with it in one
+  // block is a rule violation rather than a contrast result, and it is checkable
+  // here. It measures 4.10:1 dark / 4.19:1 light there, under AA at any hint
+  // level that still reads as a level (01-tokens.css "SEEDS: ink").
+  const RAISED = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-elevated\)/;
   // Anchored so `border-color` and `outline-color` are not swept up with it:
   // an EDGE is a graphic at a 3:1 floor and the hint ink can legitimately draw
   // one. Only the text ink is at issue.
   const HINT = /(?<![-\w])color:\s*var\(--c-text-tertiary\)/;
 
-  it("keeps the hint ink off a raised fill", () => {
+  it("keeps the hint ink off the elevated fill", () => {
     const offenders: string[] = [];
     for (const sheet of appSheets) {
       const text = stripComments(sheet.text);
@@ -489,9 +487,8 @@ describe("an ink is only paired with a fill it clears", () => {
     }
     expect(
       offenders,
-      "--c-text-tertiary clears 4.5:1 on --c-bg-primary and --c-bg-secondary and " +
-        "on neither rung above them. On --c-bg-tertiary or --c-bg-elevated, step " +
-        "up to --c-text-secondary.",
+      "--c-bg-elevated is a two-level surface: it hosts --c-text-primary and " +
+        "--c-text-secondary only. Step the hint ink up to --c-text-secondary there.",
     ).toEqual([]);
   });
 

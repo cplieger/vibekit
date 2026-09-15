@@ -37,7 +37,7 @@ func hubWithRealStore(t *testing.T) (*Runtime, string) {
 	}
 	br := newRecordingTermBridge()
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

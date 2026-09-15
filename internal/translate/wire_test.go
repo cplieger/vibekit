@@ -42,3 +42,39 @@ func TestACPKiroBlock_SourceIsNestedUnderMetaKiro(t *testing.T) {
 		}
 	})
 }
+
+// TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro pins the same nesting for the
+// prompt tag, in both directions: the resend rule reads it as the positive test that an
+// arriving row is a prompt, so a tag decoded from the update object would read empty for
+// every frame and the rule would never fire.
+func TestACPKiroBlock_UserMessageTagIsNestedUnderMetaKiro(t *testing.T) {
+	t.Run("_meta.kiro.userMessageTag lands on the field", func(t *testing.T) {
+		var u struct {
+			Meta ACPKiroMeta `json:"_meta"`
+		}
+		raw := []byte(`{"sessionUpdate":"user_message_chunk",
+			"content":{"type":"text","text":"failed:"},
+			"_meta":{"kiro":{"replay":true,"messageId":"35a4027b","userMessageTag":"prompt_746336f7"}}}`)
+		if err := json.Unmarshal(raw, &u); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if u.Meta.Kiro.UserMessageTag != "prompt_746336f7" {
+			t.Errorf("UserMessageTag = %q, want %q", u.Meta.Kiro.UserMessageTag, "prompt_746336f7")
+		}
+	})
+
+	t.Run("userMessageTag on the UPDATE object does not", func(t *testing.T) {
+		var u struct {
+			Meta ACPKiroMeta `json:"_meta"`
+		}
+		raw := []byte(`{"sessionUpdate":"user_message_chunk","userMessageTag":"prompt_746336f7",
+			"content":{"type":"text","text":"failed:"},
+			"_meta":{"kiro":{"replay":true,"messageId":"35a4027b"}}}`)
+		if err := json.Unmarshal(raw, &u); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if u.Meta.Kiro.UserMessageTag != "" {
+			t.Errorf("UserMessageTag = %q, want empty — a tag on the update object is NOT the discriminator", u.Meta.Kiro.UserMessageTag)
+		}
+	})
+}

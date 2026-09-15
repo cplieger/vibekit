@@ -67,7 +67,7 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 		return nil, err
 	}
 
-	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}

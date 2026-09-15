@@ -44,7 +44,8 @@ const store = await import("./store.js");
 const { hasTab, openSubagentRefs } = await import("./tabs.js");
 const { subagentRef } = await import("./tab-materialize.js");
 const { sliceSubagentGroup } = await import("./subagent-slice.js");
-const { subagentTabProjectsChat, showSubagent, refreshSubagent } =
+const { openSubagentTab } = await import("./tabs.js");
+const { subagentTabProjectsChat, showSubagent, refreshSubagent, openSubagentView } =
   await import("./subagent-view.js");
 const { refreshChatView } = await import("./chat.js");
 const { blockKey, blockTextSigs } = await import("./store-signals.js");
@@ -746,5 +747,33 @@ describe("refreshSubagent delegates to the launching chat", () => {
     expect(refreshChatView).toHaveBeenCalledTimes(1);
     expect(refreshChatView).toHaveBeenCalledWith("c-launcher");
     expect(vi.mocked(sliceSubagentGroup)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the page's own door", () => {
+  // A DEEP LINK awaits this, and the router's claim on the location is released when it
+  // settles: `app.ts`'s `subagent` branch returns the promise so no unrelated projection
+  // emit can write the restored tab's route over the URL the reader opened. Voiding the
+  // tab open here resolved that branch as soon as the CHUNK had loaded — measured on the
+  // live app, a fresh load of `/chat/{id}/subagent/{taskId}` was showing
+  // `/chat/{firstChatId}` within six seconds with the delegate's page never rendered.
+  it("returns the tab open, so a deep link can await it", async () => {
+    let release = (): void => undefined;
+    vi.mocked(openSubagentTab).mockImplementationOnce(
+      () =>
+        new Promise<void>((res) => {
+          release = res;
+        }),
+    );
+    let settled = false;
+    const opening = openSubagentView("c-launcher", "sub-1").then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled, "must not settle before the tab open does").toBe(false);
+    release();
+    await opening;
+    expect(settled).toBe(true);
   });
 });

@@ -20,7 +20,7 @@ import (
 func TestLoadRetentionHeader_ReadsWhatTheStoreWrote(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := t.Context()
-	if err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "projected"
 		c.RecordSession("sess_old")
 		c.RecordSession("sess_new")
@@ -72,7 +72,7 @@ func TestLoadRetentionHeader_DraftingRoundTripsTheComposer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, _ := newTestStore(t)
 			ctx := t.Context()
-			if err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+			if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "composer"
 				return true
 			}); err != nil {

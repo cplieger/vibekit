@@ -183,6 +183,9 @@ vi.mock("./api-client.js", () =>
         path === "/api/tabs" ? listTabs(path) : mockApiGetTyped(path, decode),
       ),
       apiGetTypedOrError: vi.fn(),
+      // tabs.ts reaches api-client.ts through the files-shared.js edge the
+      // multi-instance browser added, so the real link needs this name present.
+      apiGet: vi.fn(() => Promise.resolve(null)),
     };
   }),
 );

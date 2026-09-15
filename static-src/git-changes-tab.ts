@@ -166,7 +166,7 @@ export const changesFind: SearchPopup = createSearchPopup<null>({
   placeholder: "Filter by path\u2026",
   host: () => document.getElementById("git-view"),
   query: (q) => {
-    filterText = q.trim().toLowerCase();
+    filterText = q.toLowerCase();
     return null;
   },
   render: () => {
@@ -492,18 +492,22 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
   if (filteredFiles === null) {
     return null;
   }
-  // Hide clean repos by default unless filter is active or repo
-  // matched the filter explicitly.
+  // Hide clean repos by default.
   //
   // A repo the last Pull all marked needs no clause here: the pass only judges a
   // repo that is BEHIND, and the mark is pruned the moment it stops being
   // (paintInner), so `r.behind > 0` already opens every marked section and the
   // reason in its body is read without a click. One was written, and the red
   // check showed nothing could make it matter.
-  const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0 || filterText !== "";
-  // Bug 3: User-toggled state overrides data-driven default.
+  const dataDefault = r.has_dirty || r.ahead > 0 || r.behind > 0;
+  // A filter OUTRANKS the reader's latch: every section it admits holds a row it
+  // selected, and a selected row inside a collapsed region is one the reader
+  // cannot see and nothing on screen says exists. The latch is the resting
+  // arrangement and is read again once the box is empty.
   let expandedDefault: boolean;
-  if (userCollapsedRepos.has(r.repo)) {
+  if (filterText !== "") {
+    expandedDefault = true;
+  } else if (userCollapsedRepos.has(r.repo)) {
     expandedDefault = false;
   } else if (userExpandedRepos.has(r.repo)) {
     expandedDefault = true;
@@ -1015,6 +1019,13 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
   // Children-Presentational, so it flattened the Stage and Discard buttons
   // beside it out of the accessibility tree. The row keeps a mouse handler
   // below, so the wide click target survives without that cost.
+  // The label is a SPAN so the tooltip has ink to point at: the button is `flex: 1`
+  // (it is what pushes the row's actions to the trailing edge), so its box is the
+  // row's slack and a tooltip anchored at that box's centre landed 243px right of
+  // the name — measured over 320 rows. No class, because it needs no rule: an
+  // inline span inherits the button's mono type, and the ellipsis is the button's
+  // own (`overflow: hidden` on the block box clips whatever is inside it).
+  const label = el("span", { "data-tooltip-anchor": "" }, f.path);
   const path = el(
     "button",
     {
@@ -1023,7 +1034,7 @@ function renderFileRow(r: RepoStatus, f: FileEntry, partiallyStaged: boolean): H
       "data-tooltip": f.path,
       "aria-label": `Open diff for ${f.path}`,
     },
-    f.path,
+    label,
   ) as HTMLButtonElement;
   path.addEventListener("click", (ev) => {
     ev.stopPropagation();

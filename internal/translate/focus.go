@@ -77,7 +77,7 @@ func (t *Translator) adoptOrRefuseTitle(ctx context.Context, chatID vibekit.Chat
 // flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
 	renamed := false
-	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}

@@ -26,6 +26,7 @@ package translate
 import (
 	"context"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -88,9 +89,11 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID vibekit.Ch
 	if !buf.Started || buf.MessageID == "" {
 		return
 	}
-	all := buf.AppendCodeReferences(refs)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
+	all, version := buf.AppendCodeReferences(refs)
+	frame := vibekit.NewEvent(vibekit.EventCodeReferences, chatID, vibekit.CodeReferencesPayload{
 		MessageID:  buf.MessageID,
 		References: all,
-	}))
+	})
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	t.bus.Broadcast(ctx, frame)
 }

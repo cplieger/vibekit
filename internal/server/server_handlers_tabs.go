@@ -2,10 +2,12 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // tabReader is the open-tab set as this endpoint uses it: one call that returns
@@ -65,5 +67,15 @@ func (s *Server) handleTabs(w http.ResponseWriter, r *http.Request) {
 		// on the boot path.
 		open = []vibekit.TabSubject{}
 	}
-	webhttp.WriteJSON(w, vibekit.TabList{Tabs: open, Version: version})
+	out := vibekit.TabList{Tabs: open, Version: version}
+	if s.agent != nil {
+		// The digest spelling of the same version: the store's collection version
+		// IS the `tabs` subject's, so no second counter is minted for it.
+		out.Subject = &vibekit.SubjectStamp{
+			Kind:    string(subject.KindTabs),
+			Version: strconv.FormatUint(version, 10),
+			Epoch:   s.agent.Epoch(),
+		}
+	}
+	webhttp.WriteJSON(w, out)
 }

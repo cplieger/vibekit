@@ -10,7 +10,7 @@ import (
 func seedChats(t *testing.T, s *Store, ids ...string) {
 	t.Helper()
 	for _, id := range ids {
-		if err := s.Mutate(t.Context(), vibekit.ChatID(id), func(c *vibekit.Chat, _ bool) bool {
+		if _, err := s.Mutate(t.Context(), vibekit.ChatID(id), func(c *vibekit.Chat, _ bool) bool {
 			c.Name = id
 			return true
 		}); err != nil {

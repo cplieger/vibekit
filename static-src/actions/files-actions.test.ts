@@ -176,27 +176,23 @@ describe("files.upload", () => {
   it("carries the partial batch to the caller, which is not rolled back", async () => {
     vi.mocked(uploadFiles).mockImplementation(({ onError }) => {
       onError!("3 of 5 uploaded, then big.zip failed: upload too large", [
-        "/workspace/uploads/a.txt",
-        "/workspace/uploads/b.txt",
-        "/workspace/uploads/c.txt",
+        "/uploads/a.txt",
+        "/uploads/b.txt",
+        "/uploads/c.txt",
       ]);
     });
     const { upload, partialUploadOf } = await import("./files.js");
     const files = { length: 5, item: () => null } as unknown as FileList;
     let seen: string[] = [];
     await upload.dispatch(
-      { files, targetDir: "/workspace/uploads" },
+      { files, targetDir: "/uploads" },
       {
         onError: (err) => {
           seen = partialUploadOf(err.cause);
         },
       },
     );
-    expect(seen).toEqual([
-      "/workspace/uploads/a.txt",
-      "/workspace/uploads/b.txt",
-      "/workspace/uploads/c.txt",
-    ]);
+    expect(seen).toEqual(["/uploads/a.txt", "/uploads/b.txt", "/uploads/c.txt"]);
     expect(toast.error).toHaveBeenCalledWith(
       expect.stringContaining("then big.zip failed"),
       undefined,

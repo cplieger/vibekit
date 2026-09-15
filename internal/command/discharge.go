@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -20,22 +21,37 @@ const (
 	// dischargeBySource: the TURN's source decides (vibekit.TurnOpenSource.UserAnswered),
 	// because one command covers both a prompt and a `!cmd`.
 	dischargeBySource
+	// dischargeByAnswer: the command's own PAYLOAD decides, because one command type
+	// carries both the user supplying an answer and the user walking away from the
+	// card. answersAgent owns that rule and answers false for anything it cannot read
+	// as an answer, so an absent, malformed or unknown payload keeps the claim.
+	dischargeByAnswer
 )
 
 // commandDischarges classifies every command in vibekit's vocabulary. The line the
-// table applies: does the event carry the user's own PROSE addressed to this agent?
-// Exactly two commands do, and the prompt's own source then decides which turns it
-// opened count. Total by test: TestCommandDischarges_ClassifiesEveryCommand reads the
+// table applies: does the event carry the user ANSWERING this agent — their own prose,
+// or a decision supplied through one of the structured channels the agent asks on? The
+// prompt's own source then decides which turns it opened count, and the three
+// structured channels defer to their payload, because each carries a walk-away as well
+// as an answer. Total by test: TestCommandDischarges_ClassifiesEveryCommand reads the
 // constant block and fails for a command that is not listed.
 var commandDischarges = map[vibekit.CommandType]dischargeVerdict{
 	vibekit.CmdPrompt: dischargeBySource,
 	vibekit.CmdSteer:  dischargeYes,
-	// A choice from a menu the AGENT wrote, not the user's prose.
-	vibekit.CmdUserInputResponse: dischargeNo,
-	// An authorization or a file review, not a question.
-	vibekit.CmdPermissionResponse: dischargeNo,
-	// An MCP server asked, mid-tool-call, not the agent.
-	vibekit.CmdElicitationResponse: dischargeNo,
+	// The agent's OWN structured question (_kiro/userInput), so an answer to it is the
+	// user answering this agent as squarely as a prompt is. Was dischargeNo on the
+	// ground that a menu the agent wrote is not the user's prose — true, and the wrong
+	// line: an agent that asks through a card and gets an answer is not still waiting,
+	// yet nothing invalidated the claim, so the amber dot outlived every such turn.
+	vibekit.CmdUserInputResponse: dischargeByAnswer,
+	// An authorization or a file review rather than a question — but it is one of the
+	// channels an agent that declared waiting_on_user asks on, and selecting an option
+	// the request itself advertised is the user deciding.
+	vibekit.CmdPermissionResponse: dischargeByAnswer,
+	// An MCP server asked, mid-tool-call, not the agent — reached anyway, because the
+	// agent's own tool call is what raised the form and the user filling it in is the
+	// answer that unblocks the turn.
+	vibekit.CmdElicitationResponse: dischargeByAnswer,
 	// A rewind or a compact removes the claim's QUESTION from history rather than
 	// answering it, so both leave a stale-TRUE the next prompt discharges.
 	vibekit.CmdRewindChat: dischargeNo,
@@ -67,9 +83,67 @@ type ChatStatus interface {
 	DischargeWaiting(ctx context.Context, chatID vibekit.ChatID)
 }
 
+// answersAgent reports whether cmd's payload states the user SUPPLYING an answer on one
+// of the structured channels the agent asks on. It is the dischargeByAnswer rule, and it
+// FAILS TOWARD KEEPING the claim: every arm reads one field the payload must state
+// affirmatively, so an absent payload (json.Unmarshal of a nil RawMessage errors), a
+// malformed one, an action value from outside the channel's vocabulary, and a walk-away
+// all answer false and leave the claim standing. A wrongly-kept claim is an amber dot the
+// next prompt clears; a wrongly-cleared one hides that the agent needs somebody.
+//
+// Read only after the handler succeeded, so each arm is reading a payload the handler
+// already validated and forwarded. The checks are not redundant with that: they are what
+// tells an answer from the walk-away the same handler accepts.
+func answersAgent(cmd *vibekit.ClientCommand) bool {
+	switch cmd.Type {
+	case vibekit.CmdUserInputResponse:
+		// A dismissal advances the agent to its next phase without the user answering,
+		// so whether they still owe one is exactly the ambiguity that keeps the claim.
+		var p vibekit.UserInputResponseCommand
+		if json.Unmarshal(cmd.Payload, &p) != nil {
+			return false
+		}
+		return p.Action == vibekit.UserInputActionAnswered && p.Answer != ""
+	case vibekit.CmdElicitationResponse:
+		// accept is the only action carrying the form's values; decline and cancel
+		// resolve the request having answered nothing it asked.
+		var p vibekit.ElicitationResponseCommand
+		if json.Unmarshal(cmd.Payload, &p) != nil {
+			return false
+		}
+		return p.Action == vibekit.ElicitationActionAccept
+	case vibekit.CmdPermissionResponse:
+		// The option's KIND is on the REQUEST, never on this reply, so allow and reject
+		// are indistinguishable here — and both are the user deciding, which is what
+		// ends the wait. What the reply does prove is that a selection was made: the
+		// handler refuses an id the request did not advertise, so a non-empty option id
+		// past that gate is one of the agent's own options.
+		var p vibekit.PermissionResponseCommand
+		if json.Unmarshal(cmd.Payload, &p) != nil {
+			return false
+		}
+		return p.OptionID != ""
+	}
+	return false
+}
+
+// discharges reads the table's verdict for cmd, deferring to the turn source (which the
+// prompt path applies at StartTurn, not here) and to the payload where the verdict says
+// so. False for a command the table does not classify, which is the same fail-toward-
+// keeping direction dischargeNo's zero value carries.
+func discharges(cmd *vibekit.ClientCommand) bool {
+	switch commandDischarges[cmd.Type] {
+	case dischargeYes:
+		return true
+	case dischargeByAnswer:
+		return answersAgent(cmd)
+	}
+	return false
+}
+
 // noteAnswer discharges the chat's waiting_on_user claim when this command answered
-// the agent. Called only after a handler succeeded: a refused prompt or a dropped
-// steer answered nothing.
+// the agent. Called only after a handler succeeded: a refused prompt, a dropped steer
+// or a permission answer the tracker rejected answered nothing.
 //
 // The run verbs (Runs.AnswerInput, Runs.SetStepStatus) are NOT commands and reach no
 // row here: a parked step's question belongs to a different agent on a different
@@ -78,7 +152,7 @@ func (d *Dispatcher) noteAnswer(ctx context.Context, cmd *vibekit.ClientCommand)
 	if d.status == nil || cmd.ChatID == "" {
 		return
 	}
-	if commandDischarges[cmd.Type] == dischargeYes {
+	if discharges(cmd) {
 		d.status.DischargeWaiting(ctx, cmd.ChatID)
 	}
 }

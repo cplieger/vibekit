@@ -80,7 +80,7 @@ let inFlight: AbortController | undefined;
  *  asking the same endpoint. */
 export async function refreshCatalog<T extends CatalogAnswer>(
   deps: CatalogRefresh<T>,
-  opts: { readonly reset?: boolean } = {},
+  opts: { readonly reset?: boolean; readonly signal?: AbortSignal } = {},
 ): Promise<void> {
   if (inFlight !== undefined) {
     if (opts.reset !== true) {
@@ -90,8 +90,13 @@ export async function refreshCatalog<T extends CatalogAnswer>(
   }
   const own = new AbortController();
   inFlight = own;
+  // A caller's signal bounds the WHOLE loop, not one read: a read cancelled under a
+  // loop still polling would retry with reads that abort on arrival for the loop's
+  // whole budget.
+  const signal =
+    opts.signal === undefined ? own.signal : AbortSignal.any([own.signal, opts.signal]);
   try {
-    await runRefresh(deps, own.signal);
+    await runRefresh(deps, signal);
   } finally {
     // Identity-guarded: a reset aborts the previous loop and claims the slot
     // immediately, so the loser's finally must not clear the winner's claim.

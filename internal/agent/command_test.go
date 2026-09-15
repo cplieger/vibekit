@@ -116,7 +116,7 @@ func TestCreateChat_Idempotent(t *testing.T) {
 
 func TestDeleteChat_IsUserOnly(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c-del", func(c *vibekit.Chat, _ bool) bool { c.Name = "to-delete"; return true })
+	_, _ = cs.Mutate(t.Context(), "c-del", func(c *vibekit.Chat, _ bool) bool { c.Name = "to-delete"; return true })
 
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "delete_chat", ChatID: "c-del",
@@ -151,7 +151,7 @@ func TestCancel_NoBridgeIsOK(t *testing.T) {
 
 func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
@@ -182,7 +182,7 @@ func TestPermission_RequiresBridge(t *testing.T) {
 
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 // is refused instead of being forwarded and silently dropped by kiro-cli.
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestCommand_RejectsInvalidChatID(t *testing.T) {
 
 func TestPrompt_RejectsOversizedText(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// 513 KiB — exceeds maxPromptBytes. Cap is smaller than the 1 MiB
 	// JSON body limit so the check fires cleanly with a 413.
@@ -306,7 +306,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 
 func TestPrompt_RejectsBadMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Control characters, newlines, and overlong strings must all
 	// be rejected so the id can't smuggle through SSE framing or
@@ -600,7 +600,7 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 // the way the prompt goroutine does: the reservation plus the bridge slot.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
@@ -825,7 +825,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 
 func TestPermission_RejectsOptionNotOfferedByRequest(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}

@@ -122,7 +122,7 @@ describe("every disclosure builder emits the shared chevron", () => {
   // governs. Asserted as an ABSENCE, or nothing stops a chevron reappearing beside
   // the `i` — which is exactly what shipped for one commit.
   it("the turn footer carries no chevron at all", () => {
-    const f = buildTurnFooter({ commands: 1, reads: 2, changedFiles: {} });
+    const f = buildTurnFooter({ changedFiles: {} });
     expect(f.querySelectorAll(".disclosure-chevron")).toHaveLength(0);
     expect(f.querySelectorAll(".turn-ledger-info")).toHaveLength(1);
   });

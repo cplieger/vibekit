@@ -28,41 +28,44 @@ const (
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
 
-	// KeyLastEffort is the reasoning-effort level the user picked last, anywhere.
-	// The twin of KeyLastModel and used the same way: a NEW chat opens on it
-	// instead of on the current model's default tier.
+	// KeyLastEffortByModel is the reasoning-effort level the user picked last, PER
+	// MODEL: a map from model id to level, and the twin of KeyLastModel used the
+	// same way — a NEW chat on a model this map names opens on that level instead
+	// of on the model's default tier.
+	//
+	// Keyed by MODEL because an explicit tier is a judgement about one model's
+	// speed/quality trade, so carrying it onto a different model made every new
+	// pick inherit the previous model's choice (user report, 2026-08-31 —
+	// "switching models must select the new model's default; the same model keeps
+	// what was selected"). One level plus the model it was picked under cannot
+	// hold that for more than one model at a time: a pick on ANY chat retracts the
+	// seed for every other model, so the only level remembered anywhere is the one
+	// chosen most recently. Both readers look the CHAT's own model up:
+	// BridgeCoordinator.effortSeedFor and the client's getLastEffortFor. A model
+	// with no entry has no seed; a key naming a model that no longer exists is
+	// simply never looked up, and the map is bounded by the model catalog.
 	//
 	// A seed, never a store. The chat record still owns the level (Chat.Effort),
 	// this value is only consulted when a chat has chosen nothing, and it is never
 	// written onto the record — a chat that follows the seed has to keep following
-	// it, and stamping today's value on would freeze that chat there forever. Two
-	// readers, and they have to agree or the pill lies about what the session
-	// runs: BridgeCoordinator.effortFor resolves StartOpts.Effort, and the client's
+	// it, and stamping today's value on would freeze that chat there forever. The
+	// two readers have to agree or the pill lies about what the session runs:
+	// BridgeCoordinator.effortFor resolves StartOpts.Effort, and the client's
 	// effortVocabulary marks the tier.
 	//
 	// Not the old model_effort key returning. That one was a single global
 	// `{last_model, effort}` pair keyed by the LAST model, so two chats could not
 	// disagree and switching models discarded the previous model's choice. This is
-	// a bare level with per-chat storage intact, reconciled against the current
-	// model's own tier list at both readers, so a level the new model does not
-	// offer falls through to that model's default rather than being sent.
-	KeyLastEffort = "last_effort"
-	// KeyLastEffortModel is the model KeyLastEffort was picked under, recorded by
-	// the same click. The seed applies only when a chat runs THAT model: an
-	// explicit tier is a judgement about one model's speed/quality trade, so
-	// carrying it onto a different model made every new pick inherit the previous
-	// model's choice (user report, 2026-08-31 — "switching models must select the
-	// new model's default; the same model keeps what was selected"). Both seed
-	// readers gate on it: BridgeCoordinator.effortFor and the client's
-	// getLastEffortFor. Empty (a pre-pair install) means the seed never applies,
-	// which self-heals on the next pick.
-	KeyLastEffortModel = "last_effort_model"
+	// a bare level per model with per-chat storage intact, reconciled against the
+	// current model's own tier list at both readers, so a level the new model does
+	// not offer falls through to that model's default rather than being sent.
+	KeyLastEffortByModel = "last_effort_by_model"
 
 	// KeyLastMergeMethod is the PR merge method the user picked last (squash or
 	// rebase), and the merge dialog's default on the next merge. A seed like
-	// KeyLastEffort: pure memory, never a per-repo policy — the forge refuses a
-	// method a repo disallows, and that refusal reaches the user through the
-	// merge error. Empty means nothing picked yet; the client falls back to
+	// KeyLastEffortByModel: pure memory, never a per-repo policy — the forge
+	// refuses a method a repo disallows, and that refusal reaches the user through
+	// the merge error. Empty means nothing picked yet; the client falls back to
 	// rebase (the method every cplieger repo allows).
 	KeyLastMergeMethod = "last_merge_method"
 
@@ -279,20 +282,20 @@ func DefaultAgentIgnoreFiles() []string {
 // still carries it warns as an unknown key on the next write and is otherwise
 // inert.
 //
-// KeyLastEffort is not that key coming back. Per-chat storage is what a new chat
-// had no memory to open with, so the level was per-chat and NOTHING remembered
-// the last pick — the model had getLastModel and effort had no equivalent, so
-// every new chat silently reopened on the model default. KeyLastEffort restores
-// only the memory, as a bare level with a fallback rung at each reader; see its
-// own comment for why that avoids each of the three defects above.
+// KeyLastEffortByModel is not that key coming back. Per-chat storage is what a
+// new chat had no memory to open with, so the level was per-chat and NOTHING
+// remembered the last pick — the model had getLastModel and effort had no
+// equivalent, so every new chat silently reopened on the model default.
+// KeyLastEffortByModel restores only the memory, as a level per model with a
+// fallback rung at each reader; see its own comment for why that avoids each of
+// the three defects above.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:     {},
 	KeyChatRetentionDays:    {},
 	KeyDebugLogs:            {},
 	KeyFBPath:               {},
 	KeyKnowledgeEnabled:     {},
-	KeyLastEffort:           {},
-	KeyLastEffortModel:      {},
+	KeyLastEffortByModel:    {},
 	KeyLastMergeMethod:      {},
 	KeyLastModel:            {},
 	KeyMemoryEnabled:        {},
@@ -342,8 +345,11 @@ func WarnUnknownKeys(keys []string, source string) []string {
 // wrong colour on the next load — which is the same reason it is the one value
 // the uistate deletion carries across at all.
 //
-// model_effort used to be a member; effort is per-chat now (see the note above
-// KnownKeys).
+// KeyLastEffortByModel is a member because CmdSetEffort writes it: the seed is
+// recorded by the command that sets a chat's level, so no PUT body carries it and
+// a replace would drop every model's remembered tier. The retired global
+// model_effort was NOT a member, which was right for it — the client wrote that
+// one through a PATCH.
 func ServerManagedKeys() []string {
-	return []string{KeyAgentIgnoreFiles, KeyTheme, KeyFBPath}
+	return []string{KeyAgentIgnoreFiles, KeyTheme, KeyFBPath, KeyLastEffortByModel}
 }

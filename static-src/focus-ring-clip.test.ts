@@ -3,8 +3,10 @@
 //
 // `40-a11y.css` floors every focusable at `outline: var(--focus-ring)` with
 // `--focus-offset` (+1px), so the 2px band sits 1..3px OUTSIDE the border box —
-// 3px of REACH. Seven of this app's boxes declare `overflow: hidden` with no padding
-// of their own, and between them they hold NINE controls the clip reaches: the
+// 3px of REACH. EIGHT of this app's boxes declare an `overflow` with no padding
+// of their own — seven with `hidden`, plus the POPUP CARD with `overflow: auto`,
+// which clips at the same padding box — and between them they hold TEN controls the
+// clip reaches: the
 // criterion is that measured reach against the distance from the control's border box
 // to the clip box, which is wider than being flush. Seven members are flush on the
 // edges they lose, a code block's action button sits 2px in and loses 1px of its top
@@ -50,8 +52,11 @@ const a11y = loadCSS("40-a11y.css");
 const MEMBERS = [
   "a.subagent-header",
   ".subagent-container.has-disclosure > .subagent-header",
+  ".subagent-foot > .subagent-footer > .turn-ledger-summary",
+  ".pill-account",
   ".run-head",
   "a.run-step-head",
+  ".run-open",
   ".tool-group-header",
   ".code-act-btn",
   ".git-repo-section-header",
@@ -242,7 +247,11 @@ function expectClears(name: string, target: HTMLElement, clipper: HTMLElement): 
 /** `.subagent-block` as `buildSubagentCard` assembles a LEAF: the anchor head, the
  *  tail, the foot. As BORN both of the latter are empty, so the tail measures 0 and
  *  the foot is `display: none` — the head is the whole card. */
-function subagentCard(opts: { foot: boolean }): { clipper: HTMLElement; head: HTMLElement } {
+function subagentCard(opts: { foot: boolean }): {
+  clipper: HTMLElement;
+  head: HTMLElement;
+  ledger: HTMLElement | null;
+} {
   const head = node("a", "subagent-header", { href: "/chat/c/subagent/u-1" });
   head.append(
     node("span", "subagent-icon tool-icon"),
@@ -251,6 +260,7 @@ function subagentCard(opts: { foot: boolean }): { clipper: HTMLElement; head: HT
   );
   const tail = node("div", "subagent-tail", { "aria-hidden": "true" });
   const foot = node("div", "subagent-foot");
+  let ledger: HTMLElement | null = null;
   if (opts.foot) {
     const footer = node("div", "turn-footer subagent-footer", { role: "note" });
     const summary = node("button", "turn-ledger-summary", { type: "button" });
@@ -262,18 +272,23 @@ function subagentCard(opts: { foot: boolean }): { clipper: HTMLElement; head: HT
     // span.
     const info = node("span", "turn-ledger-info");
     info.appendChild(glyph());
+    // The `i` LEADS, which is the order buildTurnFooter appends in and the reason its
+    // own comment gives: the affordance's position must not depend on whether the turn
+    // carries an outcome word. It is also the child the inset band reaches first, so
+    // an order that trailed it would clear the wrong edge.
     summary.append(
+      info,
       node("span", "turn-ledger-glyph"),
       span("turn-ledger-text", "Cancelled"),
-      info,
       span("sr-only", "Turn details"),
     );
     footer.appendChild(summary);
     foot.appendChild(footer);
+    ledger = summary;
   }
   const clipper = node("div", "subagent-block");
   clipper.append(head, tail, foot);
-  return { clipper: mount(clipper), head };
+  return { clipper: mount(clipper), head, ledger };
 }
 
 /** The CONTAINER shape: the same block, but the head is the disclosure's own
@@ -599,7 +614,7 @@ function turnInfoPanel(): { clipper: HTMLElement; row: HTMLElement } {
   summary.append(node("span", "turn-ledger-glyph"), span("turn-ledger-text", ""));
   summary.appendChild(span("sr-only", "Turn details"));
   const footer = node("div", "turn-footer", { role: "note", "data-info": "open" });
-  footer.append(summary, node("time", "turn-elapsed"), panel);
+  footer.append(summary, span("turn-fact", "2m 14s"), panel);
   mount(footer);
   return { clipper: panel, row };
 }
@@ -714,6 +729,24 @@ describe("the ring is painted inside the card that clips it", () => {
     expectRingInside("leaf head", head, clipper);
   });
 
+  it("on a delegate's FOOT ledger, flush on three edges of the same card", async () => {
+    // The other end of the card whose head is two cases above, and it joined this rule
+    // when the card feet stopped padding their own band: the button IS the band now, so
+    // the clip reaches it on the block-end and both inline edges. `bottom` is the one
+    // that matters — the foot is the card's last region.
+    const { clipper, ledger } = subagentCard({ foot: true });
+    if (ledger === null) {
+      throw new Error("the fixture built no ledger button");
+    }
+    await focusByTab(ledger);
+    const flush = inset(ledger, clipper);
+    expect(flush.bottom, `foot ledger: bottom is not flush (${flush.bottom}px)`).toBeLessThan(1.5);
+    expect(flush.left, `foot ledger: inline-start is not flush (${flush.left}px)`).toBeLessThan(
+      1.5,
+    );
+    expectRingInside("foot ledger", ledger, clipper);
+  });
+
   it("on a pipeline CONTAINER's head, the disclosure shape on that same class", async () => {
     // One class, two focusable shapes: the leaf's head is an anchor to the delegate's
     // page and this one is the disclosure's own `role="button"` + `tabindex="0"`, both
@@ -728,6 +761,19 @@ describe("the ring is painted inside the card that clips it", () => {
     const { clipper, head } = runCard();
     await focusByTab(head);
     expectRingInside("run head", head, clipper);
+  });
+
+  it("on a run card's FOOT link, which stopped clearing the card in 2026-09", async () => {
+    // It used to be an exclusion, clearing the clip box by exactly one pixel out of the
+    // foot's 4px of block padding. That padding is gone — the band is this link's own
+    // hit box — so it is flush on the block edges and here on the ordinary criterion.
+    const { clipper, open } = runCardWithFoot();
+    await focusByTab(open);
+    const flush = inset(open, clipper);
+    expect(flush.bottom, `run foot link: bottom is not flush (${flush.bottom}px)`).toBeLessThan(
+      1.5,
+    );
+    expectRingInside("run foot link", open, clipper);
   });
 
   it("on a run step's head, where every edge is the row's", async () => {
@@ -831,6 +877,10 @@ describe("the inset band clears the content it now sits over", () => {
       ["git section header", () => gitRepoSection().head],
       ["prs section toggle", () => gitRepoSectionPRs().head],
       ["account repos summary", () => forgeAccountRow().summary],
+      // The popup card's link. Its padding is the tightest in the list on the block
+      // axis (`--sp-1`, 4px against the band's 2px reach), which is exactly why the
+      // clearance half is asserted rather than assumed.
+      ["status card account link", () => statusCardLink()],
     ];
     for (const [name, build] of builders) {
       const head = build();
@@ -867,35 +917,68 @@ describe("the inset band clears the content it now sits over", () => {
   });
 });
 
-describe("the exclusions: a focusable whose clipper clears the reach", () => {
-  it("leaves the card's own FOOT button on the floor's outside ring", async () => {
-    // `.subagent-foot > .subagent-footer` insets its controls by
-    // `padding-inline: var(--sp-2)` and `.turn-footer` by `padding-block: var(--sp-1)`,
-    // so the band clears the clip box on every edge.
-    const { clipper } = subagentCard({ foot: true });
-    const summary = clipper.querySelector<HTMLElement>(".turn-ledger-summary");
-    if (summary === null) {
+describe("the inset band clears the content it now sits over, on the two card feet", () => {
+  // The sweep above reads `firstElementChild` / `lastElementChild`, and for these two
+  // that names the wrong child: the ledger button ends in its `.sr-only` name (1px,
+  // clipped, so its rect answers nothing) and `.run-open` LEADS with a text node, so
+  // its only element child is the trailing icon. Both are measured against their real
+  // ink instead.
+  it("clears the delegate ledger's `i` on the edge the gutter moved for", async () => {
+    // 12px, one declaration shared with the turn card (29-turns.css), and the reason
+    // the gutter sits on this button rather than on `.subagent-foot > .subagent-footer`:
+    // with the row carrying it, the button's border box started ON the `i` and an inset
+    // band would have painted over it. Held against the ring's own reach, so the 8px
+    // this card used to declare and the 12px it takes now both pass — what the case
+    // pins is the clearance, not the value.
+    const { ledger } = subagentCard({ foot: true });
+    if (ledger === null) {
       throw new Error("the fixture built no ledger button");
     }
-    await focusByTab(summary);
-    expectClears("ledger button", summary, clipper);
-    // Outside its OWN border box, which is what the floor means and what the nine
-    // members give up.
-    const own = ringOverflow(summary, summary);
-    expect(own.top).toBeGreaterThan(0);
-    expect(own.left).toBeGreaterThan(0);
+    await focusByTab(ledger);
+    const depth = -px(getComputedStyle(ledger).outlineOffset);
+    expect(depth, "the ledger is not on the inset token").toBeGreaterThan(0);
+    const info = ledger.querySelector<HTMLElement>(".turn-ledger-info");
+    const text = ledger.querySelector<HTMLElement>(".turn-ledger-text");
+    if (info === null || text === null) {
+      throw new Error("the fixture built no ledger ink");
+    }
+    const near = inset(info, ledger);
+    expect(near.left, "the band reaches the `i`").toBeGreaterThanOrEqual(depth);
+    expect(near.top, "the band reaches the `i` at block-start").toBeGreaterThanOrEqual(depth);
+    expect(
+      inset(text, ledger).bottom,
+      "the band reaches the outcome word at block-end",
+    ).toBeGreaterThanOrEqual(depth);
   });
 
-  it("pins `.run-open`, which clears the run card by one pixel", async () => {
-    // One of the two tightest clearances here, an account's repo row being the other:
-    // the foot's 4px of `padding-block` against 3px of reach, so a foot that ever loses
-    // it joins the rule and this is where that shows up.
-    const card = runCardWithFoot();
-    await focusByTab(card.open);
-    expect(inset(card.open, card.clipper).bottom).toBe(reachOf(card.open) + 1);
-    expectClears("run foot link", card.open, card.clipper);
+  it("clears `.run-open`'s label and its icon", async () => {
+    // 4px of `padding-inline`, which makes this the tightest member — under
+    // `.code-act-btn`'s 5px — and it still clears the 2px band by 2px.
+    const { open } = runCardWithFoot();
+    await focusByTab(open);
+    const depth = -px(getComputedStyle(open).outlineOffset);
+    expect(depth, "the link is not on the inset token").toBeGreaterThan(0);
+    expect(px(getComputedStyle(open).paddingInlineStart)).toBeGreaterThanOrEqual(depth);
+    expect(px(getComputedStyle(open).paddingInlineEnd)).toBeGreaterThanOrEqual(depth);
+    // Block clearance is not padding here: the band declared on this link leaves its
+    // 17px line box centred, and that spare height is what the ring sits in.
+    const label = open.firstChild;
+    expect(label?.nodeType, "the link leads with its label text").toBe(Node.TEXT_NODE);
+    const range = document.createRange();
+    range.selectNodeContents(open);
+    const ink = range.getBoundingClientRect();
+    const box = open.getBoundingClientRect();
+    expect(ink.top - box.top, "the band reaches the label at block-start").toBeGreaterThanOrEqual(
+      depth,
+    );
+    expect(
+      box.bottom - ink.bottom,
+      "the band reaches the label at block-end",
+    ).toBeGreaterThanOrEqual(depth);
   });
+});
 
+describe("the exclusions: a focusable whose clipper clears the reach", () => {
   it("pins the + New PR button, which shares a clipper with a member", async () => {
     const { clipper, newBtn } = gitRepoSectionPRs();
     await focusByTab(newBtn);
@@ -986,12 +1069,12 @@ describe("the exclusions: a focusable whose clipper clears the reach", () => {
     expect(inset(item, clipper).top).toBe(8);
     expectClears("model row", item, clipper);
     await focusByTab(tier);
-    // 10: the row's own --sp-2 plus the --effort-knob-inset the knob sits in from the
-    // bar's edge. The knob is a handle INSIDE the bar rather than a box the size of the
-    // line, so its clearance is the row's padding plus that inset; it read 8 while the
-    // knob filled the line, and 12 while the inset was --sp-1's 4px, which was halved
-    // to 2px when the handle grew (15-input.css records why). Neither box has a border.
-    expect(inset(tier, clipper).bottom).toBe(8 + 2);
+    // 8: the row's own --sp-2 and nothing else. The handle FILLS the bar (15-input.css
+    // records why), and on this tier the bar fills the line the track reserves, so the
+    // knob's own edge is the track's. It read 12 while the handle sat --sp-1's 4px
+    // inside the bar, then 10 while that inset was 2px, and the inset is now gone.
+    // Neither box has a border.
+    expect(inset(tier, clipper).bottom).toBe(8);
     expectClears("effort tier", tier, clipper);
   });
 
@@ -1056,6 +1139,68 @@ describe("the exclusion that is not a clearance: a row already on the inset toke
     ).toBeGreaterThan(0);
     expect(reachOf(row), "the row's own offset cancels the ring's reach").toBe(0);
     expectRingInside("turn file row", row, clipper);
+  });
+});
+
+/** The status card as `static/index.html` authors it: `.pill-expand-content` plus
+ *  the status skin, holding the three detail rows and the account LINK. The card is
+ *  `overflow: auto`, which clips descendant painting at its padding box exactly as
+ *  `hidden` does, and the link is deliberately flush with that box on both inline
+ *  edges — `align-self: stretch` plus `padding-inline: var(--card-inset)` and the
+ *  matching negative margin — because that is what makes `--card-radius`
+ *  concentric with the card's own corner. So the floor's OUTSIDE ring would land
+ *  entirely in the clip. */
+function statusCard(): { clipper: HTMLElement; link: HTMLAnchorElement } {
+  const clipper = node("span", "pill-expand-content pill-status-content is-open");
+  clipper.append(
+    span("pill-detail", "connected to vibekit 1.2.3"),
+    node("span", "pill-sep"),
+    span("pill-detail", "kiro-cli 2.21.4"),
+  );
+  const link = node("a", "pill-account", {
+    id: "st-account",
+    href: "https://app.kiro.dev/account/usage",
+    target: "_blank",
+    rel: "noopener",
+  });
+  const lines = node("span", "pill-account-lines");
+  lines.append(span("pill-account-plan", "KIRO POWER"), span("pill-account-meter", "412 / 1,000"));
+  link.append(lines, glyph(), span("sr-only", "Open account usage at app.kiro.dev"));
+  clipper.appendChild(link);
+  const slot = node("span", "pill-slot");
+  slot.appendChild(clipper);
+  mount(slot);
+  return { clipper, link };
+}
+
+/** Just the link, for the clearance sweep. */
+function statusCardLink(): HTMLElement {
+  return statusCard().link;
+}
+
+describe("the ring is painted inside the popup card that clips it", () => {
+  it("on the account link, flush on both inline edges of the card", async () => {
+    const { clipper, link } = statusCard();
+    await focusByTab(link);
+    expect(getComputedStyle(link).outlineOffset, "the link takes the inset offset").toBe("-2px");
+    // The measured inset per edge, the way every sibling case records it: flush on
+    // both inline edges (which is the concentric-corner claim, and the reason the
+    // outside ring could not survive), with real block clearance from the three
+    // detail rows above it and the card's own padding below.
+    const gap = inset(link, clipper);
+    expect(gap.left, "flush with the card's padding box at the leading edge").toBeLessThan(0.5);
+    expect(gap.right, "flush at the trailing edge too").toBeLessThan(0.5);
+    expect(gap.top, "the detail rows are above it").toBeGreaterThan(0.5);
+    expect(reachOf(link), "the inset offset cancels the ring's reach").toBe(0);
+    expectRingInside("account link", link, clipper);
+  });
+
+  it("clips at its padding box, which is what makes the offset necessary", () => {
+    const { clipper } = statusCard();
+    // `auto` rather than `hidden`, and it clips identically: the reason this card
+    // belongs in this file at all.
+    expect(getComputedStyle(clipper).overflow).toBe("auto");
+    expect(getComputedStyle(clipper).paddingLeft, "and it has padding of its own").not.toBe("0px");
   });
 });
 

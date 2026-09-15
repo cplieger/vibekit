@@ -1,16 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 // Mock scroll.js to avoid eager DOM element lookups at module load time.
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
+import { mountAppCSS } from "./__test-helpers__/css-rules.js";
 import {
   buildToolGroupShell,
   groupBody,
   refreshGroupHeader,
   maybeCollapseGroup,
   autoCollapseGroup,
+  setGroupSuperseded,
   groupIsBare,
-  formatDuration,
   summarizeSameKind,
   summarizeMCP,
   labelWithSamples,
@@ -22,23 +23,6 @@ import { kindNoun } from "./tool-kind-noun.js";
 import { outcomeIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import type { ToolKind } from "./types.js";
-
-// --- formatDuration ---
-
-describe("formatDuration", () => {
-  const cases: [number, string][] = [
-    [500, "0.5s"],
-    [1000, "1.0s"],
-    [2500, "2.5s"],
-    [59999, "60.0s"],
-    [60000, "1m0s"],
-    [90000, "1m30s"],
-    [125000, "2m5s"],
-  ];
-  it.each(cases)("formatDuration(%i) => %s", (ms, expected) => {
-    expect(formatDuration(ms)).toBe(expected);
-  });
-});
 
 // --- labelWithSamples ---
 
@@ -476,6 +460,81 @@ describe("grouping amendments", () => {
     maybeCollapseGroup(late);
     // The UI must not fight a reader who has taken control.
     expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A group the verdict already condemned is CREATED collapsed, silently.
+//
+// These cases mount the real stylesheet, which is load-bearing rather than setup:
+// the transition lives on `.uip-disclosure-region` in the ui-primitives base the
+// MANIFEST pulls in, so without it `getAnimations()` is empty whatever the code
+// does and the first case cannot fail. It sits inside
+// `@media (prefers-reduced-motion: no-preference)`, and the browser project sets no
+// reduced-motion preference — the second case is what proves that, so if it ever
+// reads 0 animations check the preference before the production code.
+// ---------------------------------------------------------------------------
+
+describe("a superseded run is born collapsed rather than folded", () => {
+  let style: HTMLStyleElement;
+  beforeAll(() => {
+    style = mountAppCSS();
+  });
+  afterAll(() => {
+    style.remove();
+  });
+
+  it("collapses on the FIRST frame with no animation at all", () => {
+    const g = buildToolGroupShell();
+    groupBody(g).append(card("read", "ok", "a.ts"), card("read", "ok", "b.ts"));
+    document.body.appendChild(g);
+    // The dispatcher's verdict, which is what `messages-blocks.ts` pushes in per card
+    // append. It has to be in place BEFORE the refresh that creates the region.
+    setGroupSuperseded(g, true);
+    refreshGroupHeader(g);
+
+    const body = groupBody(g);
+    expect(body.getAnimations()).toHaveLength(0);
+    // `applyHeight(false, false)` pins 0px with no tween, so the collapsed state is
+    // committed rather than being the end point of one.
+    expect(body.style.height).toBe("0px");
+    expect(body.getAttribute("aria-hidden")).toBe("true");
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    expect(g.querySelector(".tool-group-header")?.getAttribute("aria-expanded")).toBe("false");
+    g.remove();
+  });
+
+  it("still ANIMATES a group superseded while the reader is watching it", () => {
+    // The negative control: without it the case above passes just as well when the
+    // transition is broken everywhere.
+    const g = groupWith(card("read", "ok", "a.ts"), card("read", "ok", "b.ts"));
+    expect(groupBody(g).getAnimations()).toHaveLength(0);
+
+    setGroupSuperseded(g, true);
+    autoCollapseGroup(g);
+    expect(groupBody(g).getAnimations()).toHaveLength(1);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+    g.remove();
+  });
+
+  it("leaves a BARE one-member run alone however the verdict reads", () => {
+    // A bare shell has no region to disclose: its body IS the lone card, so a born
+    // collapse would make that card vanish with no header to bring it back.
+    const g = buildToolGroupShell();
+    const lone = card("read", "ok", "a.ts");
+    lone.textContent = "read a.ts";
+    groupBody(g).appendChild(lone);
+    document.body.appendChild(g);
+    setGroupSuperseded(g, true);
+    refreshGroupHeader(g);
+
+    expect(groupIsBare(g)).toBe(true);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+    // No controller was created, so nothing pinned the region's height and the card
+    // still has a box.
+    expect(groupBody(g).style.height).toBe("");
+    expect(lone.getBoundingClientRect().height).toBeGreaterThan(0);
+    g.remove();
   });
 });
 

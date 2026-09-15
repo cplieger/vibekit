@@ -171,7 +171,7 @@ function subagentCard(i: number): HTMLElement {
   const sa = buildSubagentCard(`review-${String(i)}`, "completed", {
     open: { href: `/chat/c-1/subagent/sub-${String(i)}`, open: () => undefined },
   });
-  sa.setSummary({ commands: 2, elapsedMs: 3_000 });
+  sa.setSummary({ elapsedMs: 3_000 });
   return sa.root;
 }
 
@@ -200,7 +200,7 @@ function pipelineBox(stages: number): (i: number) => HTMLElement {
         startOpen: false,
       },
     );
-    c.setSummary({ commands: 2, elapsedMs: 3_000 });
+    c.setSummary({ elapsedMs: 3_000 });
     for (let s = 0; s < stages; s++) {
       c.body.append(subagentCard(i * 100 + s));
     }

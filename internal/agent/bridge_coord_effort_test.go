@@ -49,7 +49,7 @@ func configOptionFrame(t *testing.T, running, sessionID string, workflow bool) *
 func healEffortFixture(t *testing.T, chose string) (*Runtime, *fakeBridge) {
 	t.Helper()
 	h, cs, br := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Effort = chose
 		return true

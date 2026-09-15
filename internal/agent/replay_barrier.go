@@ -1,8 +1,8 @@
 package agent
 
-// The barrier a caller waits on before it REWRITES a chat's transcript:
-// mergeProjection returns a settled replay's messages wholesale, so a
-// truncation the swap lands after has undone nothing.
+// The barrier a caller waits on before it REWRITES a chat's transcript: the merge
+// PRESERVES a record row newer than the replay's newest, so a truncation the swap
+// lands after has undone nothing.
 
 import (
 	"context"

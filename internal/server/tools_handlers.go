@@ -9,7 +9,7 @@ import (
 	"os/exec"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // statusBinaries is the set of binaries /api/tools/status probes. Each

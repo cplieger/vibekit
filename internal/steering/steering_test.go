@@ -269,16 +269,47 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		"# Environment",
 		"## Installed tools",
 		"- goimports v0.30.0",
+		"## Container runtime",
+		"## Tools engine",
 		"## Connected integrations",
 		"**github**",
 		"## Workspace",
 		"myrepo",
+		"## Git panel",
+		"## UI guide",
+		"## Images and attachments",
 		"## Limitations",
 		"## Capabilities",
+		"no resume or retry tool",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
 			t.Errorf("steering file missing %q", w)
+		}
+	}
+	// Sections in the order the doc is meant to read: what the container IS,
+	// then what is connected, then what the agent can do with it.
+	last := -1
+	for _, h := range []string{"## Installed tools", "## Container runtime", "## Tools engine",
+		"## Connected integrations", "## Workspace", "## Git panel", "## UI guide",
+		"## Images and attachments", "## Limitations", "## Capabilities"} {
+		i := strings.Index(got, h)
+		if i < 0 {
+			t.Fatalf("heading %q is absent, so its order cannot be checked", h)
+		}
+		if i < last {
+			t.Errorf("heading %q at %d is out of order (previous heading at %d)", h, i, last)
+		}
+		last = i
+	}
+	// Retired claims: one told the agent it could not see an image it was
+	// shown, the other promised a per-file undo nothing provides.
+	for _, retired := range []string{
+		"every other attached file arrives as a workspace path",
+		"checkpointed server-side",
+	} {
+		if strings.Contains(got, retired) {
+			t.Errorf("steering file carries the retired sentence %q", retired)
 		}
 	}
 

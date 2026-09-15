@@ -189,8 +189,8 @@
     {
       "name": "a mid-turn STEER joins the turn already running",
       "_comment": [
-        "`isPrompt` is false for a steer, so it may not open a turn — and it carries no",
-        "`turn_outcome`, so a window opening on one is a third continues-a-turn shape."
+        "`Message.IsPrompt` is false for a steer, so it may not open a turn — and it carries",
+        "no `turn_outcome`, so a window opening on one is a third continues-a-turn shape."
       ],
       "messages": [
         { "role": "user", "id": "u1" },

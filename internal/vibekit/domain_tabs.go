@@ -61,7 +61,7 @@ var tabKinds = map[TabKind]bool{
 	TabKindSubagent: false,
 	TabKindSettings: true,
 	TabKindGit:      true,
-	TabKindFiles:    true,
+	TabKindFiles:    false,
 	TabKindHistory:  true,
 	TabKindDocs:     true,
 }
@@ -74,9 +74,9 @@ func (k TabKind) Valid() bool {
 	return ok
 }
 
-// Singleton reports whether k has exactly one tab — settings, git, files,
-// history and docs — so its subject's Ref is empty and a second open of it
-// returns the tab already open.
+// Singleton reports whether k has exactly one tab — settings, git, history and
+// docs — so its subject's Ref is empty and a second open of it returns the tab
+// already open.
 //
 // An unknown kind reports false, so this answer is only meaningful for a kind
 // Valid accepts. The one place that matters is tabs.Store.Open, which checks
@@ -174,6 +174,9 @@ type OpenTab struct {
 // Tabs is never omitted, even when empty: an empty arrangement is a real state
 // (someone closed the last tab) and a missing field would read as "no answer".
 type TabList struct {
-	Tabs    []TabSubject `json:"tabs"`
-	Version uint64       `json:"version"`
+	// Subject is the `tabs` digest stamp with the hub epoch: the same Version
+	// as below, spelled the way the client's version map reads it.
+	Subject *SubjectStamp `json:"subject,omitempty"`
+	Tabs    []TabSubject  `json:"tabs"`
+	Version uint64        `json:"version"`
 }

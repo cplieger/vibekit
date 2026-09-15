@@ -44,6 +44,7 @@ services:
     volumes:
       - "./config:/config"  # chats, kiro-cli auth/state, tools
       - "./workspace:/workspace"  # your repos
+      - "./uploads:/uploads"  # files you attach in the composer
     restart: unless-stopped
     init: true  # required: reaps the processes an agent's terminal commands leave behind
 ```
@@ -51,8 +52,8 @@ services:
 Before the first start, create the bind-mount directories and give them to that UID (1000 unless you set `PUID`/`PGID`). The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
 
 ```bash
-mkdir -p ./config ./workspace
-chown -R "${PUID:-1000}:${PGID:-1000}" ./config ./workspace
+mkdir -p ./config ./workspace ./uploads
+chown -R "${PUID:-1000}:${PGID:-1000}" ./config ./workspace ./uploads
 ```
 
 To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
@@ -84,7 +85,7 @@ Vibekit is a full workspace in the browser, and everything below is reachable fr
 
 **Workspace configuration** on the `/docs` page: the whole `.kiro` inventory with its front-matter (steering docs, skills, agents, specs, hooks), knowledge bases you index, hooks you enable, and workflow runs you launch, pause, resume, cancel or schedule. Settings holds global custom instructions, per-device layout with light and dark themes, account usage, a context and credit meter, and a copyable diagnostics report.
 
-**Notifications:** installable as a PWA, with web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because nothing else tells you off-screen that a turn waits on you.
+**Notifications:** installable as a PWA, with web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because nothing else tells you off-screen that a turn waits on you. A device still receiving the live stream gets no push; an ask raised inside 45 s of locking a phone is held and delivered once the stream goes quiet, or dropped if it is answered elsewhere or its window passes first.
 
 ## Knowledge bases
 
@@ -111,9 +112,20 @@ Index a subdirectory, not a repository root, so the build skips code and assets.
 The image ships working defaults; most setups only choose the volumes and how to expose the port.
 
 - **Port:** `9847` (HTTP + SSE + the shell WebSocket).
-- **Volumes:** `/config` persists chats, kiro-cli auth and state, installed tools, and settings; `/workspace` is your repositories.
+- **Volumes:** `/config` persists chats, kiro-cli auth and state, installed tools, and settings; `/workspace` is your repositories; `/uploads` holds the files you attach in the composer.
 - **User:** the compose above runs as `1000:1000`; see the first-boot ownership note.
 - **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with a reason naming the state: installing, install retrying, unavailable once the attempts are exhausted, or required settings not enforced. The UI still starts in every one of those states and shows a banner; only chats wait, and the install retries itself with backoff. To repair one by hand, fix `/config/tools/kiro-cli-versions` inside the container and `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
+
+### Uploaded files (`/uploads`)
+
+Files you attach in the composer, by drag-drop, paste, or the `+` menu, are written to `/uploads`, and the agent reads them back from there. The image creates that directory itself, so attaching works with no volume mounted on it. Nothing inside the image survives a container recreate though, so without a volume the files go, and a saved draft that still lists them points at paths that no longer exist. Mount a volume to keep them, owned by the same UID as the other mounts:
+
+```yaml
+volumes:
+  - "./uploads:/uploads"
+```
+
+The file browser lists `/uploads` beside the other granted roots, so you can rename and delete there without granting anything.
 
 ### Behind a reverse proxy (`TRUSTED_PROXIES`)
 
@@ -145,7 +157,7 @@ Each uid you list is an assertion that the account is **already at least as priv
 
 ### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
 
-The file browser sees the granted roots (`/workspace` and `/config` by default) and nothing else in the container. To browse another mount, grant it with a colon-separated list of absolute paths:
+The file browser sees the granted roots (`/workspace`, `/config` and `/uploads` by default) and nothing else in the container. To browse another mount, grant it with a colon-separated list of absolute paths:
 
 ```yaml
 environment:
@@ -262,3 +274,5 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
+The terminal's two web fonts ship under their own licences, each licence text served beside the font files under `/vendor/fonts/`: [Monaspace](https://github.com/githubnext/monaspace) Neon NF under SIL Open Font License 1.1, and [web-terminal-glyphs](https://github.com/cplieger/web-terminal-glyphs) under Apache-2.0.

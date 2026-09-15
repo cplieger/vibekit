@@ -38,9 +38,6 @@ export interface MarkerState {
   /** How long the turn took. ABSENT rather than zero for a turn the transcript store
    *  does not hold, because a duration nobody stamped is not a duration of zero. */
   elapsedMs?: number | undefined;
-  /** The pause this turn opens a new sitting after, already worded. The seam's band
-   *  paints no text, so this is the only channel that pause reaches a reader. */
-  gapBefore?: string | undefined;
 }
 
 /** The app's own separator, matching `turn-footer.ts`'s ledger line. */
@@ -69,9 +66,6 @@ export function markerLabel(s: MarkerSubject, state: MarkerState): RailLabel {
   if (state.elapsedMs !== undefined && state.elapsedMs > 0) {
     tip.push(formatElapsed(state.elapsedMs));
   }
-  if (state.gapBefore !== undefined && state.gapBefore !== "") {
-    tip.push(`${state.gapBefore} pause before this turn`);
-  }
   if (state.pending) {
     tip.push("Loading this turn\u2026");
   }
@@ -92,13 +86,6 @@ export function markerLabel(s: MarkerSubject, state: MarkerState): RailLabel {
   }
 
   return { tooltip: tip.join(SEP), ariaLabel: name.join(", ") };
-}
-
-/** Name a seam: the pause it stands for and the two turns it separates. Takes the
- *  gap already worded, because the coarse `2h` vocabulary has one owner in the
- *  renderer and a second formatter here could disagree with it. */
-export function seamLabel(gap: string, fromN: number, toN: number): string {
-  return `${gap} pause between turn ${String(fromN)} and turn ${String(toN)}`;
 }
 
 /** The rail's own accessible name. It states the set the rail SHOWS whenever that is

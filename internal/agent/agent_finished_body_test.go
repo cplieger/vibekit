@@ -50,7 +50,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	// Broadcast the way translate/focus.go's chat_status path does it: MID-turn, on a
@@ -104,7 +104,7 @@ func TestEmitTurnEnded_PushReadsTheSeverity(t *testing.T) {
 			cs.Bus = h
 			h.mcpRegistry.SignalReady()
 			ctx := t.Context()
-			_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+			_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 			epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 			// Present for every case, so an arm leaking it fails visibly rather than absently.
 			// Broadcast mid-turn, where the real frame lands: see the sibling test above.
@@ -150,7 +150,7 @@ func TestPushBody_CarriesOnlyThisTurnsDescription(t *testing.T) {
 		h := New(context.Background(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 		cs.Bus = h
 		h.mcpRegistry.SignalReady()
-		_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+		_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 		return h, fp
 	}
 	endTurn := func(t *testing.T, h *Runtime, epoch vibekit.TurnEpoch) {
@@ -219,7 +219,7 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(ctx, "c1", vibekit.TurnSourcePrompt)
 	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}

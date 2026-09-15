@@ -29,10 +29,12 @@ vi.mock("../tabs.js", () => ({
   setGitTab: undefined,
   setSettingsTab: undefined,
   setTabDirty: undefined,
-  toggleGitView: undefined,
-  toggleSettingsView: undefined,
+  openGitView: undefined,
+  openSettingsView: undefined,
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
+  refreshActiveView: undefined,
+  activeChatRef: undefined,
 }));
 
 // Capture SSE handlers via shared helper.

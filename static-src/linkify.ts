@@ -17,10 +17,20 @@ import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { FILE_EXTS } from "./file-extensions.js";
 
+const SUFFIX = "(?:" + FILE_EXTS.join("|") + ")";
+
+const RELATIVE_PATH = "[\\w.-]+\\/[\\w./-]*\\." + SUFFIX;
+
+/** Roots an absolute path must start under. A shape test alone linkifies every
+ *  `/etc/*.conf` and `/var/log/*.log` a shell command prints; these three are
+ *  what `/api/file` can open. An extra `VIBEKIT_BROWSE_ROOTS` mount is missed,
+ *  which is the safe direction — no link offered rather than a dead one. */
+const LINKABLE_ROOTS = ["workspace", "config", "uploads"] as const;
+
+const ABSOLUTE_PATH = "\\/(?:" + LINKABLE_ROOTS.join("|") + ")\\/[\\w.-][\\w./-]*\\." + SUFFIX;
+
 const PATH_PATTERN =
-  "(?<![\\w/.-])([\\w.-]+\\/[\\w./-]*\\.(?:" +
-  FILE_EXTS.join("|") +
-  "))(?::(\\d+)(?::\\d+)?)?(?![\\w/.-])";
+  "(?<![\\w/.-])(" + ABSOLUTE_PATH + "|" + RELATIVE_PATH + ")(?::(\\d+)(?::\\d+)?)?(?![\\w/.-])";
 
 // Non-global version for acceptNode test (no lastIndex mutation).
 const PATH_TEST_RX = new RegExp(PATH_PATTERN);

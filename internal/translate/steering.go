@@ -27,6 +27,7 @@ package translate
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/durable"
@@ -139,8 +140,8 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.Ch
 // IT BROADCASTS NOTHING, deliberately — the client drops a mark whose row is resident,
 // so an echo would replace the live mark with a copy carrying no ack. The next FETCH
 // serves this row, swapProjectedTranscript's discipline. The ID is KAS's own steer id,
-// the one the replay projection stamps, so mergeProjection dedupes instead of rendering
-// the note twice; a failure is swallowed, chat.ErrTombstoned being ordinary here.
+// which the replay stamps too, so the merge PAIRS the two and keeps the state written
+// here; a failure is swallowed, chat.ErrTombstoned being ordinary here.
 func (t *Translator) persistSteer(
 	ctx context.Context,
 	chatID vibekit.ChatID,
@@ -153,7 +154,7 @@ func (t *Translator) persistSteer(
 		// note — the replay projection drops the same shape for the same reason.
 		return
 	}
-	err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *vibekit.Chat, exists bool) bool {
+	_, err := t.chats.Mutate(durable.Context(ctx), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -212,8 +213,30 @@ func (t *Translator) steerBufferForgotten(chatID vibekit.ChatID, steerIDs []stri
 // marks (a `[notification/<sev>]` prefix), while the auto-wake nudge carries none
 // and a `send_message` note reaches vibekit only on the INJECTED frame.
 //
-// No ledger answers agent, because the inverse is the defect this field fixes.
+// TWO pieces of evidence, and THE ID LEADS because it is structural where the
+// ledger is a cache. KAS mints `steer-<messageID>` by prefixing the messageId a
+// caller sent on `_session/steer`, and CmdSteer is the only caller — the agent's
+// own steering rows take `notify-`, `wf-progress-` or `steering_boundary_`
+// instead. So the prefix is a fact about who sent it, while the ledger is an
+// in-memory map that is TTL'd, bounded, dropped at chat teardown and lost on
+// restart, and whose absence branch answers `agent`. Consulting the cache first
+// made every one of those losses rewrite the user's own words as a workflow
+// report AND drop them from the boundary resend, because the client keys both the
+// note's label and pendingSteerCarry on this field.
+//
+// Measured on chat c-1e22cf4e (2026-09-12): two steers 75s apart, the first
+// labelled the user's and the second the agent's, so the reader's correction
+// rendered as "Workflow result not delivered" and was discarded instead of being
+// carried into the next turn. The TTL had not expired; the ledger write raced
+// KAS's own `steering_queued` frame, which is folded on the bridge's Forward
+// goroutine with nothing serializing the two.
+//
+// The ledger still decides for an id vibekit did not derive, which is the case
+// CmdSteer warns about when KAS returns an id other than SteerIDFor's.
 func (t *Translator) steerOrigin(chatID vibekit.ChatID, steerID string) vibekit.SteerOrigin {
+	if strings.HasPrefix(steerID, vibekit.SteerIDPrefix) {
+		return vibekit.SteerOriginUser
+	}
 	if t.steers == nil {
 		return vibekit.SteerOriginAgent
 	}

@@ -171,48 +171,73 @@ afterAll(() => {
 });
 
 describe("the composer's bottom clearance", () => {
-  it("lands the last pill on Apple's 34pt boundary", () => {
+  // THE BAND IS PAGE BELOW THE CARD, AND IT IS CAPPED (user ruling, 2026-09-12).
+  // Both earlier spends were rejected on SIZE: the whole inset below the card left
+  // 29px of page and read as a safety area that was way too large, and moving it
+  // inside the card left 21px of card material under the buttons and read as a
+  // large gap under them. So the location is back outside the card and the figure
+  // is `--composer-inset-cap` rather than Apple's full 34pt.
+  it("spends the band as page BELOW the card, capped under the device's inset", () => {
     withInsets(true);
-    const { form, pill } = mountComposer();
-    const gap = form.getBoundingClientRect().bottom - pill.getBoundingClientRect().bottom;
-    expect(gap, `the last control sits ${gap}px above the bar's block-end edge`).toBeCloseTo(
-      INSET_BOTTOM,
+    const { form, box } = mountComposer();
+    const page = form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
+    const cap =
+      parseFloat(getComputedStyle(form).getPropertyValue("--composer-inset-cap")) * 16 || 24;
+    expect(page, `${page}px of page below the card`).toBeCloseTo(cap, 0);
+    // The cap is the whole point, so pin that it BINDS here: an uncapped rule would
+    // put the device's own 34px in this gap and this case would pass for the shape
+    // the ruling rejected.
+    expect(page, "the cap binds rather than the device's own inset").toBeLessThan(INSET_BOTTOM);
+  });
+
+  it("leaves the card's own material uniform, so the box reads symmetric", () => {
+    // The other half of the same ruling. With the band outside the card, the pill
+    // row's two insets are its uniform `--composer-pill-pad` again — it used to
+    // render 21px against its 6px top — so the row sits centred about the 1px
+    // divider that separates it from the textarea.
+    withInsets(true);
+    const { pill } = mountComposer();
+    const row = pill.closest(".prompt-pills") as HTMLElement;
+    const cs = getComputedStyle(row);
+    const top = parseFloat(cs.paddingBlockStart);
+    const bottom = parseFloat(cs.paddingBlockEnd);
+    expect(bottom, `${bottom}px under the controls against ${top}px above them`).toBeCloseTo(
+      top,
       0,
     );
   });
 
-  it("spends that band as the CARD's material, not as page below it", () => {
-    // The reported half. Apple's own bottom bars fill the inset with the bar's
-    // material and inset only their content; this used to charge the whole 34px to
-    // the FORM's padding, leaving 29px of page under a floating card.
+  it("keeps every control clear of the indicator band", () => {
+    // What the clearance is actually FOR: no control may sit in the home-indicator
+    // band. Measured from the last control's painted edge to the bar's own, which is
+    // the viewport's bottom in production (mountComposer's doc comment).
     withInsets(true);
-    const { form, box } = mountComposer();
-    const page = form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
-    const house = parseFloat(getComputedStyle(doc.documentElement).getPropertyValue("--sp-3")) * 16;
-    expect(house).toBeCloseTo(12, 0);
-    expect(page, `${page}px of page below the card`).toBeCloseTo(house, 0);
+    const { form, pill } = mountComposer();
+    const gap = form.getBoundingClientRect().bottom - pill.getBoundingClientRect().bottom;
+    // Comfortably past the visible indicator while staying under Apple's reserve,
+    // which is the trade the cap makes. A lower bound rather than an equality, so a
+    // retune of the cap or of the row's inset moves this without a test edit.
+    expect(gap, `the last control sits ${gap}px above the screen edge`).toBeGreaterThan(24);
+    expect(gap).toBeLessThan(INSET_BOTTOM);
   });
 
   it("leaves an inset-less device exactly as it was", () => {
-    // The control, and it is what stops the two rules above passing for a
+    // The control, and it is what stops the three cases above passing for a
     // stylesheet that reads the inset nowhere: with `env()` at 0 the pill row keeps
-    // its uniform `--pill-inset` and the bar keeps the house gap, so the whole
-    // mechanism is invisible.
+    // its uniform inset and the bar keeps the house gap, so the whole mechanism is
+    // invisible.
     withInsets(false);
     const { form, box, pill } = mountComposer();
     const row = pill.closest(".prompt-pills") as HTMLElement;
     const inset = parseFloat(getComputedStyle(row).paddingBlockEnd);
-    // 4 -> 6 with amendment §B (2026-09-10): the row's inset now pays for its
-    // controls' target expander, so it is `--composer-pill-pad` rather than
-    // `--pill-inset`. Read off the row rather than restated, so a retune moves this
-    // with it; the floor's own value is what the `max()` in that term resolves to on
-    // this frame, which is coarse through the no-JS width fallback.
-    // Compared against the row's own TOP inset, which reads the same term and no
-    // `env()` at all: with the device reporting nothing, the two edges agree, which
-    // is what "uniform" means here. A custom property's computed value is its token
-    // stream (`max(…)`), so it cannot be read as a length.
+    // Read off the row's own TOP inset rather than restated, so a retune of
+    // `--composer-pill-pad` moves both sides of the comparison together. That term
+    // is `max(--pill-inset, (--hit-floor - --composer-ctl-h) / 2)`, and the coarse
+    // tier's box grew to 36px on 2026-09-12, so the second arm no longer wins and
+    // it resolves to `--pill-inset` on both tiers. A custom property's computed
+    // value is its token stream, so it cannot be read as a length.
     const top = parseFloat(getComputedStyle(row).paddingBlockStart);
-    expect(top, "the row's own inset term, resolved").toBeCloseTo(6, 0);
+    expect(top, "the row's own inset term, resolved").toBeCloseTo(4, 0);
     expect(inset).toBeCloseTo(top, 0);
     const page = form.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom;
     expect(page).toBeCloseTo(12, 0);

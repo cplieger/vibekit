@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // keySubcommand is the _kiro/knowledge dispatch field naming the operation.

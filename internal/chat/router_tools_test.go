@@ -18,7 +18,7 @@ import (
 func storeWith(t *testing.T, msgs []vibekit.Message) *Store {
 	t.Helper()
 	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	_, _ = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = msgs
 		return true
@@ -77,9 +77,8 @@ func TestTranscript_SmallToolCallIsSentWhole(t *testing.T) {
 	if string(got.Input) != string(in.Input) {
 		t.Errorf("input = %s, want %s", got.Input, in.Input)
 	}
-	if got.OutputBytes != 0 || got.DiffCount != 0 {
-		t.Errorf("output_bytes = %d, diff_count = %d, want 0 and 0 when the value is whole",
-			got.OutputBytes, got.DiffCount)
+	if got.OutputBytes != 0 {
+		t.Errorf("output_bytes = %d, want 0 when the value is whole", got.OutputBytes)
 	}
 }
 
@@ -184,9 +183,6 @@ func TestTranscript_OversizeDiffIsDroppedWholesale(t *testing.T) {
 	}
 	if got.Truncated != nil {
 		t.Errorf("truncated = %+v, want nil: the store kept both diffs", got.Truncated)
-	}
-	if got.DiffCount != 2 {
-		t.Errorf("diff_count = %d, want 2 (the FULL count)", got.DiffCount)
 	}
 	if len(got.Diffs) != 1 || got.Diffs[0].Path != "small.go" {
 		t.Errorf("diffs = %v, want only the one that fit, whole", got.Diffs)

@@ -25,7 +25,8 @@ import {
   dropTurnDecisions,
 } from "../decision-dock.js";
 import { answerRunInput, continueRunStep } from "../actions/runs.js";
-import { notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { closeNotificationsFor, notifyIfHidden, NOTIFY_TITLE } from "../notify.js";
+import { runTarget } from "../push-subject.js";
 
 // ---------------------------------------------------------------------------
 // The signal half: an ephemeral toast at each end of a run.
@@ -206,7 +207,11 @@ onSSE("run_input_needed", (chatID, p) => {
   // chat's window until somebody answers. `parentChat` because that getter has
   // already refused both spellings of "no launching chat".
   noteRunLive(p.workflow_id, parentChat, false);
-  notifyIfHidden(NOTIFY_TITLE, "A workflow step is waiting for your answer");
+  notifyIfHidden(
+    NOTIFY_TITLE,
+    "A workflow step is waiting for your answer",
+    runTarget(p.workflow_id),
+  );
   pushDecision({
     kind: "run_input",
     chatID,
@@ -235,6 +240,7 @@ onSSE("run_input_needed", (chatID, p) => {
 // is accepted, so something has to retire the cards that lost.
 onSSE("run_input_settled", (_chatID, p) => {
   collapseSettledRunInput(p.workflow_id, p.ask_id, p.settled_by);
+  void closeNotificationsFor(runTarget(p.workflow_id));
 });
 
 // The one lifecycle frame that carries CONTENT rather than a nudge: what

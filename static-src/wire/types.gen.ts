@@ -12,11 +12,15 @@ export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_fail
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked" | "turn_outcome" | "step_notice";
 
+export type FileMatchKind = "content" | "name" | "dir";
+
 export type ForgeKind = "github" | "gitlab" | "gitea" | "codeberg";
 
 export type PlanStatus = "pending" | "in_progress" | "completed";
 
 export type ReadState = "ready" | "unavailable";
+
+export type RegistryFailureReason = "rate_limited" | "rejected" | "unavailable";
 
 export type Role = "user" | "assistant" | "event";
 
@@ -29,6 +33,8 @@ export type RunStatus = "running" | "paused" | "completed" | "failed" | "aborted
 export type RunStepTranscriptState = "ready" | "gone" | "unavailable";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
+
+export type SegmentKind = "content" | "reasoning" | "tool_title" | "tool_disclosed" | "tool_diff" | "tool_denial" | "tool_input" | "tool_output" | "plan" | "attachment" | "turn_failure" | "message";
 
 export type SettledBy = "user" | "unattended" | "moot";
 
@@ -80,8 +86,16 @@ export interface AccountUsage {
   breakdowns: AccountUsageBreakdown[];
   /** IsEnterprise reports whether the plan is an enterprise/managed plan. */
   is_enterprise?: boolean;
-  /** OveragesEnabled reports whether overage billing is enabled. */
-  overages_enabled?: boolean;
+  /**
+ * OveragesEnabled reports whether overage billing is enabled.
+ * //
+ * NEVER `omitempty`: the client DISPLAYS this state, and `omitempty` omits a
+ * false bool, so an absent field would be indistinguishable from "overages
+ * are off" — a reader cannot supply a fallback for a fact it is meant to
+ * report. Without the tag wiregen emits a REQUIRED TypeScript field, so the
+ * render branch is total. Same contract as EffectiveSettings' fields.
+ */
+  overages_enabled: boolean;
   /**
  * Stale is true when this snapshot was served from the last-known
  * cache because a fresh fetch failed (no live bridge, rate limit).
@@ -334,6 +348,11 @@ export interface CodeReferencesPayload {
  * auth.WhoamiResponse is the precedent.
  */
 export interface ConfigTemplateResponse {
+  /**
+ * Subject is the `catalog` digest stamp with the hub epoch, read under the
+ * catalog's lock beside the two lists it vouches for.
+ */
+  subject?: SubjectStamp;
   default_model?: string;
   /**
  * EffortActive is the `effortLevel` option's currentValue: the tier a
@@ -397,8 +416,8 @@ export interface ConnectedPayload {
  * turn that is not a workflow step, or an admitted prompt whose Turn is not
  * minted yet — and it is a NEGATIVE statement about every chat it does
  * not name, the half no other frame carries: a chat whose turn died with the
- * previous process gets no turn_state, and nothing else ever tells this client to
- * stop believing its own `thinking`.
+ * previous process emits no terminal frame, and nothing else ever tells this
+ * client to stop believing its own `thinking`.
  * //
  * The reservation term is what makes the negative statement COMPLETE for the
  * admission window; see busyChatIDs, which walks the lifecycle rather than the open
@@ -418,14 +437,19 @@ export interface ConnectedPayload {
  * there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
  */
   live_runs?: LiveRun[];
-  floor: number;
-  head: number;
+  /**
+ * Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
+ * (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
+ * to detect a gap, and a v3 client gets the same facts from the library's hello.
+ */
+  floor?: number;
+  head?: number;
   /**
  * BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
  * conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
  * workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
  * and an absent marker can never read as "stated" — the discipline
- * TurnStatePayload.Truncated already follows.
+ * LiveTurn.Truncated already follows.
  */
   busy_stated: boolean;
   /**
@@ -513,16 +537,17 @@ export interface EffectiveSettings {
   /** FBPath is the file-browser path to restore, "" to list the granted mounts. */
   fb_path: string;
   /**
- * LastModel and LastEffort are what a NEW chat opens on. Both are pure memory:
- * the value in force for an existing chat lives on that chat's record.
+ * LastModel and LastEffortByModel are what a NEW chat opens on. Both are pure
+ * memory: the value in force for an existing chat lives on that chat's record.
  */
   last_model: string;
-  last_effort: string;
   /**
- * LastEffortModel is the model LastEffort was picked under; the seed applies
- * only to a chat running that model (settings.KeyLastEffortModel).
+ * LastEffortByModel maps a model id to the reasoning-effort level last picked
+ * under it, so the seed applies to a chat running THAT model and to no other.
+ * One level for the whole app cannot express that: a pick on any chat retracts
+ * every other model's remembered level (settings.KeyLastEffortByModel).
  */
-  last_effort_model: string;
+  last_effort_by_model: Record<string, string>;
   /**
  * LastMergeMethod is the PR merge method picked last ("squash" or "rebase"),
  * the merge dialog's default. Empty means nothing picked yet.
@@ -557,9 +582,10 @@ export interface EffectiveSettings {
   memory_enabled: boolean;
   /**
  * NotificationsEnabled is the push master switch, default off. The three per-kind
- * switches below default ON, mirroring push.kindRegistry — the polarity differs
- * between the master and the kinds on purpose, and that asymmetry is exactly
- * why the client must not guess either of them.
+ * switches below take their defaults from settings.Default*, and those are not
+ * uniform either — pr_status is OFF where its two siblings are ON. So there are
+ * three polarities across these four fields, and that asymmetry is exactly why
+ * the client must not guess any of them.
  */
   notifications_enabled: boolean;
   notify_agent_finished: boolean;
@@ -651,6 +677,52 @@ export interface FileChange {
 }
 
 /**
+ * FileMatch is one hit: a matching LINE, or an entry whose NAME matched. A line
+ * number rather than a byte offset, because the client opens a content result at the
+ * editor's `/file/{path}#L<line>`; a name hit carries Line 0, which matchLines never
+ * produces.
+ */
+export interface FileMatch {
+  /**
+ * Path is the container-absolute path, the same namespace every other
+ * /api/file* route speaks.
+ */
+  path: string;
+  excerpt: string;
+  kind: FileMatchKind;
+  line: number;
+}
+
+/**
+ * FileSearchResult is GET /api/files/search's reply: the hits, cut at
+ * maxSearchMatches, beside the tally over the files the walk read.
+ */
+export interface FileSearchResult {
+  matches: FileMatch[];
+  /**
+ * Scanned is how many units the scan READ, whole or in part: chats, files,
+ * messages; or whose index entry, built from one such read, stood in for it.
+ * A unit it read and found out of scope (a binary) is scanned. A unit whose
+ * name no longer held what the walk classified (vanished, swapped, not a
+ * regular file) is a skip the answer covers, and stays scanned. A unit it
+ * meant to read and could not (a chat over chatFileCap, a permission or I/O
+ * error on the read) is not scanned, and Truncated is what says so.
+ */
+  scanned: number;
+  /**
+ * Matched is how many rows Matches would hold had nothing cut it: the same
+ * unit as Matches (hits, matching lines, chats). The list is cut iff
+ * Matched > len(Matches). Truncated never means a cut.
+ */
+  matched: number;
+  /**
+ * Truncated is true when the scan did not read everything it was asked to:
+ * a cap on files or chats, a file read partially or not at all, a dead context.
+ */
+  truncated: boolean;
+}
+
+/**
  * GovernanceFeatures is the org/account feature-flag set carried by the v3 (KAS)
  * _kiro/governance/state notification. Every field is the RESOLVED effective value, so a
  * Builder-ID login reads permissive with isEnterprise=false and no disabledReason.
@@ -702,6 +774,68 @@ export interface GovernanceStatePayload {
   known: boolean;
   /** IsEnterprise reports whether this is an enterprise/managed account. */
   is_enterprise?: boolean;
+}
+
+/**
+ * Hit locates one match. The client fetches only the turns it needs to reveal
+ * and highlights locally, so this carries position rather than markup. Position
+ * is segment-relative: Offset indexes runes inside the one segment named by
+ * SegmentKind + BlockIndex, never a concatenation of the message.
+ */
+export interface Hit {
+  /**
+ * BlockIndex is the matched segment's block position in the message's
+ * chronological Blocks array. Nil for messages persisted before blocks
+ * existed and for message-kind hits. First for govet fieldalignment: a
+ * pointer after the strings would extend the GC scan past their len words.
+ */
+  block_index?: number;
+  /** MessageID is the matched message. */
+  message_id: string;
+  /**
+ * TurnMessageID is the matched turn's OPENING message id.
+ * //
+ * Carried alongside MessageID because a hit can land on an assistant
+ * message inside a turn while the fold state keys on the turn's opener.
+ * The turn NUMBER cannot substitute — it is session-absolute here and
+ * window-relative in the client's projection.
+ */
+  turn_message_id: string;
+  excerpt: string;
+  /**
+ * Role of the matched message, so a result list can say where a hit came
+ * from without a second lookup.
+ */
+  role: Role;
+  /**
+ * SegmentKind names the span the hit landed in: content | reasoning |
+ * tool_title | tool_disclosed | tool_diff | tool_denial | tool_input |
+ * tool_output | plan | attachment | turn_failure, or message for a
+ * filter-only hit.
+ */
+  segment_kind: SegmentKind;
+  /**
+ * AgentSubtaskID is the subtask id of the agent that produced the matched
+ * segment ("" = top-level agent), so a hit inside a delegate's stream can
+ * open that delegate's chain before highlighting.
+ */
+  agent_subtask_id?: string;
+  /**
+ * Turn is the 1-based session-absolute turn ordinal, matching
+ * projectTurnSummaries so a hit can mark the timeline rail.
+ */
+  turn: number;
+  /**
+ * Offset is the rune index of the match inside its segment, so the client
+ * can highlight the right occurrence rather than the first.
+ */
+  offset: number;
+  /**
+ * SegmentLen is the segment's rune length: the denominator for a relative
+ * position, carried so the client never re-derives the server's
+ * segmentation. Zero for message-kind hits.
+ */
+  segment_len: number;
 }
 
 /**
@@ -775,6 +909,89 @@ export interface JobsResponse {
   recent: Job[];
 }
 
+/**
+ * KiroDoc is one row on the configuration browser.
+ * //
+ * Fields are per-category and mostly omitempty: a steering row carries an
+ * inclusion and no model, an agent row the reverse, a spec row neither. The
+ * client shapes each tab's columns; the server does not pretend they are
+ * uniform.
+ */
+export interface KiroDoc {
+  category: string;
+  /**
+ * Name is the row label: front-matter `name`, else the first H1, else the
+ * basename. The universal fallback chain — 11 of 27 skill markdown files
+ * carry no front-matter at all (only `*\/SKILL.md` is a manifest; the rest
+ * is reference material), so this is not a spec special case.
+ */
+  name: string;
+  path: string;
+  /**
+ * Group is the parent label for a nested category: a spec's feature
+ * directory. Three files named requirements.md in a flat list identify
+ * nothing.
+ */
+  group?: string;
+  description?: string;
+  inclusion?: string;
+  file_match?: string;
+  model?: string;
+  /** Trigger and Action carry a hook row (hooks are JSON, not markdown). */
+  trigger?: string;
+  action?: string;
+  tools?: string[];
+  steering_override?: boolean;
+  /**
+ * ReadOnly says this row is not writable, so the page must render it without
+ * the edit or delete affordance.
+ * //
+ * This is the row's PROVENANCE channel (D65), and it is deliberately a single
+ * asserted bit rather than a four-valued source enum. Crew's aim / kiro-user /
+ * kiro-workspace / package vocabulary does not map onto this endpoint: kiroRoots
+ * enumerates the workspace root's `.kiro` plus one level of `<repo>/.kiro` and
+ * nothing else — no global tree, no user tree, no package tree, no shipped
+ * read-only set — so every row it emits is workspace content and a source enum
+ * would have one inhabited value.
+ * //
+ * NOTHING SETS IT TODAY, and that is the correction rather than an oversight.
+ * D67a set it for any entry reached through a symlink, on the premise that such
+ * a save fails with ELOOP; the premise was false (see docVerdict in
+ * kiro_docs_guard.go — the write resolves the link first and O_NOFOLLOW guards
+ * the canonical target), so the app has no writability source yet. The field
+ * stays because it is the right shape for one and the client already honours it;
+ * what went is the wrong derivation.
+ * //
+ * `omitempty`, so absent means writable and read-only is asserted explicitly.
+ * Same default direction as vibekit.Origin's adaptOrigin (mcp-state.ts), and for
+ * the same reason: a read-only row must only ever be produced by the server
+ * saying so, never by a field failing to arrive.
+ */
+  read_only?: boolean;
+  /**
+ * DeleteProtected says this row must render without the DELETE affordance while
+ * keeping its edit.
+ * //
+ * A separate bit from ReadOnly because it answers a separate question. It is set
+ * for an entry reached through a symlink, where the delete route canonicalizes
+ * the path and so unlinks the link's TARGET — losing the aliased file rather
+ * than the alias. Editing through the link is what following it means; deleting
+ * through it is not. Folding the two into one flag is what made D67a claim a
+ * row was read-only while its own activation surface opened an editable file.
+ */
+  delete_protected?: boolean;
+}
+
+/**
+ * KiroDocsResponse is GET /api/workspace/kiro-docs's reply. Truncated says a cap
+ * or a cancelled request stopped the scan before it read the whole tree, so a
+ * short list is not read as the whole inventory.
+ */
+export interface KiroDocsResponse {
+  docs: KiroDoc[];
+  truncated: boolean;
+}
+
 /** Label is a forge label (used on PRs and issues). */
 export interface Label {
   name: string;
@@ -807,7 +1024,75 @@ export interface LiveRun {
 
 /** LiveRunsResponse is GET /api/runs/live's reply. */
 export interface LiveRunsResponse {
+  /**
+ * Subject is the `runs` digest stamp with the hub epoch, paired with the set
+ * under the lease store's lock.
+ */
+  subject?: SubjectStamp;
   runs: LiveRun[];
+}
+
+/**
+ * LiveTurn is the in-flight turn's accumulated assistant message, as the single-chat
+ * GET carries it beside `messages`.
+ * //
+ * It exists because the in-flight reply reaches the chat file only at turn end, so the
+ * window that response serves has no carrier for it: `turn_open` states that a turn is
+ * running, and this field is the ONE channel that carries the transcript describing it —
+ * the SSE connect carries `busy_chats` and no turn content. A SIBLING field rather than
+ * an extra element in `messages`, so `has_more`, `turn_offset`, `turn_segment_closed` and
+ * `message_count` all keep meaning "what the file holds".
+ * //
+ * A STRUCT mirroring buffer.Snapshot's own four fields — Message, ChunkSeq, BlockBase and
+ * Truncated — so the one call site destructures that read and copies each fact BY NAME.
+ * The positional form this replaced could hand two same-kind values over transposed, which
+ * compiles and is silent in both directions.
+ */
+export interface LiveTurn {
+  /**
+ * Message is the turn as accumulated so far, field-for-field the shape assembled at
+ * turn end so it renders byte-equivalently to the turn that replaces it.
+ */
+  message: Message;
+  /**
+ * ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). The
+ * client's dedup watermark: a chunk at or below it is already in here.
+ */
+  chunk_seq: number;
+  /**
+ * BlockBase is the ABSOLUTE index of Message.Blocks[0] in the turn's own block array.
+ * The cap keeps the TAIL of that array and re-indexes it from zero, while a live
+ * message_chunk keeps naming the absolute index (MessageChunkPayload.BlockIndex), so a
+ * client holding this window subtracts the base to place one.
+ * //
+ * Unconditional like Truncated, and for the same reason: these are two facts about ONE
+ * transfer, so they cannot have different presence rules. A cut is the exceptional
+ * case, which makes a base of 0 the ordinary answer — and a POSITIVE one, stating that
+ * the window starts at 0.
+ * //
+ * NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent base
+ * cannot be read as 0, which is the misalignment this field exists to remove.
+ */
+  block_base: number;
+  /**
+ * Truncated reports that the cap withheld part of Message, so the payload carries
+ * the TAIL of the turn and the rest arrives with message_appended.
+ * //
+ * A `true` is the EXCEPTIONAL case. The caps this field reports on (internal/agent's
+ * liveTurnGETCaps) are sized above the measured per-dimension maxima precisely so an
+ * ordinary turn is not cut, so what a `true` names is a turn past a ~10.1 MiB runaway
+ * ceiling rather than a routine tail.
+ * //
+ * A `false` is therefore load-bearing rather than merely an absence of withholding: it
+ * is a positive statement that this MESSAGE is whole, and it RETRACTS a truncation
+ * marker an earlier GET set for the same message id — a later, wider read outranks the
+ * earlier one, so a reader holding a marker for this message id must drop it
+ * (static-src/store-load.ts adoptLiveTurn).
+ * //
+ * NEVER `omitempty`: an absent marker must not be readable as "complete", which is
+ * what makes a capped payload admissible.
+ */
+  truncated: boolean;
 }
 
 /**
@@ -854,6 +1139,23 @@ export interface MCPToolIdentity {
   tool_name: string;
 }
 
+/** Match is one chat that matched, with the evidence for showing it. */
+export interface Match {
+  /**
+ * Best is the earliest hit (bestHit): the line the row shows and the jump target.
+ * Absent on a title-only match, which has no line inside the transcript.
+ */
+  best?: Hit;
+  name: string;
+  id: string;
+  /** Hits is every occurrence the chat holds, so a row can say "and 11 more". */
+  hits: number;
+  /** Score ranks the row; see scoreChat for what it balances. */
+  score: number;
+  /** UpdatedAt breaks ties toward the more recent conversation. */
+  updated_at: number;
+}
+
 /**
  * Message is one entry in a chat transcript. Tool calls are embedded in assistant
  * messages, not standalone; an event message carries an EventKind.
@@ -894,6 +1196,19 @@ export interface Message {
  */
   steer_origin?: SteerOrigin;
   id: string;
+  /**
+ * KASMessageID is the id the agent's own session log holds this message under,
+ * and the ONLY id `_kiro/checkpoint/revertMultiple` accepts — it matches
+ * `record.id` in that log, while ID is a different space the agent never sees
+ * (`session/prompt` carries no field a client can mint a record id through).
+ * Valid only for the session that minted it, so RecordSession drops every one
+ * at a retirement. Present on a prompt-class user row, a steer row and an
+ * assistant row, live or `session/load`-projected. On an assistant row it is
+ * the replay merge's pairing key and never a revert target, since
+ * userMessageIndex requires RoleUser. No client reads it: the client keeps
+ * sending its own `message_id` on `rewind_chat` and the server maps.
+ */
+  kas_message_id?: string;
   /**
  * TurnOutcome is how this turn ENDED, stamped on the message that finalized
  * it: the durable half of a fact otherwise carried only by the live
@@ -979,8 +1294,8 @@ export interface MessageChunkPayload {
   agent_subtask_id?: string;
   block_index: number;
   /**
- * Seq is the delta's 1-based sequence number within the turn. A client that ingested a
- * connect-time turn_state snapshot drops chunks at or below its chunk_seq watermark —
+ * Seq is the delta's 1-based sequence number within the turn. A client that adopted a
+ * live_turn off the transcript GET drops chunks at or below its chunk_seq watermark —
  * they are already folded in — instead of double-appending them.
  */
   seq?: number;
@@ -1050,6 +1365,18 @@ export interface PR {
  * rather than arming it twice.
  */
   auto_merge_armed?: boolean;
+}
+
+/**
+ * PendingSnapshotPayload is the payload for type="pending_snapshot": every
+ * pending item across every chat, each a complete ServerEvent envelope of one
+ * of the five ask kinds (permission_needed, elicitation_needed,
+ * user_input_needed, run_input_needed, steer_queued). Raw so the client can
+ * re-dispatch each through the decoder it already has for that type; the
+ * stamp rides the snapshot's own envelope, never an item.
+ */
+export interface PendingSnapshotPayload {
+  items: unknown[];
 }
 
 /** PermissionNeededPayload is the payload for type="permission_needed". */
@@ -1253,6 +1580,96 @@ export interface RecipesResponse {
 export interface RefusalInfo {
   category?: string;
   recommended_model?: string;
+}
+
+/**
+ * RegistryEntry is the browser-facing shape of one search result.
+ * //
+ * Status carries the upstream lifecycle verdict, and only when it is NOT
+ * "active": the badge is its one consumer and an absent status reads as active
+ * anyway, so emitting the common case would put a constant on every row. See
+ * registryStatusActive.
+ */
+export interface RegistryEntry {
+  name: string;
+  title?: string;
+  description?: string;
+  version?: string;
+  repository?: string;
+  status?: string;
+  status_message?: string;
+  packages?: RegistryPackage[];
+  remotes?: RegistryRemote[];
+}
+
+/**
+ * RegistryEnvVar / RegistryHeader describe a configurable field the user
+ * must fill in before the server will run.
+ */
+export interface RegistryEnvVar {
+  name: string;
+  description?: string;
+  format?: string;
+  required?: boolean;
+  secret?: boolean;
+}
+
+/** RegistryHeader describes an HTTP header the user must configure before the remote server will run. */
+export interface RegistryHeader {
+  name: string;
+  description?: string;
+  value?: string;
+  required?: boolean;
+  secret?: boolean;
+}
+
+/**
+ * RegistryPackage is one install option from a stdio-speaking server.
+ * Only npm is surfaced (supportedPackageRegistries); everything else is
+ * hidden so the UI doesn't offer install paths we can't fulfil on the
+ * container.
+ */
+export interface RegistryPackage {
+  registry_type: string;
+  identifier: string;
+  version?: string;
+  env_vars?: RegistryEnvVar[];
+}
+
+/** RegistryRemote is one remote transport (http/sse) option. */
+export interface RegistryRemote {
+  type: string;
+  url: string;
+  headers?: RegistryHeader[];
+}
+
+/**
+ * RegistrySearchFailure is the 502 body. Error stays the fixed sentinel,
+ * because upstream error text can leak operational signals; Reason is the
+ * coarse class that lets the browser tell "wait" from "narrow the query";
+ * RetryAfter is upstream's own interval in seconds, when it sent one.
+ */
+export interface RegistrySearchFailure {
+  error: string;
+  reason: RegistryFailureReason;
+  retry_after?: number;
+}
+
+/** RegistrySearchResult is the browser-facing reply to one search. */
+export interface RegistrySearchResult {
+  servers: RegistryEntry[];
+  /**
+ * Filtered counts the rows the install-capability filter dropped from the
+ * ones the caller asked for, so an empty Servers beside Filtered > 0 means
+ * "matched, but nothing here is installable", not "no such server".
+ */
+  filtered: number;
+  /**
+ * Truncated means upstream held more matches than Servers shows. This
+ * surface scans nothing, so it carries no scanned or matched count:
+ * upstream reports no total.
+ */
+  truncated: boolean;
 }
 
 /** Release represents a tagged release. */
@@ -1603,6 +2020,35 @@ export interface SafetyStatusPayload {
 }
 
 /**
+ * SearchAllResult is GET /api/chats/search's reply: the ranked chats, cut at
+ * maxChatResults, beside the tally over the chats the answer covers.
+ */
+export interface SearchAllResult {
+  matches: Match[];
+  /**
+ * Scanned is how many units the scan READ, whole or in part: chats, files,
+ * messages; or whose index entry, built from one such read, stood in for it.
+ * A unit it read and found out of scope (a binary) is scanned. A unit whose
+ * name no longer held what the walk classified (vanished, swapped, not a
+ * regular file) is a skip the answer covers, and stays scanned. A unit it
+ * meant to read and could not (a chat over chatFileCap, a permission or I/O
+ * error on the read) is not scanned, and Truncated is what says so.
+ */
+  scanned: number;
+  /**
+ * Matched is how many rows Matches would hold had nothing cut it: the same
+ * unit as Matches (hits, matching lines, chats). The list is cut iff
+ * Matched > len(Matches). Truncated never means a cut.
+ */
+  matched: number;
+  /**
+ * Truncated is true when the scan did not read everything it was asked to:
+ * a cap on files or chats, a file read partially or not at all, a dead context.
+ */
+  truncated: boolean;
+}
+
+/**
  * SearchHit is one catalog search result. A projection of
  * toolbelt.CatalogEntry without the embedded install definition (an
  * implementation detail no client needs).
@@ -1664,6 +2110,43 @@ export interface SearchHit {
 export interface SearchResponse {
   results: SearchHit[];
   apt_available: boolean;
+  /**
+ * Truncated reports a CUT: some block in Results matched more rows than
+ * the reply carries, so a client showing "N results" is showing fewer than
+ * the query found. It is judged only over the blocks the reply holds, so
+ * an unavailable block the caller did not ask for never sets it, and a
+ * reply carrying every row the query matched is never flagged.
+ */
+  truncated: boolean;
+}
+
+/**
+ * SearchResult is GET /api/chats/{id}/search's reply: the hits, cut at
+ * maxSearchHits, beside the tally that says how many there were.
+ */
+export interface SearchResult {
+  matches: Hit[];
+  /**
+ * Scanned is how many units the scan READ, whole or in part: chats, files,
+ * messages; or whose index entry, built from one such read, stood in for it.
+ * A unit it read and found out of scope (a binary) is scanned. A unit whose
+ * name no longer held what the walk classified (vanished, swapped, not a
+ * regular file) is a skip the answer covers, and stays scanned. A unit it
+ * meant to read and could not (a chat over chatFileCap, a permission or I/O
+ * error on the read) is not scanned, and Truncated is what says so.
+ */
+  scanned: number;
+  /**
+ * Matched is how many rows Matches would hold had nothing cut it: the same
+ * unit as Matches (hits, matching lines, chats). The list is cut iff
+ * Matched > len(Matches). Truncated never means a cut.
+ */
+  matched: number;
+  /**
+ * Truncated is true when the scan did not read everything it was asked to:
+ * a cap on files or chats, a file read partially or not at all, a dead context.
+ */
+  truncated: boolean;
 }
 
 /**
@@ -1748,6 +2231,21 @@ export interface SessionModel {
   has_effort?: boolean;
 }
 
+/** StatusRow is one chat's retained status inside a StatusSnapshotPayload. */
+export interface StatusRow {
+  chat_id: string;
+  status: string;
+  description?: string;
+}
+
+/**
+ * StatusSnapshotPayload is the payload for type="status_snapshot": every
+ * retained waiting_on_user row for a chat that is not busy.
+ */
+export interface StatusSnapshotPayload {
+  rows: StatusRow[];
+}
+
 /**
  * SteerClearedPayload is the payload for type="steer_cleared": the steers named here were
  * dropped from the buffer without reaching the model. KAS clears at every turn boundary and on
@@ -1801,6 +2299,19 @@ export interface SteerQueuedPayload {
   origin: SteerOrigin;
 }
 
+/**
+ * SubjectStamp names one digest subject at one version. Kind and Ref spell the
+ * subject the way internal/subject does; Version is opaque to the client and
+ * compared by equality only. Epoch is filled by REST responses alone, so a
+ * response issued under a previous hub epoch is refused by the client's map.
+ */
+export interface SubjectStamp {
+  kind: string;
+  ref: string;
+  version: string;
+  epoch?: string;
+}
+
 /** SystemTool is one image-baked binary surfaced read-only (Config.System). */
 export interface SystemTool {
   name: string;
@@ -1821,6 +2332,11 @@ export interface SystemTool {
  * (someone closed the last tab) and a missing field would read as "no answer".
  */
 export interface TabList {
+  /**
+ * Subject is the `tabs` digest stamp with the hub epoch: the same Version
+ * as below, spelled the way the client's version map reads it.
+ */
+  subject?: SubjectStamp;
   tabs: TabSubject[];
   version: number;
 }
@@ -2061,12 +2577,11 @@ export interface ToolCall {
   ts: number;
   duration_ms?: number;
   /**
- * OutputBytes is the PERSISTED output's length and DiffCount the persisted
- * number of diffs: what the reveal will fetch. Set ONLY alongside HasFull; where
- * the store also cut the call, Truncated carries the size before THAT cut.
+ * OutputBytes is the PERSISTED output's length: what the reveal will fetch, and
+ * what says the bulk holds output at all. Set ONLY alongside HasFull; where the
+ * store also cut the call, Truncated carries the size before THAT cut.
  */
   output_bytes?: number;
-  diff_count?: number;
   /**
  * HasFull says Input, Output and Diffs here are a PREVIEW, and the whole of what
  * the record kept is at GET /api/chats/{id}/tools/{id}. Set by the transcript
@@ -2119,8 +2634,9 @@ export interface ToolCallPayload {
 /**
  * ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA addressed by
  * id, carrying only what this frame changed. Every field is omitempty and means
- * "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. turn_state
- * remains the whole-object channel — a reconnecting client has no delta base.
+ * "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. The transcript
+ * GET's live_turn remains the whole-object channel — a reconnecting client has no delta
+ * base.
  */
 export interface ToolCallUpdatePayload {
   /** The three metadata blocks, each sent whole when it changed; none accumulates. */
@@ -2374,47 +2890,8 @@ export interface TurnEndedPayload {
  * chat's own conversational turn: the reader's own turn may be live right now, and
  * every chat-scoped teardown would tear down THAT turn's state.
  * //
- * Same word TurnStatePayload already uses for the same fact, so a client learns one
- * name for it. Absent means "this chat's own turn", which is what an older server's
- * frame must keep meaning.
- */
-  workflow_step?: boolean;
-}
-
-/**
- * TurnStatePayload is the payload for type="turn_state": one per busy chat in the SSE
- * OnConnect replay, NEVER broadcast live, so a reconnecting client renders the accumulated
- * turn immediately and learns authoritatively that the chat is busy.
- */
-export interface TurnStatePayload {
-  /**
- * Message is the in-flight assistant message as accumulated so far. Omitted when the
- * turn has produced no content yet (busy signal only).
- */
-  message?: Message;
-  /**
- * Status/Description replay the agent's last self-declared chat_status. Authoritative
- * here because the turn is verifiably in flight, unlike the live event, which is
- * cleared on gaps precisely so a bare replay cannot resurrect a stale "in_progress".
- */
-  status?: string;
-  description?: string;
-  /** ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq). */
-  chunk_seq?: number;
-  /**
- * Truncated reports that the connect-time cap withheld part of Message: the payload
- * carries the TAIL of the in-flight turn, and the rest arrives with message_appended.
- * //
- * NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent marker
- * can never be read as "complete", which is what makes the cap admissible. A property
- * of this TRANSFER, so it never moves onto Message, which chat files persist verbatim.
- */
-  truncated: boolean;
-  /**
- * WorkflowStep marks a turn a workflow RUN opened on the launching chat's session.
- * Contract: APPLY the snapshot, do NOT set thinking. The snapshot is the only copy of
- * an in-flight step's transcript, so the event must still be emitted — but the chat's
- * own agent is idle, and a client reading it as busy says so for the whole run.
+ * Absent means "this chat's own turn", which is what an older server's frame must
+ * keep meaning.
  */
   workflow_step?: boolean;
 }

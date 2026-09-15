@@ -116,7 +116,9 @@ describe("hue comes off the severity table, on every surface", () => {
     );
 
     const wash = ruleContaining(turns, '.turn-footer[data-severity="broken"]');
-    expect(wash.body).toMatch(/background:\s*color-mix/u);
+    // The tinted-band token, never a `color-mix()` of the ink into the band: a mix
+    // moves the band's lightness and the info panel's hint ink sits on it.
+    expect(wash.body).toMatch(/background:\s*var\(--c-band-broken\)/u);
   });
 
   it("never paints broken and stopped the same, on any surface", () => {

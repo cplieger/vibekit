@@ -39,14 +39,16 @@ const FIVE: SessionEffortLevel[] = [
   { id: "max", name: "Max" },
 ];
 
-/** The geometry per pointer tier, all of it derived in 15-input.css from two
- *  tokens: the BAR is `--ctl-h-sm` (01-tokens.css, 1.5rem fine / 2.25rem coarse),
- *  the INSET is `0.125rem`, the KNOB is the bar minus the inset on both edges, and the
- *  LINE the bar sits in is floored at `--hit-floor` because the whole track answers
- *  a tap while the knob is deliberately under that floor. */
+/** The geometry per pointer tier, all of it derived in 15-input.css from ONE token:
+ *  the BAR is `--ctl-h-sm` (01-tokens.css, 1.5rem fine / 2.25rem coarse), the KNOB is
+ *  the bar's own height on both axes, and the LINE the bar sits in is floored at
+ *  `--hit-floor` because the whole track answers a tap. The knob used to clear the bar
+ *  by a 2px inset on all four edges; it fills the bar now, so on the fine tier — where
+ *  the bar and the floor are both 1.5rem — the handle is exactly the line's height and
+ *  only the coarse tier still has the bar sitting inside a taller line. */
 const TIER = {
-  fine: { line: 24, bar: 24, knob: 20, inset: 2 },
-  coarse: { line: 44, bar: 36, knob: 32, inset: 2 },
+  fine: { line: 24, bar: 24, knob: 24 },
+  coarse: { line: 44, bar: 36, knob: 36 },
 } as const;
 
 let style: HTMLStyleElement;
@@ -126,6 +128,31 @@ function caption(): string {
 /** The bar's own box, off the `::before` that paints it. */
 function barHeight(): number {
   return parseFloat(getComputedStyle(track(), "::before").blockSize);
+}
+
+/** The fill's colour-stop POSITIONS, in order, off the bar's computed gradient. The
+ *  first item of that list is the direction and is dropped; every other is
+ *  `<colour> <position>`, and each colour computes to a space-separated `oklch(...)`,
+ *  so a comma in the string only ever separates two stops. */
+function fillStops(): readonly string[] {
+  const img = getComputedStyle(track(), "::before").backgroundImage;
+  const inner = img.slice(img.indexOf("(") + 1, img.lastIndexOf(")"));
+  return inner
+    .split(",")
+    .slice(1)
+    .map((stop) => stop.slice(stop.indexOf(")") + 1).trim());
+}
+
+/** A stop's position in px from the bar's start. Chromium serializes these as `50%`
+ *  or `calc(25% + 6px)`, so Typed OM resolves the two terms and this file carries no
+ *  calc parser of its own. The bar's border box is the track's content box
+ *  (`inset-inline: 0`) and `background-origin: border-box` puts the gradient line on
+ *  it, so `clientWidth` is what a percentage there resolves against. */
+function stopPx(position: string): number {
+  const sum = CSSNumericValue.parse(position).toSum("percent", "px");
+  const pct = (sum.values[0] as CSSUnitValue).value;
+  const px = (sum.values[1] as CSSUnitValue).value;
+  return (pct / 100) * track().clientWidth + px;
 }
 
 /** Any CSS colour string as 8-bit sRGB. Chromium computes `color-mix(in oklch, …)`
@@ -255,14 +282,18 @@ describe("the knob's size", () => {
     expect(knob().offsetHeight).toBe(TIER.fine.knob);
   });
 
-  it("is UNDER the universal hit floor, and the track carries the target instead", () => {
+  it("takes the BAR's height rather than the hit floor's, and the track carries the target", () => {
     // The floor is physical on purpose and 15-input.css precedes it in MANIFEST
     // order, so a logical `min-inline-size` override would lose on source order.
+    // Overriding it is what keeps the handle the size of the box it slides in: on the
+    // coarse tier the floor is 44px against a 36px bar, so an inherited floor would
+    // make the handle outgrow the bar (the case the coarse block below measures).
     mount(FIVE, "high");
     const k = getComputedStyle(knob());
     expect(parseFloat(k.minWidth), "the floor is overridden, not inherited").toBe(0);
     expect(parseFloat(k.minHeight)).toBe(0);
-    expect(knob().offsetHeight).toBeLessThan(TIER.fine.line);
+    expect(knob().offsetHeight, "the bar's height, not the line's").toBe(TIER.fine.bar);
+    expect(knob().offsetHeight).toBeLessThanOrEqual(TIER.fine.line);
     // The tap target is the whole track, which carries the one pointerdown handler,
     // and it is what meets the floor.
     expect(track().offsetHeight).toBe(TIER.fine.line);
@@ -287,14 +318,14 @@ describe("the knob's size", () => {
     expect(track().clientWidth, "the bar took the width instead").toBeGreaterThan(400);
   });
 
-  it("SURROUNDS the knob: the bar is the box, the knob slides inside it", () => {
-    // The knob clears the bar by `--effort-knob-inset` on all four edges at every
-    // tier, which is what makes the bar read as a container rather than a segment.
+  it("FILLS the bar's height: the handle is the groove, not a dot inside it", () => {
+    // The handle's band and the bar's band are the same band at every tier, which is
+    // what makes it read as the thing filling the groove. It used to clear the bar by
+    // 2px on all four edges, and that clearance is what the user reported twice.
     mount(FIVE, "high");
     const bar = barHeight();
-    expect(bar, "the bar is taller than the knob").toBe(TIER.fine.bar);
-    expect(knob().offsetHeight).toBe(TIER.fine.knob);
-    expect(bar - knob().offsetHeight).toBe(2 * TIER.fine.inset);
+    expect(bar).toBe(TIER.fine.bar);
+    expect(knob().offsetHeight, "the handle is the bar's own height").toBe(bar);
 
     for (const level of FIVE) {
       slider.setActive(level.id);
@@ -304,44 +335,54 @@ describe("the knob's size", () => {
       // The BAR's own band, centred in the line the track reserves.
       const barTop = (t.top + t.bottom) / 2 - bar / 2;
       const barBottom = barTop + bar;
-      expect(k.top - barTop, `${level.id}: inset from the bar's top`).toBeCloseTo(
-        TIER.fine.inset,
-        1,
-      );
-      expect(barBottom - k.bottom, `${level.id}: inset from the bar's bottom`).toBeCloseTo(
-        TIER.fine.inset,
-        1,
-      );
+      expect(k.top, `${level.id}: flush with the bar's top`).toBeCloseTo(barTop, 1);
+      expect(k.bottom, `${level.id}: flush with the bar's bottom`).toBeCloseTo(barBottom, 1);
       // And nothing leaves the card's clip box.
       expect(k.top, `${level.id}: inside the card's clip box`).toBeGreaterThanOrEqual(c.top);
       expect(k.bottom, `${level.id}: inside the card's clip box`).toBeLessThanOrEqual(c.bottom);
     }
   });
 
-  it("holds the knob inside the bar at both extremes, inset and all", () => {
+  it("draws both of its edges with a border and carries no shadow", () => {
+    // The bar's groove was two inset shadows and the handle carried two drop shadows —
+    // the app's one persistent lift, and its one standing exception to the rule that a
+    // shadow marks a surface off the page. Both are borders now (user ruling, 2026-09:
+    // no other surface in the interface uses a shadow), so the control is edged the way
+    // every other surface is.
+    mount(FIVE, "high");
+    const bar = getComputedStyle(track(), "::before");
+    const k = getComputedStyle(knob());
+    expect(bar.boxShadow, "the bar's groove is its border").toBe("none");
+    expect(k.boxShadow, "the handle's lift is its border").toBe("none");
+    expect(parseFloat(bar.borderTopWidth), "the bar has one").toBe(1);
+    expect(parseFloat(k.borderTopWidth), "and so does the handle").toBe(1);
+  });
+
+  it("holds the knob inside the bar at both extremes, flush with each end", () => {
     mount(FIVE, "low");
     for (const index of [0, FIVE.length - 1]) {
       slider.setActive(FIVE[index]?.id ?? "");
       const t = track().getBoundingClientRect();
       const k = knob().getBoundingClientRect();
       expect(k.left - t.left, `tier ${String(index)} starts inside the bar`).toBeGreaterThanOrEqual(
-        TIER.fine.inset - 0.5,
+        -0.5,
       );
       expect(t.right - k.right, `tier ${String(index)} ends inside the bar`).toBeGreaterThanOrEqual(
-        TIER.fine.inset - 0.5,
+        -0.5,
       );
     }
-    // The two ends really are the ends: the low tier sits ON the start inset and the
-    // top tier on the end one, so the travel spends the whole bar.
+    // The two ends really are the ends: with the handle flush to the bar there is no
+    // inset left to spend, so the low tier sits on the start edge and the top tier on
+    // the end one, and the travel is the bar's whole width minus the handle.
     slider.setActive("low");
     expect(knob().getBoundingClientRect().left - track().getBoundingClientRect().left).toBeCloseTo(
-      TIER.fine.inset,
+      0,
       1,
     );
     slider.setActive("max");
     expect(
       track().getBoundingClientRect().right - knob().getBoundingClientRect().right,
-    ).toBeCloseTo(TIER.fine.inset, 1);
+    ).toBeCloseTo(0, 1);
   });
 
   it("FILLS to the knob and gains intensity, bounded by the handle's contrast", () => {
@@ -397,6 +438,27 @@ describe("the knob's size", () => {
     });
     delete track().dataset["dragging"];
     expect(new Set(images).size, "one gradient per tier").toBe(FIVE.length);
+  });
+
+  it("ENDS the fill at the handle's centre, with nothing leaking past it", () => {
+    // The boundary is the handle's own centre, so the seam sits under the handle and
+    // never shows. It replaced a `--effort-pos + 8%` shoulder that ran PAST the handle
+    // at every tier — colour leaking out on the trailing side — and past 100% at the
+    // top one. The oracle is LAYOUT, the handle's rendered centre, against the
+    // gradient's own computed stop, so neither side is derived from the other.
+    mount(FIVE, "low");
+    for (const level of FIVE) {
+      slider.setActive(level.id);
+      const stops = fillStops();
+      expect(stops, "warm at the start, the boundary twice, idle to the end").toHaveLength(4);
+      expect(stops[1], `${level.id}: one hard edge rather than a shoulder`).toBe(stops[2]);
+      const k = knob().getBoundingClientRect();
+      const t = track().getBoundingClientRect();
+      expect(
+        stopPx(stops[1] as string),
+        `${level.id}: the fill ends where the handle's centre is`,
+      ).toBeCloseTo((k.left + k.right) / 2 - t.left, 1);
+    }
   });
 
   it("marks each tier where the knob actually lands", () => {
@@ -461,9 +523,9 @@ describe("the knob's size", () => {
       expect(kr.left, `${id} starts inside the track`).toBeGreaterThanOrEqual(tr.left);
       expect(kr.right, `${id} ends inside the track`).toBeLessThanOrEqual(tr.right);
     }
-    // The mechanism: the track's floor is the knob PLUS its inset on both edges, so
-    // the travel can never invert.
-    expect(parseFloat(getComputedStyle(t).minInlineSize)).toBe(k.offsetWidth + 2 * TIER.fine.inset);
+    // The mechanism: the track's floor is the knob itself, so the travel can never
+    // invert.
+    expect(parseFloat(getComputedStyle(t).minInlineSize)).toBe(k.offsetWidth);
     expect(t.clientWidth).toBeGreaterThan(k.offsetWidth);
   });
 
@@ -490,9 +552,9 @@ describe("one tier", () => {
     mount([{ id: "high", name: "High" }], "high");
     const t = track();
     const k = knob();
-    // The bar is as wide as the knob plus its inset: one tier is not a choice, so
-    // drawing travel would claim a range the vocabulary does not offer.
-    expect(t.clientWidth).toBe(k.offsetWidth + 2 * TIER.fine.inset);
+    // The bar is exactly as wide as the knob: one tier is not a choice, so drawing
+    // travel would claim a range the vocabulary does not offer.
+    expect(t.clientWidth).toBe(k.offsetWidth);
     expect(k.offsetWidth).toBe(TIER.fine.knob);
     expect(caption(), "the caption still names the tier in force").toBe("High");
     expect(k.getAttribute("aria-valuemin")).toBe("0");
@@ -501,8 +563,8 @@ describe("one tier", () => {
     // And the knob cannot drift, because the travel is zero.
     const kr = k.getBoundingClientRect();
     const tr = t.getBoundingClientRect();
-    expect(kr.left - tr.left).toBeCloseTo(TIER.fine.inset, 1);
-    expect(tr.right - kr.right).toBeCloseTo(TIER.fine.inset, 1);
+    expect(kr.left - tr.left).toBeCloseTo(0, 1);
+    expect(tr.right - kr.right).toBeCloseTo(0, 1);
   });
 
   it("cannot be stepped off its one tier", async () => {

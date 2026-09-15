@@ -146,6 +146,55 @@ export function ruleBody(css: string, selector: string): string {
 }
 
 /**
+ * The BODY of the at-rule whose prelude contains `prelude`, as CSS text.
+ *
+ * For a suite that has to COMPUTE against a media-gated block. The browser
+ * project's viewport is fixed, so a `width <= 48rem` query never matches and the
+ * whole block is inert under `mountAppCSS`; mounting its body unwrapped after the
+ * bundle makes those rules the last word, which is what a phone gives them, so a
+ * real cascade can answer a question about the narrow arm. `ruleContaining` reads
+ * such a block as SOURCE instead, and that is the weaker question — it cannot see
+ * whether a rule paints anything.
+ *
+ * Exactly one match is required, so a prelude that has gained a second home is a
+ * failure rather than a silently-picked first hit.
+ */
+export function atRuleBody(css: string, prelude: string): string {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, " ");
+  const found: string[] = [];
+  let depth = 0;
+  let selStart = 0;
+  let bodyStart = 0;
+  let sel = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") {
+      if (depth === 0) {
+        sel = text.slice(selStart, i).trim();
+        bodyStart = i + 1;
+      }
+      depth++;
+    } else if (text[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        if (sel.startsWith("@") && sel.includes(prelude)) {
+          found.push(text.slice(bodyStart, i));
+        }
+        selStart = i + 1;
+      }
+    }
+  }
+  expect(found.length, `expected exactly one at-rule matching ${prelude}`).toBe(1);
+  const [only] = found;
+  if (only === undefined) {
+    // The expect above has already failed by the time this can run; stating the
+    // invariant as a throw is what lets the return type be the body rather than a
+    // maybe.
+    throw new Error(`no at-rule matching ${prelude}`);
+  }
+  return only;
+}
+
+/**
  * The rule whose SELECTOR LIST contains `selector`, with its body.
  *
  * This is the association `ruleBody` cannot make: `ruleBody` keys on an exact

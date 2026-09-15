@@ -168,57 +168,10 @@ export function parentPath(p: string): string {
  *  setting written by an older build resolve instead of quietly reviving the
  *  rootless space. "." is accepted for the same reason `/api/files` accepts it. */
 export function normalizeDirPath(raw: string): string {
-  const trimmed = raw.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+  // Interior runs collapse too, so a pasted `/files/workspace//x` cannot become a
+  // second tab ref for a folder a tab is already open at.
+  const trimmed = raw.trim().replace(/\/+/g, "/").replace(/^\//, "").replace(/\/$/, "");
   return trimmed === "" || trimmed === "." ? FB_ROOT : `/${trimmed}`;
-}
-
-/** Expand a set of workspace-relative paths with every ancestor directory.
- *
- *  Including the ancestors is what lets ONE matching rule serve a file row and a
- *  folder row alike, without the browser needing to know where the workspace
- *  root is — which it genuinely does not: the listing's paths come from an
- *  allow-list of mounts, so hardcoding `/workspace` would be wrong the moment a
- *  second root is granted. */
-export function withAncestors(rels: Iterable<string>): Set<string> {
-  const out = new Set<string>();
-  for (const rel of rels) {
-    out.add(rel);
-    let cut = rel.lastIndexOf("/");
-    while (cut > 0) {
-      const dir = rel.slice(0, cut);
-      out.add(dir);
-      cut = dir.lastIndexOf("/");
-    }
-  }
-  return out;
-}
-
-/** Whether an absolute row path is in a set of workspace-relative paths.
- *
- *  A suffix rule on a `/`-delimited boundary, so `src/a.go` matches
- *  `/workspace/src/a.go` but never `/workspace/other-src/a.go`. The rule is
- *  load-bearing for the multi-mount case: a `/config/...` row has no
- *  workspace-relative form, so it must not match a workspace-relative set.
- *
- *  Generates the row's OWN suffixes and probes the set, rather than walking the
- *  set testing `endsWith`: the set is every path this chat touched plus every
- *  ancestor, which runs to hundreds after a long session, while a row's depth is
- *  about six. Called once per row per render pass, so the difference is
- *  O(rows x depth) against O(rows x |changed|). */
-export function matchesRelative(absPath: string, rels: ReadonlySet<string>): boolean {
-  if (rels.has(absPath)) {
-    return true;
-  }
-  // Every `/`-boundary suffix of the row's path, shortest-first from each
-  // separator. `cut + 1` skips the separator itself, which is what makes
-  // "other-src/a.go" fail to match "src/a.go" — the only boundary offered is the
-  // one after the `/`, never mid-segment.
-  for (let cut = absPath.indexOf("/"); cut !== -1; cut = absPath.indexOf("/", cut + 1)) {
-    if (rels.has(absPath.slice(cut + 1))) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /** Build an error row element safely (no innerHTML with user content). */

@@ -23,6 +23,9 @@ func (s *Store) archiveSvc() *archive.Service {
 		if s.hasOpenTab != nil {
 			opts = append(opts, archive.WithOpenTabs(s.hasOpenTab))
 		}
+		if s.broadcast != nil {
+			opts = append(opts, archive.WithBroadcaster(s.broadcast.Broadcast))
+		}
 		s.archive = archive.New(s, opts...)
 	})
 	return s.archive

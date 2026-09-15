@@ -69,7 +69,13 @@ describe("every region whose content is pending says so", () => {
   });
 
   it("gives the sidebar identity row a pending shimmer", () => {
-    const footer = slice(indexHtml, '<a id="user-email"', "</a>");
+    // BOTH markers changed, and changing only the opening one would leave this
+    // case passing VACUOUSLY: the first `</a>` after the address is now
+    // `#st-account`'s, so the fragment would capture the rest of the button plus the
+    // whole card, and a `.skeleton.sidebar-email-skeleton` anywhere in there would
+    // satisfy the assertion. With both changed the first `</span>` closes the
+    // skeleton itself and the fragment is exactly the identity row.
+    const footer = slice(indexHtml, '<span id="user-email"', "</span>");
     const pending = footer.querySelector(".skeleton.sidebar-email-skeleton");
     expect(pending, "the identity row is pending until /api/whoami answers").not.toBeNull();
     expect(pending?.getAttribute("aria-hidden")).toBe("true");

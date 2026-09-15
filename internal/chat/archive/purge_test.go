@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -125,6 +127,42 @@ func TestPurge_NilOnPurgeCallback(t *testing.T) {
 
 	if exists(t, chatPath) {
 		t.Errorf("old chat survived purge with nil callback: %s", chatPath)
+	}
+}
+
+// TestPurge_BroadcastsChatDeletedStampedFromRemove pins the frame a purge
+// owes every connected client: without it a client keeps a History row for a
+// chat that is gone, and a digest holding the old `chats` version would read
+// unchanged. The stamp is the version Remove minted, never a later read.
+func TestPurge_BroadcastsChatDeletedStampedFromRemove(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		frames []vibekit.ServerEvent
+	)
+	svc, store, dir := newPurgeTestService(t, WithBroadcaster(func(_ context.Context, evt vibekit.ServerEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		frames = append(frames, evt)
+	}))
+	writeAgedChat(t, dir, "gone", 48*time.Hour)
+	writeAgedChat(t, dir, "kept", 1*time.Hour)
+
+	svc.Purge(t.Context(), 24*time.Hour)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(frames) != 1 {
+		t.Fatalf("Purge broadcast %d frames, want exactly 1 chat_deleted", len(frames))
+	}
+	got := frames[0]
+	if got.Type != vibekit.EventChatDeleted || got.ChatID != "gone" {
+		t.Errorf("frame = %s for %q, want chat_deleted for \"gone\"", got.Type, got.ChatID)
+	}
+	store.mu.Lock()
+	want := vibekit.SubjectStamp{Kind: "chats", Version: strconv.Itoa(store.removals)}
+	store.mu.Unlock()
+	if got.Subject == nil || *got.Subject != want {
+		t.Errorf("chat_deleted Subject = %+v, want %+v", got.Subject, want)
 	}
 }
 

@@ -93,7 +93,7 @@ const OUTCOMES: TurnOutcome[] = [
 describe("the footer stamps its severity", () => {
   it("writes data-severity from the shared table, for every outcome", () => {
     for (const outcome of OUTCOMES) {
-      const footer = buildTurnFooter({ outcome, commands: 1 });
+      const footer = buildTurnFooter({ outcome });
       expect(footer.dataset["severity"], outcome).toBe(severityOf(outcome));
       // Both attributes, because they answer different questions: `data-outcome`
       // still carries the lead WORD and the one `unknown` hue exception.
@@ -106,7 +106,7 @@ describe("the footer stamps its severity", () => {
     // already defaults `data-outcome` to `completed`. The severity has to default
     // the same way or a legacy transcript paints an outcome-less footer with a
     // stopped wash.
-    const footer = buildTurnFooter({ commands: 1 });
+    const footer = buildTurnFooter({ kindCounts: { execute: 1 } });
     expect(footer.dataset["outcome"]).toBe("completed");
     expect(footer.dataset["severity"]).toBe("clean");
   });

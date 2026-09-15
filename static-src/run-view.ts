@@ -39,7 +39,7 @@ import {
 } from "./run-store.js";
 import type { RunControlsResponse } from "./wire/types.gen.js";
 import { refreshRunDots, trackRun } from "./run-dots.js";
-import { buildPath } from "./router.js";
+import { buildPath } from "./route-path.js";
 import { iconEl } from "./icon-el.js";
 import { ICON_EXTERNAL } from "./icons.js";
 import { parseStepSubtask } from "./step-subtask.js";
@@ -235,12 +235,15 @@ function installViewEffect(): void {
  *  door rather than a disclosure. Recorded as a one-shot request rather than held,
  *  because a permanent pick would fight the reader the moment they clicked
  *  elsewhere in the tree. */
+/** RETURNS the open, so a DEEP LINK can await it — see `subagent-view.ts`
+ *  `openSubagentView` for the measurement. Every other caller is a click with nothing to
+ *  wait for and voids it. */
 export function openRunView(
   workflowID: string,
   name: string,
   parentChatID = "",
   focusNode = "",
-): void {
+): Promise<void> {
   // Replaces any earlier request outright: the last door clicked is the one the
   // reader is waiting on, and two pending picks for one run is a state nothing
   // could resolve honestly.
@@ -255,7 +258,7 @@ export function openRunView(
   // The PARENT is a tab id, and a chat id is no longer one — so the nesting
   // question and the id it needs are the same lookup.
   const parentTab = parentChat === "" ? "" : tabIdFor("chat", parentChat);
-  void openRunTab(
+  return openRunTab(
     workflowID,
     name,
     parentTab === "" ? { owns: false } : { parent: parentTab, owns: false },
@@ -497,7 +500,8 @@ function stepEmptyNote(node: ExecNode): string {
  *
  *  NO `#turn-{n}` permalink, and the reason CHANGED: `Turn.n` is session-absolute now
  *  (`turns.ts` `TurnWindowBase`), so a computed anchor names the right turn but still
- *  resolves nowhere — `router.ts parseHashLine` matches only `/^#L(\d+)/`. */
+ *  resolves nowhere — `route-path.ts`'s private `parseHashLine` matches only
+ *  `/^#L(\d+)/`. */
 function stepEmptyAction(node: ExecNode): HTMLElement | null {
   if (node.transcript !== true || !shownRunChatParented || neverRan(node.state)) {
     return null;

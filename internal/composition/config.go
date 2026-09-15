@@ -15,7 +15,8 @@ import (
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/filebrowse"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // Config holds all environment/flag values needed to build the app.
@@ -83,9 +84,9 @@ type Config struct {
 	BridgeEnvAllow map[string]struct{}
 	// BrowseRoots is the file browser's allow-list: the granted
 	// directories the /api/file* surface can see. Always WorkDir +
-	// ConfigDir, plus any extra grants from VIBEKIT_BROWSE_ROOTS
-	// (colon-separated absolute paths, e.g. "/tmp:/data"). Everything
-	// outside the grants is denied by default.
+	// ConfigDir + vibekit.DefaultUploadDir, plus any extra grants from
+	// VIBEKIT_BROWSE_ROOTS (colon-separated absolute paths, e.g.
+	// "/tmp:/data"). Everything outside the grants is denied by default.
 	BrowseRoots []string
 	// ACPArgs are operator-supplied kiro-cli launch flags from
 	// VIBEKIT_KIRO_ACP_ARGS, already filtered by bridge.ParseACPArgs (which
@@ -169,20 +170,27 @@ func bundledToolsFiles(explicit string) []string {
 	return []string{path}
 }
 
-// browseRoots assembles the file browser's allow-list: the two
+// browseRoots assembles the file browser's allow-list: the three
 // standard mounts plus any extra VIBEKIT_BROWSE_ROOTS grants. Like
 // parseTrustedProxies this is the LENIENT parser: malformed entries
 // are logged and skipped rather than aborting startup — a typo in the
-// deployment config must not take the whole UI down, and the two
+// deployment config must not take the whole UI down, and the three
 // standard mounts always survive.
+//
+// The uploads directory is a standard mount because the handler denies by
+// default: an upload with no "dir" targets vibekit.DefaultUploadDir, and an
+// ungranted target is refused with a 403 rather than redirected to whatever
+// mount does exist. It is one dedicated directory with its own os.Root, the
+// same shape /workspace and /config already have — not "/", which
+// ParseBrowseRoots and openMounts both refuse outright.
 func browseRoots(workDir, configDir, raw string) []string {
 	extra, invalid := filebrowse.ParseBrowseRoots(raw)
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed VIBEKIT_BROWSE_ROOTS entries (want absolute paths, colon-separated)",
 			"entries", invalid)
 	}
-	roots := make([]string, 0, 2+len(extra))
-	roots = append(roots, workDir, configDir)
+	roots := make([]string, 0, 3+len(extra))
+	roots = append(roots, workDir, configDir, vibekit.DefaultUploadDir)
 	return append(roots, extra...)
 }
 

@@ -231,23 +231,6 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       // exist. `undefined` is what the node runner gave it.
       openFileGitDiff: undefined,
     }));
-    vi.doMock("./tool-group.js", () => ({
-      // The same stubs the sibling doMock below installs for this module. Under
-      // Browser Mode's real linking every name tool-card.ts imports has to exist,
-      // and these three are CALLED on the path under test, so they are noops
-      // rather than undefined.
-      untrackInProgress: () => {
-        /* noop */
-      },
-      maybeCollapseGroup: () => {
-        /* noop */
-      },
-      formatDuration: (ms: number) => String(ms),
-      trackInProgress: () => {
-        /* noop */
-      },
-    }));
-
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({
       id: "t1",
@@ -283,12 +266,6 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       // exist. `undefined` is what the node runner gave it.
       openFileGitDiff: undefined,
     }));
-    vi.doMock("./tool-group.js", () => ({
-      trackInProgress: () => {
-        /* noop */
-      },
-    }));
-
     const { buildToolCard } = await import("./tool-card.js");
     const el = buildToolCard({
       id: "t2",
@@ -395,12 +372,7 @@ describe("a11y: failed tool aria-expanded", () => {
       openFileDiff: noop,
       openFileGitDiff: undefined,
     }));
-    vi.doMock("./tool-group.js", () => ({
-      trackInProgress: noop,
-      untrackInProgress: noop,
-      maybeCollapseGroup: noop,
-      formatDuration: (ms: number) => String(ms),
-    }));
+    vi.doMock("./tool-group.js", () => ({ maybeCollapseGroup: noop }));
     vi.doMock("./actions/index.js", () => ({
       // `registerCleanup` is CALLED on this path, so it is a noop rather than
       // undefined; Browser Mode's real linking requires the name either way.

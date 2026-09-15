@@ -151,7 +151,7 @@ func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 			seedParent(t, store, "c-parent")
 			setSupervised(t, store, "c-parent", tc.parentSupervised)
 			br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-			host := newForkHost(store, br)
+			host := newForkHost(store, br, "c-parent")
 			mem := newSupervisedMembership(t, host, supervisedConfigDir(t, tc.doc))
 
 			if _, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), mem,
@@ -177,7 +177,7 @@ func TestCmdForkChat_InheritsTheParentsSupervisedMode(t *testing.T) {
 // other fork test shares.
 func setSupervised(t *testing.T, store ChatStore, id vibekit.ChatID, supervised bool) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.SupervisedMode = supervised
 		return true
 	}); err != nil {

@@ -93,7 +93,7 @@ vi.mock("./tabs.js", () => ({
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
   setGitTab: undefined,
-  toggleGitView: undefined,
+  openGitView: undefined,
   // A round trip that ENDS in the tab's activation hook, which is what a real open
   // does: the frame paints the row, `openTab` activates it, and the factory's
   // `onShow` is `activateFile`. The editor's own fallback then correctly does

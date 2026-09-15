@@ -28,6 +28,9 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { page } from "vitest/browser";
 import indexHtml from "../static/index.html?raw";
 
+import { ICON_SEND } from "./icons.js";
+import { iconEl } from "./icon-el.js";
+
 import { allRules, loadCSS, mountAppCSS } from "./__test-helpers__/css-rules.js";
 
 /** Every control this sweeps. */
@@ -166,6 +169,19 @@ describe("the controls, measured over the shipped markup", () => {
     }
     for (const dlg of document.querySelectorAll("dialog")) {
       dlg.show();
+    }
+    // THE SEND BUTTON'S GLYPH, because `static/index.html` ships it empty and
+    // `prompt-input.ts` injects it at boot (`sendBtn.replaceChildren(iconEl(…))`).
+    // Without it this fixture renders a 26px-wide button the app never shows, and its
+    // hit-target expander — absolutely positioned, sized off `--hit-floor`, so it
+    // reaches further the narrower the box — then protrudes 10px past the row's own
+    // 4px padding and the tight-row case below reports `.prompt-pills` overflowing by
+    // 5px. Measured both ways at the same width: 5px empty, 0px with the glyph. The
+    // production glyph rather than a hand-written one, so an upstream path change
+    // moves this with it.
+    const send = document.getElementById("send-btn");
+    if (send !== null) {
+      send.replaceChildren(iconEl(ICON_SEND));
     }
   }
 

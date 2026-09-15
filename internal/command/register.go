@@ -58,7 +58,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) *Membership {
 	d.Register(vibekit.CmdElicitationResponse, bind2(r.Bridges, r.Perms, CmdElicitationResponse))
 	d.Register(vibekit.CmdUserInputResponse, bind2(r.Bridges, r.Perms, CmdUserInputResponse))
 	d.Register(vibekit.CmdRewindChat, bind2(r.Bridges, r.Chats, CmdRewindChat))
-	d.Register(vibekit.CmdSetEffort, bind2(r.Bridges, r.Chats, CmdSetEffort))
+	d.Register(vibekit.CmdSetEffort, bind4(r.Bridges, r.Chats, r.Bus, r.Workspace, CmdSetEffort))
 	d.Register(vibekit.CmdSetMode, bind3(r.Bridges, r.Chats, r.Bus, CmdSetMode))
 	d.Register(vibekit.CmdSetSupervisedMode, bind2(r.Bridges, r.Chats, CmdSetSupervisedMode))
 

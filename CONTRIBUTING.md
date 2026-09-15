@@ -308,6 +308,14 @@ cd static-src && npm run typecheck -- --noEmit && cd ..
 go run ./cmd/bundle
 ```
 
+`static/vendor/` is gitignored and the Docker build is what fills it: the builder
+fetches the terminal's two web fonts and verifies each against a digest pinned in
+the `Dockerfile`. A clone has neither font, so run `bash scripts/dev-fonts.sh`
+first — it reads those same pins, caches the files under
+`${XDG_CACHE_HOME:-~/.cache}/vibekit-fonts/` and copies them into
+`static/vendor/fonts/`. Skip it and the shell renders on the platform monospace;
+the server says so once at boot and names the script.
+
 To iterate on `static-src/` locally, work through the package scripts (run from
 `static-src/`). `tsc` (the TypeScript 7 native compiler) comes from the
 `@typescript/native` devDependency (an npm alias for `typescript@7`); it and the

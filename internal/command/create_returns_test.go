@@ -100,7 +100,7 @@ func TestCmdForkChat_MintsAndReturnsTheChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 
 	body, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), newTestMembership(t, host),
 		forkReqOp(t, "c-parent", "Reaper detour", "op-1"))
@@ -137,7 +137,7 @@ func TestCmdForkChat_RepeatOpDoesNotForkTwice(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_tangent"}}
-	host := newForkHost(store, br)
+	host := newForkHost(store, br, "c-parent")
 	ops := newTestMembership(t, host)
 
 	first, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,
@@ -170,7 +170,7 @@ func TestCmdForkChat_RepeatOpReportsThePathTheFirstAttemptTook(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	// No bridge can be opened, so the tangent is created unbound.
-	host := newForkHost(store, nil)
+	host := newForkHost(store, nil, "c-parent")
 	ops := newTestMembership(t, host)
 
 	if _, err := CmdForkChat(t.Context(), host, host, testWorkspace(t), ops,

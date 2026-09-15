@@ -18,7 +18,10 @@ import { describe, it, expect } from "vitest";
 import indexHtml from "../static/index.html?raw";
 import {
   ICON_PR_EMPTY,
+  ICON_REPO,
+  ICON_SUBAGENT_INTROSPECT,
   ICON_TAB_AGENT,
+  ICON_EXTERNAL,
   ICON_TAB_DOCS,
   ICON_TAB_FILES,
   ICON_TAB_GIT,
@@ -27,6 +30,7 @@ import {
   ICON_TAB_SETTINGS,
   ICON_TAB_SPEC,
   ICON_TOOL_TERMINAL,
+  toolIcon,
 } from "./icons.js";
 
 /** Collapse whitespace runs and trim, and nothing else. Whitespace INSIDE path
@@ -43,20 +47,34 @@ function inner(svg: string): string {
   return norm(svg.replace(/^<svg\b[^>]*>/, "").replace(/<\/svg>$/, ""));
 }
 
-/** The first glyph inside the button that carries `anchor`, scoped to that
- *  button so a reordering of the markup cannot silently pick up a sibling's. */
-function glyphOf(anchor: string): string {
+/** The first glyph inside the element that carries `anchor`, scoped to that element
+ *  so a reordering of the markup cannot silently pick up a sibling's.
+ *
+ *  `close` is a parameter because not every host is a `<button>` any more: the status
+ *  card's account row is an `<a>`. Without it the slice would run from that link
+ *  through the sidebar footer's logout button and pass by ACCIDENT on the first
+ *  `<svg>` it found. The failure message is interpolated for the same reason — the
+ *  hardcoded "is not inside a button" names the wrong container the moment a caller
+ *  passes anything else, and that message is the only thing a failing run shows. */
+function glyphOf(anchor: string, close = "</button>"): string {
   const at = indexHtml.indexOf(anchor);
   expect(at, `static/index.html has no ${anchor}`).toBeGreaterThan(-1);
-  const end = indexHtml.indexOf("</button>", at);
-  expect(end, `${anchor} is not inside a button`).toBeGreaterThan(at);
-  const button = indexHtml.slice(at, end);
-  const m = /<svg\b[\s\S]*?<\/svg>/.exec(button);
+  const end = indexHtml.indexOf(close, at);
+  expect(end, `${anchor} has no ${close}`).toBeGreaterThan(at);
+  const host = indexHtml.slice(at, end);
+  const m = /<svg\b[\s\S]*?<\/svg>/.exec(host);
   expect(m, `${anchor} carries no inline svg`).not.toBeNull();
   return inner(m?.[0] ?? "");
 }
 
-const PAIRS: readonly (readonly [label: string, anchor: string, registry: string])[] = [
+/** A pair, plus the closing tag that scopes the slice to its own host. Defaults to
+ *  `</button>`, which every entry but the account link takes. */
+const PAIRS: readonly (readonly [
+  label: string,
+  anchor: string,
+  registry: string,
+  close?: string,
+])[] = [
   // Sidebar: the button and the tab it opens are one destination.
   ["sidebar Kiro docs", 'id="docs-btn"', ICON_TAB_DOCS],
   ["sidebar History", 'id="history-btn"', ICON_TAB_HISTORY],
@@ -70,12 +88,17 @@ const PAIRS: readonly (readonly [label: string, anchor: string, registry: string
   ["docs tab Workflows", 'data-docs-tab="workflows"', ICON_TAB_RUN],
   // The PR empty state renders inside the tab whose icon names it.
   ["git tab Pull requests", 'data-git-tab="prs"', ICON_PR_EMPTY],
+  // The status card's account row: an <a> rather than a button, and the one thing in
+  // this app that LEAVES it, which is the case chevron.ts reserves ICON_EXTERNAL
+  // for. Passing "</a>" is what scopes the slice to the link — with the default the
+  // slice would run through the footer's logout button and match its glyph.
+  ["status card account link", 'id="st-account"', ICON_EXTERNAL, "</a>"],
 ];
 
 describe("hand-authored glyphs in static/index.html", () => {
-  for (const [label, anchor, registry] of PAIRS) {
+  for (const [label, anchor, registry, close] of PAIRS) {
     it(`${label} draws the icons.ts glyph`, () => {
-      expect(glyphOf(anchor)).toBe(inner(registry));
+      expect(glyphOf(anchor, close)).toBe(inner(registry));
     });
   }
 
@@ -145,5 +168,23 @@ describe("hand-authored glyphs in static/index.html", () => {
       expect(edge % 3, `${name} edge of the shell box`).toBe(0);
     }
     expect(num("width"), "the shell box is square").toBe(num("height"));
+  });
+
+  // The open book's two meanings are DECLARED, which is the other half of this file's
+  // job: a share nothing states is drift, and a share stated here is a decision. The
+  // configuration browser and the read-family tool card draw one mark on purpose
+  // (icons.ts `PATH_BOOK_OPEN`), so the pair that must NOT drift apart is pinned from
+  // one side and the glyph that must not join them from the other.
+  // Resolved through `toolIcon`, the way a card does, rather than off the constant: a
+  // title override would defeat the share without the constant moving.
+  it("draws one open book for the browser and the read family", () => {
+    expect(inner(toolIcon("read", "readFile"))).toBe(inner(ICON_TAB_DOCS));
+  });
+
+  // It was Lucide's book-open and was indistinguishable from the read glyph at 16px,
+  // with both rendering in the transcript. Re-unifying them would restore that.
+  it("keeps the introspect subagent out of the book family", () => {
+    expect(inner(ICON_SUBAGENT_INTROSPECT)).not.toBe(inner(ICON_TAB_DOCS));
+    expect(inner(ICON_SUBAGENT_INTROSPECT), "nor the closed book").not.toBe(inner(ICON_REPO));
   });
 });

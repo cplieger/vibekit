@@ -133,7 +133,7 @@ func TestSessionConfig_ColdSpawnPersistsAndASessionRefusalDoesNot(t *testing.T) 
 				}
 				cmd := &vibekit.ClientCommand{Type: vibekit.CmdSetEffort, ChatID: "c1", Payload: payload}
 
-				_, err = CmdSetEffort(t.Context(), host, host, cmd)
+				_, err = CmdSetEffort(t.Context(), host, host, host, Workspace{}, cmd)
 
 				assertConfigOutcome(t, err, test.wantStatus)
 				c, ok := store.Get(t.Context(), "c1")

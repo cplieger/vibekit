@@ -30,7 +30,7 @@
 
 import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
-import { buildToolCard, expandToolDetails } from "./tool-card.js";
+import { buildToolCard } from "./tool-card.js";
 import { toolCardOptsFor } from "./tool-card-opts.js";
 import type { RunStepPayload, ToolCall } from "./types.js";
 
@@ -123,7 +123,17 @@ export function createRunStepStream(hostFor: StepHost): RunStepStream {
     const wasOpen =
       previous?.querySelector<HTMLElement>(".tool-disclosure")?.getAttribute("aria-expanded") ===
       "true";
-    const card = buildToolCard(toolCardOptsFor(tc, true));
+    // Built ALREADY OPEN rather than opened after the mount: a rebuild happens on
+    // every frame a step's tool call grows, and opening a region the primitive has
+    // just created closed animates the reveal each time — a reader watching a
+    // command's output would see it re-open under them per chunk. `open: true` needs
+    // no layout (`applyHeight(true, false)` writes `height: ""`), so the build being
+    // detached costs nothing.
+    const opts = toolCardOptsFor(tc, true);
+    if (wasOpen) {
+      opts.detailsOpen = true;
+    }
+    const card = buildToolCard(opts);
     if (previous === undefined) {
       // A tool call ends the trailing text run, so the next delta opens its own
       // bubble below the card instead of extending the paragraph above it.
@@ -131,11 +141,6 @@ export function createRunStepStream(hostFor: StepHost): RunStepStream {
       s.host.appendChild(card);
     } else {
       previous.replaceWith(card);
-    }
-    if (wasOpen) {
-      // After the mount, because the controller is wired during the build and
-      // opening animates a height the element has to be laid out to have.
-      expandToolDetails(card);
     }
     s.tools.set(tc.id, card);
   }

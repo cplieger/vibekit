@@ -26,8 +26,8 @@ func TestHubModels_EmptyWhenNoBridges(t *testing.T) {
 
 func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	// Swap both chats' bridges to ones with distinct model sets.
 	empty := &modelsBridge{fakeBridge: newFakeBridge()}
@@ -48,7 +48,7 @@ func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 
 func TestHubModels_AllEmptyReturnsNil(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	empty := &modelsBridge{fakeBridge: newFakeBridge()}
 	h.bridge.mgr.mu.Lock()

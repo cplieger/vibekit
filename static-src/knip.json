@@ -3,6 +3,8 @@
   "entry": [
     "app.ts",
     "sw.ts",
+    "vitest.stryker.config.ts",
+    "sse-worker.ts",
     "**/*.test.ts",
     "**/*.node.test.ts",
     "**/*.fuzz.test.ts",
@@ -44,6 +46,8 @@
   "ignoreIssues": {
     "smd.ts": ["exports", "types", "enumMembers", "namespaceMembers", "duplicates"],
     "actions/index.ts": ["exports", "types"],
+    "icons.ts": ["duplicates"],
+    "vitest.stryker.config.ts": ["exports"],
     "types.ts": ["types"]
   }
 }

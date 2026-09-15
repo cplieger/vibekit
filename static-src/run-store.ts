@@ -5,6 +5,7 @@
 
 import { signal, touch, type Signal } from "@cplieger/reactive";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
+import { observeStamp } from "./subject-versions.js";
 import { decodeLiveRunsResponse, decodeRunControlsResponse } from "./wire/decoders.gen.js";
 import type { ConnectedPayload, LiveRun, RunControlsResponse } from "./wire/types.gen.js";
 import {
@@ -784,12 +785,14 @@ export function registerLiveRunObserver(fn: (workflowID: string) => void): void 
  *  next gap or boot retries. `cause` is threaded into each row's own invalidation, so a
  *  gap that also ran `invalidateCachedRuns` re-reads each run once rather than twice,
  *  and a run that FINISHED during the outage is still re-read by that pass. */
-export async function rebuildLiveRuns(cause = ""): Promise<void> {
-  const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse);
+export async function rebuildLiveRuns(cause = "", signal?: AbortSignal): Promise<void> {
+  const d = await apiGetTyped("/api/runs/live", decodeLiveRunsResponse, signal);
   if (d === null) {
     return;
   }
   adoptLiveRuns(d.runs, cause);
+  // AFTER the adoption: the `runs` digest stamp certifies the inventory now held.
+  observeStamp(d.subject);
 }
 
 /** Adopt an inventory somebody else already read.

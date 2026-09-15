@@ -67,7 +67,7 @@ func hubForFSTest(t *testing.T, workDir string) (*Runtime, *respondingBridge) {
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)

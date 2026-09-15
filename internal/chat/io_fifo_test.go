@@ -89,7 +89,7 @@ func withinBudgetGet(t *testing.T, s *Store, id vibekit.ChatID) (*vibekit.Chat, 
 // sweep fail closed over the file it could not read.
 func TestList_SurvivesAFifoAndReportsTheScanIncomplete(t *testing.T) {
 	s, _ := newTestStore(t)
-	if err := s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(t.Context(), "good", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "readable"
 		return true
 	}); err != nil {

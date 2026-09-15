@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/runesafe/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // sessionListTimeout bounds the round-trip. The first call may lazily start the utility

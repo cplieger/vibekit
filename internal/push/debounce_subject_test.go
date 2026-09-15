@@ -51,6 +51,10 @@ func (c *countingTransport) count() int {
 
 // newCountingService returns a service with one subscriber whose deliveries are
 // counted, so a Send that passes preflight is observable as an HTTP attempt.
+//
+// pr_status is switched ON explicitly because these tests are about the
+// per-subject debounce rather than the kind's default, which is OFF: SetPreferences
+// is a maps.Copy merge, so it patches this one kind and leaves the rest.
 func newCountingService(t *testing.T) (*Service, *countingTransport) {
 	t.Helper()
 	s := New(t.Context(), t.TempDir(), "mailto:test@example.com")
@@ -58,6 +62,7 @@ func newCountingService(t *testing.T) (*Service, *countingTransport) {
 	rt := &countingTransport{}
 	s.client = &http.Client{Transport: rt, Timeout: 5 * time.Second}
 	s.Subscribe(pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/debounce"))
+	s.SetPreferences(map[vibekit.PushKind]bool{vibekit.PushKindPRStatus: true})
 	return s, rt
 }
 

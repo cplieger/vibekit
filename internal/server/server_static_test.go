@@ -314,6 +314,16 @@ func TestAssetCachePolicy(t *testing.T) {
 		"":                  revalidateAsset,
 		"index.html":        noStoreHTML,
 		"docs/index.html":   noStoreHTML,
+		// The faces and the licence files beside them, all under one prefix.
+		"vendor/fonts/WebTerminalGlyphs.woff2":    fontAsset,
+		"vendor/fonts/MonaspaceNeonNF-Bold.woff2": fontAsset,
+		"vendor/fonts/WebTerminalGlyphs-LICENSE":  fontAsset,
+		"vendor/fonts/MonaspaceNeonNF-LICENSE":    fontAsset,
+		// The trailing slash in the prefix is what keeps a sibling directory out,
+		// and .html outranks the prefix so a page under it is never cached.
+		"vendor/fonts-list.json":       revalidateAsset,
+		"vendor/fontsomething/x.woff2": revalidateAsset,
+		"vendor/fonts/index.html":      noStoreHTML,
 		// Near misses, each one character or one path segment off the shape.
 		"assets/app-4K73XYBF.js":         revalidateAsset,
 		"chunks/api-client-4K73XY.js":    revalidateAsset,

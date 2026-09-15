@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { parseStepSubtask } from "./step-subtask.js";
+import { isPadBlock } from "./block-pad.js";
 import { isSubagentInvocation } from "./tool-schema.js";
 import { severityOf, defaultFailureReason } from "./turn-severity.js";
 import type { Message, FileChange, ToolKind } from "./types.js";
@@ -91,11 +92,6 @@ export interface TurnLedger {
   credits: number;
   elapsedMs: number;
   changedFiles: Record<string, FileChange>;
-  /** Commands the turn ran, and files it read. Derived from the turn's tool
-   *  calls, which is the only place the counts exist — nothing aggregates them,
-   *  so a turn that read forty files and wrote none reported no work at all. */
-  commands: number;
-  reads: number;
   /** The model(s) that answered, distinct and in emission order.
    *
    *  A FOURTH aggregation strategy beside the sum, the count and the
@@ -162,7 +158,11 @@ export interface TurnLedger {
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
  *  actually emits for a shell invocation; `command` is in the wire enum and is
  *  counted for completeness rather than because it has been observed. */
-const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
+export const COMMAND_KINDS: ReadonlySet<ToolKind> = new Set<ToolKind>([
+  "execute",
+  "shell",
+  "command",
+]);
 
 /** Group a flat message list into turns. A user PROMPT opens a turn; everything else
  *  joins the open one, or opens a HEADERLESS turn — the agent-initiated case and a
@@ -235,33 +235,46 @@ function closesTurn(outcome: TurnOutcome | undefined): boolean {
 }
 
 /** Whether this is a user PROMPT rather than a steer. The Go twin is
- *  `internal/chat/turns.go` `isPrompt`. */
+ *  `vibekit.Message.IsPrompt`. */
 function isPrompt(m: Message): boolean {
   return m.role === "user" && m.user_kind !== "steer";
 }
 
-/** Whether every one of this message's blocks is workflow-step content. */
+/** Whether every one of this message's blocks is workflow-step content.
+ *
+ *  A PAD is skipped rather than counted: it is a client-side reservation for a block that
+ *  has not arrived, never a block the parent agent wrote, and its own subtask id is a
+ *  guess inherited from whichever frame reached past its slot — absent whenever that
+ *  frame carried none either. This is a UNIVERSAL, so counting one reservation as the
+ *  chat's own work flips a step message into a headerless turn card. */
 function isStepMessage(m: Message): boolean {
-  const blocks = m.blocks ?? [];
-  // "every block parses" is vacuously true of a message with NO blocks, so without
+  const real = (m.blocks ?? []).filter((b) => !isPadBlock(b));
+  // "every block parses" is vacuously true of a message with no REAL blocks, so without
   // this an empty assistant or event message would lose the turn it opens.
-  if (blocks.length === 0) {
+  if (real.length === 0) {
     return false;
   }
-  return blocks.every((b) => parseStepSubtask(b.agent_subtask_id ?? "") !== null);
+  return real.every((b) => parseStepSubtask(b.agent_subtask_id ?? "") !== null);
 }
 
 /** Whether nothing about this assistant message reaches the transcript yet. Such a
  *  message neither opens a turn nor JOINS one: joining would set `deriveOutcome`'s
  *  `sawAssistant` and flip a carrier-less turn from `unknown` to `completed`.
  *  Assistant-only, because an `event` row renders a badge and may carry the turn's
- *  outcome, and a `user` row is a trigger. */
+ *  outcome, and a `user` row is a trigger.
+ *
+ *  The block clause is "no NON-PAD block", the same reading `isStepMessage` takes: a
+ *  reservation carries nothing, so it cannot be what reaches the transcript. It changes
+ *  no answer today — every path that mints a pad also writes a real block and grows a
+ *  flat field in the same call — and it is here so the two predicates cannot hold two
+ *  different ideas of what a pad IS, which is what the next pad-minting path would
+ *  otherwise inherit. */
 function carriesNothing(m: Message): boolean {
   return (
     m.role === "assistant" &&
     (m.content ?? "") === "" &&
     (m.reasoning ?? "") === "" &&
-    (m.blocks ?? []).length === 0 &&
+    (m.blocks ?? []).every(isPadBlock) &&
     (m.tool_calls ?? []).length === 0 &&
     (m.plan ?? []).length === 0 &&
     m.refusal === undefined &&
@@ -383,8 +396,6 @@ export function turnLedger(t: Turn): TurnLedger {
     credits: 0,
     elapsedMs: 0,
     changedFiles: {},
-    commands: 0,
-    reads: 0,
     models: [],
     toolMs: 0,
     kindCounts: {},
@@ -402,11 +413,6 @@ export function turnLedger(t: Turn): TurnLedger {
   let settledCarrier = false;
   for (const m of t.body) {
     for (const tc of m.tool_calls ?? []) {
-      if (COMMAND_KINDS.has(tc.kind)) {
-        led.commands++;
-      } else if (tc.kind === "read") {
-        led.reads++;
-      }
       led.kindCounts[tc.kind] = (led.kindCounts[tc.kind] ?? 0) + 1;
       const ms = tc.duration_ms ?? 0;
       led.toolMs += ms;

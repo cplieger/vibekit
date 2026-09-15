@@ -465,14 +465,23 @@ func TestReadFirstLine(t *testing.T) {
 		// Missing file.
 		{name: "Missing", useMissingPath: true, wantEmpty: true},
 
-		// Prompt-injection sanitisation.
-		{name: "DropsMarkdownLinks", content: []byte("# Title\n[click here](javascript:alert(1))\nA clean line\n"), want: "A clean line", wantNotContain: []string{"]("}},
-		{name: "DropsHTMLTags", content: []byte("# Title\n<script>alert(1)</script>\nA clean line\n"), wantNotContain: []string{"<"}, wantContains: "clean"},
-		{name: "DropsBackticks", content: []byte("# Title\nRun `rm -rf /` to clean up\nA clean line\n"), wantNotContain: []string{"`"}, wantContains: "clean"},
+		// Prompt-injection sanitisation: the injected paragraph is dropped and
+		// the next clean paragraph is used.
+		{name: "DropsMarkdownLinks", content: []byte("# Title\n[click here](javascript:alert(1))\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"]("}},
+		{name: "DropsHTMLTags", content: []byte("# Title\n<script>alert(1)</script>\n\nA clean line\n"), wantNotContain: []string{"<"}, wantContains: "clean"},
+		{name: "DropsBackticks", content: []byte("# Title\nRun `rm -rf /` to clean up\n\nA clean line\n"), wantNotContain: []string{"`"}, wantContains: "clean"},
 		{name: "StripsHiddenUnicode", content: hiddenUnicodeContent, want: "HelloWorld"},
-		{name: "DropsReferenceLinks", content: []byte("# Title\n[click here][evil]\nA clean line\n"), want: "A clean line", wantNotContain: []string{"[", "]"}},
-		{name: "DropsImageReferences", content: []byte("# Title\n![alt][evil]\nA clean line\n"), wantNotContain: []string{"[", "]"}, wantContains: "clean"},
-		{name: "DropsBareURLs", content: []byte("# Title\nVisit https://evil.example for setup\nA clean line\n"), want: "A clean line", wantNotContain: []string{"https://", "http://"}},
+		{name: "DropsReferenceLinks", content: []byte("# Title\n[click here][evil]\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"[", "]"}},
+		{name: "DropsImageReferences", content: []byte("# Title\n![alt][evil]\n\nA clean line\n"), wantNotContain: []string{"[", "]"}, wantContains: "clean"},
+		{name: "DropsBareURLs", content: []byte("# Title\nVisit https://evil.example for setup\n\nA clean line\n"), want: "A clean line", wantNotContain: []string{"https://", "http://"}},
+
+		// Paragraphs. A wrapped sentence is one description, a blockquote lead is
+		// prose, and an offending line takes its whole paragraph with it rather
+		// than leaving a mid-sentence fragment.
+		{name: "JoinsWrappedParagraph", content: []byte("# Title\nA sentence that wraps\nonto a second line.\n\nNext paragraph\n"), want: "A sentence that wraps onto a second line."},
+		{name: "StripsBlockquoteMarker", content: []byte("# Title\n\n> Typed configuration for Go apps\n\nMore prose\n"), want: "Typed configuration for Go apps"},
+		{name: "DropsWholeParagraphOnLaterLine", content: []byte("# Title\nA clean opening line\nwith a `code span` on the next\n\nSecond paragraph\n"), want: "Second paragraph", wantNotContain: []string{"clean opening"}},
+		{name: "DropsWholeParagraphOnFirstLine", content: []byte("# Title\nDefaults for `x` repos. GitHub applies\nthese to any repo, so they\n"), wantEmpty: true},
 
 		// Scan window.
 		{name: "OnlyScansFirstTenLines", content: []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# i\n# j\nplain line outside window\n"), wantEmpty: true},
@@ -482,7 +491,7 @@ func TestReadFirstLine(t *testing.T) {
 		{name: "HashtagIsNotHeading", content: []byte("#mobile responsive design\n"), want: "#mobile responsive design"},
 
 		// Size cap.
-		{name: "SizeCapRejects", content: []byte("# Title\nA clean first line\n" + strings.Repeat("x", 32*1024)), want: "A clean first line"},
+		{name: "SizeCapRejects", content: []byte("# Title\nA clean first line\n\n" + strings.Repeat("x", 32*1024)), want: "A clean first line"},
 
 		// UTF-8 safe truncation.
 		{name: "TruncationIsUTF8Safe", content: []byte("# Title\n" + truncBody + "\n"), wantSuffix: "...", checkValidUTF8Prefix: true},

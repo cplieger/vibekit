@@ -6,7 +6,7 @@ import (
 
 	"github.com/cplieger/pinstall/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // kiroRescanPath is the loopback kiro-cli repair hook: it makes an install

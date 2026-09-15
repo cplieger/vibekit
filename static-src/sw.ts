@@ -10,6 +10,9 @@
 /// <reference path="sw-env.d.ts" />
 
 import { type PrecacheManifest, isShellPath, parseManifest } from "./precache.js";
+import { buildPath } from "./route-path.js";
+import type { Route } from "./route-path.js";
+import { parsePushTarget, pushTargetRoute, pushTargetTag } from "./push-subject.js";
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -187,60 +190,16 @@ interface PushData {
 }
 
 /** Message this worker posts to an open page. The page owns the route
- *  vocabulary (router.ts), so we hand over the SUBJECT and let it navigate;
- *  `reason` says whether the user asked to go there or is merely being told. */
+ *  vocabulary, so we hand over the SUBJECT and let it navigate;
+ *  `reason` says whether the user asked to go there, is merely being told, or has
+ *  to re-derive its presence tag because the browser rotated the subscription. */
 interface PushPageMessage {
   type: "push";
-  reason: "clicked" | "arrived";
+  reason: "clicked" | "arrived" | "subscription_changed";
   chatId: string;
   subject: string;
   title: string;
   body: string;
-}
-
-/** Subject-key prefix for a pull request (vibekit.PRSubjectPrefix). The two halves of
- *  this contract are in different languages, so the constant is spelled once on
- *  each side and asserted against the Go one by a test. */
-const PR_SUBJECT_PREFIX = "pr:";
-
-/** Subject-key prefix for a workflow run (vibekit.RunSubjectPrefix), spelled once on
- *  each side for PR_SUBJECT_PREFIX's reason and asserted against the Go one by the
- *  same test. */
-const RUN_SUBJECT_PREFIX = "run:";
-
-/** Where to open when NO page is up at all — the one path that needs a URL.
- *  A focus lands on an existing page, which routes itself from the posted subject.
- *  These two literals are spelled here rather than imported from router.ts because
- *  that module is DOM-bound — it registers a `popstate` listener on `window` at
- *  module scope and drives `history` — and this file builds under
- *  `lib: [ESNext, WebWorker]` (tsconfig.sw.json). */
-function subjectPath(data: { chatId: string; subject: string }): string {
-  if (data.subject.startsWith(PR_SUBJECT_PREFIX)) {
-    return "/git";
-  }
-  if (data.subject.startsWith(RUN_SUBJECT_PREFIX)) {
-    // The id AFTER the prefix, spelled the way router.ts buildPath spells that route.
-    return `/run/${encodeURIComponent(data.subject.slice(RUN_SUBJECT_PREFIX.length))}`;
-  }
-  return data.chatId === "" ? "/" : `/chat/${encodeURIComponent(data.chatId)}`;
-}
-
-/** OS coalescing tag. One tray slot per SUBJECT, so a permission ask on one
- *  chat can no longer replace the finished note on another: a same-tag
- *  notification CLOSES and replaces the one on screen, and does so without a
- *  sound, so the constant tag this replaces lost the earlier notification
- *  silently. Per chat rather than per kind on purpose — within a turn the ask
- *  comes first and the finished note last, so the later one superseding the
- *  earlier is the tray telling the truth.
- *
- *  A subject key takes the same treatment for the same reason: a PR's key is
- *  unique per pull request, so two PRs flipping inside one window keep their own
- *  slots instead of overwriting each other. */
-function subjectTag(data: { chatId: string; subject: string }): string {
-  if (data.subject !== "") {
-    return `vibekit:${data.subject}`;
-  }
-  return data.chatId === "" ? "vibekit" : `vibekit:${data.chatId}`;
 }
 
 /** Read one string field off a notification's `data` bag. The bag is whatever the
@@ -252,6 +211,20 @@ function readStringField(raw: unknown, field: string): string {
   }
   const v: unknown = (raw as Record<string, unknown>)[field];
   return typeof v === "string" ? v : "";
+}
+
+/** Is this client already on the route's pathname? Both sides go through the URL
+ *  parser, so neither percent-encoding nor the fragment can make two spellings of one
+ *  location disagree. A client's url is absolute per spec, so the throw is unreachable
+ *  in practice and is swallowed rather than defended: a client we cannot parse is a
+ *  client we do not prefer, never a click that fails. */
+function samePath(clientURL: string, route: Route): boolean {
+  try {
+    const here = new URL(clientURL);
+    return here.pathname === new URL(buildPath(route), here).pathname;
+  } catch {
+    return false;
+  }
 }
 
 /** Window clients for this origin, newest API shape first. */
@@ -301,7 +274,7 @@ sw.addEventListener("push", ((event: PushEvent) => {
           body,
           icon: "/favicon.svg",
           badge: "/icon-192.png",
-          tag: subjectTag({ chatId: chatID, subject }),
+          tag: pushTargetTag(parsePushTarget({ chatId: chatID, subject })),
           // Re-alert on a replacement. A same-tag replacement is silent by
           // default, and here a replacement always means the chat moved to
           // something else worth a glance.
@@ -321,6 +294,10 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
   const raw: unknown = event.notification.data;
   const chatID = readStringField(raw, "chatId");
   const subject = readStringField(raw, "subject");
+  // Named `route`, NOT `target`: `target` is already this block's name for the chosen
+  // WindowClient, and two meanings of one word inside eight lines is how the next
+  // reader gets it wrong.
+  const route = pushTargetRoute(parsePushTarget({ chatId: chatID, subject }));
 
   event.waitUntil(
     (async () => {
@@ -333,7 +310,12 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
       // was set to include.
       const clients = await windowClients();
       if (clients.length > 0) {
-        const target = clients.find((c) => c.focused) ?? clients[0];
+        const onTarget = clients.filter((c) => samePath(c.url, route));
+        const target =
+          onTarget.find((c) => c.focused) ?? // a matching window the reader is already in
+          onTarget[0] ?? // any matching window
+          clients.find((c) => c.focused) ??
+          clients[0];
         if (target !== undefined) {
           target.postMessage({
             type: "push",
@@ -348,7 +330,7 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
         }
       }
       // No page open at all: this is the one path that needs a URL.
-      await sw.clients.openWindow(subjectPath({ chatId: chatID, subject }));
+      await sw.clients.openWindow(buildPath(route));
     })(),
   );
 }) as EventListener);
@@ -365,6 +347,22 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
           body: JSON.stringify(newSub.toJSON()),
         }),
       )
+      // The presence tag is derived from the endpoint, so a rotated subscription is
+      // a new tag: every open page re-derives, persists and reconnects. Until it does
+      // the profile is counted under the old tag and a push to the new endpoint is
+      // sent rather than suppressed, which is the fail-open direction.
+      .then(async () => {
+        for (const c of await windowClients()) {
+          c.postMessage({
+            type: "push",
+            reason: "subscription_changed",
+            chatId: "",
+            subject: "",
+            title: "",
+            body: "",
+          } satisfies PushPageMessage);
+        }
+      })
       .catch((err: unknown) => {
         console.error("sw: re-subscribe failed", err);
       }),

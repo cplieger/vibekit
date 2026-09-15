@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "A GET /api/chats/search reply, produced by a real SearchAll over a seeded store.",
+    "",
+    "chat.SearchAllResult and chat.Match are wiregen-registered; TestSearchAllWireContract",
+    "(Go) asserts the store's reply marshals to exactly these bytes, and",
+    "actions/chat-search.node.test.ts (TypeScript) decodes it through the generated",
+    "decodeSearchAllResult. A title-only match carries no `best`.",
+    "",
+    "Regenerate with: UPDATE_GOLDEN=1 go test ./internal/chat/ -run TestSearchAllWireContract",
+    "then re-run the TS half: npx vitest --run actions/chat-search.node.test.ts (from static-src/)."
+  ],
+  "query": "redis",
+  "result": {
+    "matches": [
+      {
+        "best": {
+          "message_id": "m1",
+          "turn_message_id": "m1",
+          "excerpt": "we moved the cache to redis today",
+          "role": "user",
+          "segment_kind": "content",
+          "turn": 1,
+          "offset": 22,
+          "segment_len": 33
+        },
+        "name": "Redis migration",
+        "id": "chat-001",
+        "hits": 3,
+        "score": 12.885342830935784,
+        "updated_at": 1000
+      },
+      {
+        "name": "Why redis over memcached",
+        "id": "chat-003",
+        "hits": 0,
+        "score": 10,
+        "updated_at": 3000
+      }
+    ],
+    "scanned": 3,
+    "matched": 2,
+    "truncated": false
+  }
+}

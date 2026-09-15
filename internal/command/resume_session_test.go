@@ -26,7 +26,7 @@ func (d *storeDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, 
 	return d.store.Get(ctx, id)
 }
 
-func (d *storeDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+func (d *storeDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
 	return d.store.Mutate(ctx, id, fn)
 }
 
@@ -108,7 +108,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Existing"
 		c.RecordSession("sess_original")
 		return true

@@ -140,7 +140,7 @@ function start(...names: string[]): {
   xhr: FakeXHR;
 } {
   const parts = mountRow();
-  uploadFiles({ files: fileList(...names), targetDir: "/workspace/uploads" });
+  uploadFiles({ files: fileList(...names), targetDir: "/uploads" });
   const xhr = FakeXHR.last;
   expect(xhr, "uploadFiles created an XHR").not.toBeNull();
   if (xhr === null) {

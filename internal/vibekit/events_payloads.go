@@ -1,5 +1,7 @@
 package vibekit
 
+import "encoding/json"
+
 // Per-event payload structs for SSE events; the envelope types live in events.go.
 
 // TurnEndedPayload is the payload for type="turn_ended".
@@ -33,9 +35,8 @@ type TurnEndedPayload struct {
 	// chat's own conversational turn: the reader's own turn may be live right now, and
 	// every chat-scoped teardown would tear down THAT turn's state.
 	//
-	// Same word TurnStatePayload already uses for the same fact, so a client learns one
-	// name for it. Absent means "this chat's own turn", which is what an older server's
-	// frame must keep meaning.
+	// Absent means "this chat's own turn", which is what an older server's frame must
+	// keep meaning.
 	WorkflowStep bool `json:"workflow_step,omitempty"`
 }
 
@@ -58,8 +59,8 @@ type ConnectedPayload struct {
 	// turn that is not a workflow step, or an admitted prompt whose Turn is not
 	// minted yet — and it is a NEGATIVE statement about every chat it does
 	// not name, the half no other frame carries: a chat whose turn died with the
-	// previous process gets no turn_state, and nothing else ever tells this client to
-	// stop believing its own `thinking`.
+	// previous process emits no terminal frame, and nothing else ever tells this
+	// client to stop believing its own `thinking`.
 	//
 	// The reservation term is what makes the negative statement COMPLETE for the
 	// admission window; see busyChatIDs, which walks the lifecycle rather than the open
@@ -76,13 +77,16 @@ type ConnectedPayload struct {
 	// Emitted for a topic-filtered connect too: the inventory is workspace-global, so
 	// there is nothing to scope. CAPPED at maxConnectLiveRuns — see LiveRunsStated.
 	LiveRuns []LiveRun `json:"live_runs,omitempty"`
-	Floor    uint64    `json:"floor"`
-	Head     uint64    `json:"head"`
+	// Floor and Head are the replay ring's bounds, present ONLY on a legacy connect
+	// (a client that sent no SSE-Wire header): the v2 bundle reads them as numbers
+	// to detect a gap, and a v3 client gets the same facts from the library's hello.
+	Floor *uint64 `json:"floor,omitempty"`
+	Head  *uint64 `json:"head,omitempty"`
 	// BusyStated says whether BusyChats is the COMPLETE set, and it is the ONE flag two
 	// conditions clear: a topic-filtered connect (the list is scoped) and an over-cap
 	// workspace (the list is withheld). No omitempty, so wiregen emits a REQUIRED field
 	// and an absent marker can never read as "stated" — the discipline
-	// TurnStatePayload.Truncated already follows.
+	// LiveTurn.Truncated already follows.
 	BusyStated bool `json:"busy_stated"`
 	// LiveRunsStated says whether LiveRuns is the COMPLETE inventory. False only when
 	// the lease store holds more than maxConnectLiveRuns rows, in which case the list
@@ -238,39 +242,11 @@ type MessageChunkPayload struct {
 	Delta          string       `json:"delta"`
 	AgentSubtaskID string       `json:"agent_subtask_id,omitempty"`
 	BlockIndex     int          `json:"block_index"`
-	// Seq is the delta's 1-based sequence number within the turn. A client that ingested a
-	// connect-time turn_state snapshot drops chunks at or below its chunk_seq watermark —
+	// Seq is the delta's 1-based sequence number within the turn. A client that adopted a
+	// live_turn off the transcript GET drops chunks at or below its chunk_seq watermark —
 	// they are already folded in — instead of double-appending them.
 	Seq         int64 `json:"seq,omitempty"`
 	IsReasoning bool  `json:"is_reasoning,omitempty"`
-}
-
-// TurnStatePayload is the payload for type="turn_state": one per busy chat in the SSE
-// OnConnect replay, NEVER broadcast live, so a reconnecting client renders the accumulated
-// turn immediately and learns authoritatively that the chat is busy.
-type TurnStatePayload struct {
-	// Message is the in-flight assistant message as accumulated so far. Omitted when the
-	// turn has produced no content yet (busy signal only).
-	Message *Message `json:"message,omitempty"`
-	// Status/Description replay the agent's last self-declared chat_status. Authoritative
-	// here because the turn is verifiably in flight, unlike the live event, which is
-	// cleared on gaps precisely so a bare replay cannot resurrect a stale "in_progress".
-	Status      string `json:"status,omitempty"`
-	Description string `json:"description,omitempty"`
-	// ChunkSeq is the last delta folded into Message (see MessageChunkPayload.Seq).
-	ChunkSeq int64 `json:"chunk_seq,omitempty"`
-	// Truncated reports that the connect-time cap withheld part of Message: the payload
-	// carries the TAIL of the in-flight turn, and the rest arrives with message_appended.
-	//
-	// NEVER `omitempty`: wiregen emits a REQUIRED field without it, so an absent marker
-	// can never be read as "complete", which is what makes the cap admissible. A property
-	// of this TRANSFER, so it never moves onto Message, which chat files persist verbatim.
-	Truncated bool `json:"truncated"`
-	// WorkflowStep marks a turn a workflow RUN opened on the launching chat's session.
-	// Contract: APPLY the snapshot, do NOT set thinking. The snapshot is the only copy of
-	// an in-flight step's transcript, so the event must still be emitted — but the chat's
-	// own agent is idle, and a client reading it as busy says so for the whole run.
-	WorkflowStep bool `json:"workflow_step,omitempty"`
 }
 
 // ErrorCode identifies an SSE error event class.
@@ -457,8 +433,9 @@ type ToolCallPayload struct {
 
 // ToolCallUpdatePayload is the payload for type="tool_call_update": a DELTA addressed by
 // id, carrying only what this frame changed. Every field is omitempty and means
-// "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. turn_state
-// remains the whole-object channel — a reconnecting client has no delta base.
+// "unchanged" when absent; OutputDelta's meaning depends on OutputReplace. The transcript
+// GET's live_turn remains the whole-object channel — a reconnecting client has no delta
+// base.
 type ToolCallUpdatePayload struct {
 	// The three metadata blocks, each sent whole when it changed; none accumulates.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
@@ -562,6 +539,33 @@ type ChatStatusPayload struct {
 // focus_update channel spells it: the only status whose meaning OUTLIVES its turn, so the
 // only one the connect-time replay retains. Every other value travels through opaque.
 const ChatStatusWaitingOnUser = "waiting_on_user"
+
+// PendingSnapshotPayload is the payload for type="pending_snapshot": every
+// pending item across every chat, each a complete ServerEvent envelope of one
+// of the five ask kinds (permission_needed, elicitation_needed,
+// user_input_needed, run_input_needed, steer_queued). Raw so the client can
+// re-dispatch each through the decoder it already has for that type; the
+// stamp rides the snapshot's own envelope, never an item.
+type PendingSnapshotPayload struct {
+	Items []json.RawMessage `json:"items"`
+}
+
+// StatusSnapshotPayload is the payload for type="status_snapshot": every
+// retained waiting_on_user row for a chat that is not busy.
+type StatusSnapshotPayload struct {
+	Rows []StatusRow `json:"rows"`
+}
+
+// StatusRow is one chat's retained status inside a StatusSnapshotPayload.
+type StatusRow struct {
+	ChatID      ChatID `json:"chat_id"`
+	Status      string `json:"status"`
+	Description string `json:"description,omitempty"`
+}
+
+// SubjectChangedPayload is the payload for type="subject_changed". Empty: the
+// stamp travels on the envelope, and the event is the whole instruction.
+type SubjectChangedPayload struct{}
 
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}

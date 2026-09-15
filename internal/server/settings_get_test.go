@@ -83,9 +83,12 @@ func TestSettingsGet_ResolvesDefaultsUnderStoredValues(t *testing.T) {
 	if !got.KnowledgeEnabled {
 		t.Error("knowledge_enabled = false, want true: absent must not read as the zero value")
 	}
-	if !got.NotifyAgentFinished || !got.NotifyPRStatus {
-		t.Errorf("notify kinds = (%v, %v), want (true, true): the per-kind switches default ON while the master defaults off",
-			got.NotifyAgentFinished, got.NotifyPRStatus)
+	if !got.NotifyAgentFinished || !got.NotifyRunOutcome {
+		t.Errorf("notify kinds = (%v, %v), want (true, true): agent_finished and run_outcome report work this server did while nobody was looking, so both default ON",
+			got.NotifyAgentFinished, got.NotifyRunOutcome)
+	}
+	if got.NotifyPRStatus {
+		t.Error("notify_pr_status = true, want false: it is the one keyed kind that defaults OFF, because a pull request's CI verdict is already on the forge — the polarity is not uniform across the three")
 	}
 	if len(got.AgentIgnoreFiles) == 0 {
 		t.Error("agent_ignore_files is empty; this is the live bug — the panel rendered an empty chip row while the filter applied two patterns")
@@ -366,7 +369,7 @@ func TestSettingsGet_ThenPatchPersistsOnlyTheStoredKeys(t *testing.T) {
 	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
 	req := httptest.NewRequest(http.MethodPatch, "/api/settings", bytes.NewReader([]byte(`{"fb_path":"/workspace"}`)))
 	rec := httptest.NewRecorder()
-	s.handleSettingsWrite(rec, req, path)
+	s.handleSettingsWrite(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -406,7 +409,7 @@ func TestSettingsGet_PatchAgainstANullDocumentDoesNotPanic(t *testing.T) {
 	rec := httptest.NewRecorder()
 	// No recover() here on purpose: the panic this pins must not reach the
 	// middleware, so an unrecovered panic failing the test IS the assertion.
-	s.handleSettingsWrite(rec, req, path)
+	s.handleSettingsWrite(rec, req)
 
 	// The write REFUSES, because it cannot read what is stored and its next act
 	// would be a whole-file replace.
@@ -449,7 +452,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/settings",
 		bytes.NewReader([]byte(`{"notify_run_outcome":false}`)))
 	rec := httptest.NewRecorder()
-	s.handleSettingsWrite(rec, req, path)
+	s.handleSettingsWrite(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH notify_run_outcome=false = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -483,7 +486,7 @@ func TestSettingsRoundTrip_RunOutcomeToggle(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPatch, "/api/settings",
 		bytes.NewReader([]byte(`{"notify_run_outcome":true}`)))
 	rec = httptest.NewRecorder()
-	s.handleSettingsWrite(rec, req, path)
+	s.handleSettingsWrite(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH notify_run_outcome=true = %d, want 200: %s", rec.Code, rec.Body.String())
 	}

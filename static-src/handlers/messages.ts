@@ -13,10 +13,7 @@ import {
   applyToolCallDelta,
   setCodeReferences,
   setThinking,
-  setAgentStatus,
-  setChunkWatermark,
   noteLiveTurnMessage,
-  noteTruncatedSnapshot,
   get,
 } from "../store.js";
 import { markGitDirty } from "../git.js";
@@ -36,7 +33,7 @@ onSSE("message_appended", (chatID, m) => {
   appendMessage(chatID, m);
   // A persisted PROMPT row is the server saying it accepted a prompt, which is the ONLY
   // liveness signal a client that did not send it gets before the first chunk: `thinking`
-  // is the sender's own dispatch and `turn_state` is connect-time synthesis. Without it a
+  // is the sender's own dispatch and a reconnect carries no turn snapshot. Without it a
   // stale `turn_open: false` from that client's last load derives a terminal outcome for a
   // turn that is starting. `markTurnLive` rather than `setThinking`, which would re-clear
   // the previous turn's verdicts on a replayed row. Released by the next settled
@@ -100,43 +97,6 @@ function markTurnLive(chatID: string): void {
     setThinking(chatID, true);
   }
 }
-
-// turn_state is connect-time synthesis and is never broadcast live, so a dropped frame
-// is gone for good: one per busy chat, carrying the authoritative busy signal and the
-// accumulated message the transcript would otherwise be blank without.
-onSSE("turn_state", (chatID, p) => {
-  if (p === undefined || chatID === "") {
-    return;
-  }
-  // `workflow_step` marks a replayed turn a workflow RUN owns: apply the
-  // snapshot, do not set thinking. The server still EMITS it because the
-  // snapshot is the only copy of an in-flight step's transcript, so skipping the
-  // event would lose that content on every refresh — while latching thinking
-  // would re-assert "this chat is working" on every reconnect for the whole run,
-  // with nothing to clear it.
-  if (p.workflow_step !== true) {
-    setThinking(chatID, true);
-  }
-  const msg = p.message;
-  if (msg !== undefined && msg.id !== "") {
-    setChunkWatermark(chatID, msg.id, p.chunk_seq ?? 0);
-    // The snapshot is the server's unflushed buffer, so this id is
-    // unpersisted by construction.
-    noteLiveTurnMessage(chatID, msg.id);
-    // BEFORE the upsert, so the body's first paint already carries the note: the
-    // connect-time cap sends only the TAIL of a big turn, and a reader shown the
-    // tail with nothing saying so reads a bounded payload as the whole reply.
-    // `truncated` is a REQUIRED wire field, so an absent marker cannot mean
-    // "complete" — it means an older server, which capped nothing.
-    if (p.truncated) {
-      noteTruncatedSnapshot(chatID, msg.id);
-    }
-    upsertMessage(chatID, msg);
-  }
-  if (p.status !== undefined && p.status !== "") {
-    setAgentStatus(chatID, p.status, p.description ?? "");
-  }
-});
 
 onSSE("message_updated", (chatID, m) => {
   if (m === undefined) {

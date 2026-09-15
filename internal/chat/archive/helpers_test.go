@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ type fakeStore struct {
 	dir   string
 	mu    sync.Mutex
 	locks map[vibekit.ChatID]*sync.Mutex
+	// removals counts successful Removes; its value is the `chats` version the
+	// fake mints, so a purge's chat_deleted stamp is checkable.
+	removals int
 	// header, when non-nil, makes LoadRetentionHeader succeed with this
 	// projection (default: it fails, the unreadable-chat path).
 	header *RetentionHeader
@@ -50,8 +54,14 @@ func (f *fakeStore) LoadRetentionHeader(vibekit.ChatID) (RetentionHeader, error)
 	return RetentionHeader{}, errors.New("fakeStore: chat is unreadable")
 }
 
-func (f *fakeStore) Remove(chatID vibekit.ChatID) error {
-	return os.Remove(filepath.Join(f.dir, string(chatID)+chatFileSuffix))
+func (f *fakeStore) Remove(chatID vibekit.ChatID) (string, error) {
+	if err := os.Remove(filepath.Join(f.dir, string(chatID)+chatFileSuffix)); err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removals++
+	return strconv.Itoa(f.removals), nil
 }
 
 // purgeRecorder collects chat IDs passed to an onPurge

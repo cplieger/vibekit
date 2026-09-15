@@ -150,7 +150,7 @@ vi.mock("./tabs.js", () => ({
   getActiveTabId: vi.fn(() => ""),
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
-  toggleGitView: vi.fn(),
+  openGitView: vi.fn(),
   // The launching chat a run tab nests under, read off the persisted subject. The
   // cases below drive it directly, because the alternative is a whole tab
   // projection for one string.
@@ -276,6 +276,7 @@ vi.mock("./run-step-transcript.js", async () => {
 // `showRun` is what the tab FACTORY calls as the run tab's activation hook
 // (registered by the composition root), so it is the seam this suite paints
 // through — a door no longer carries an `onShow` of its own.
+import { openRunTab } from "./tabs.js";
 import { openRunView, refreshRun, runTabProjectsChat, showRun } from "./run-view.js";
 import { refreshChatView } from "./chat.js";
 import { apiGetOrError, apiGetTyped } from "./api-client.js";
@@ -291,7 +292,7 @@ import { clearAllBlockSigs, ensureBlockTextSig } from "./store-signals.js";
 // The REAL router: a zero-import leaf, so no mock, and taking the node from the
 // PARSER rather than a literal is what makes the fragment case below cover the
 // whole URL → focus chain instead of just the opener's fourth argument.
-import { parseRoute } from "./router.js";
+import { parseRoute } from "./route-path.js";
 import type { Message, Session } from "./types.js";
 
 /** The row a status used to imply, now stated as a server answer.
@@ -576,6 +577,31 @@ describe("run view controls", () => {
     expect(review.tab.opts?.owns).toBe(false);
   });
 
+  // A DEEP LINK awaits this, and the router's claim on the location is released when it
+  // settles: `app.ts`'s `run` branch returns the promise so no unrelated projection emit
+  // can write the restored tab's route over the URL the reader opened. Voiding the tab
+  // open here resolved the branch as soon as the CHUNK had loaded, which is the gap that
+  // let a live `/chat/{id}/subagent/{taskId}` load end up showing the first chat.
+  it("returns the tab open, so a deep link can await it", async () => {
+    let release = (): void => undefined;
+    vi.mocked(openRunTab).mockImplementationOnce(
+      () =>
+        new Promise<void>((res) => {
+          release = res;
+        }),
+    );
+    let settled = false;
+    const opening = openRunView("wf-await", "wf-await").then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled, "must not settle before the tab open does").toBe(false);
+    release();
+    await opening;
+    expect(settled).toBe(true);
+  });
+
   it("dispatches the verb the button carries", async () => {
     const painted = await paint(openRunView, "aborted");
     const retry = [
@@ -811,10 +837,13 @@ describe("run view step results have no toggle", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PLACEMENT: the region is a child of `.ev-page` sitting BEFORE `.ev-panes`, at the
+// PLACEMENT: the region is a child of `.ev-page` sitting AFTER `.ev-panes`, at the
 // column's full width. `.ev-page` is a `flex-direction: column` with the default
 // `align-items: stretch`, so no CSS is needed to make it full width — which is
-// exactly why the width is asserted rather than assumed.
+// exactly why the width is asserted rather than assumed. The order is pinned because
+// it is a decision rather than an accident: the region's `hidden` flips as the reader
+// clicks between a settled step and an unsettled one, so above the panes it shifted
+// the very rows that had just been clicked.
 // ---------------------------------------------------------------------------
 
 describe("run view step results placement", () => {
@@ -832,14 +861,14 @@ describe("run view step results placement", () => {
     return el;
   }
 
-  it("precedes the step and output boxes among the page's children", async () => {
+  it("follows the step and output boxes among the page's children", async () => {
     const el = await page();
     const kids = [...el.children].map((n) => n.className.split(" ")[0]);
-    expect(kids.indexOf("ev-results")).toBeGreaterThanOrEqual(0);
-    expect(kids.indexOf("ev-results")).toBeLessThan(kids.indexOf("ev-panes"));
+    expect(kids.indexOf("ev-panes")).toBeGreaterThanOrEqual(0);
+    expect(kids.indexOf("ev-results")).toBeGreaterThan(kids.indexOf("ev-panes"));
   });
 
-  it("renders at the same width as the panes below it", async () => {
+  it("renders at the same width as the panes above it", async () => {
     const el = await page();
     const results = el.querySelector<HTMLElement>(".ev-results")!;
     const panes = el.querySelector<HTMLElement>(".ev-panes")!;

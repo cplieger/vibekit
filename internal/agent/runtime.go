@@ -14,33 +14,43 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cplieger/sse"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/liveness"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/tabs"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
-	"github.com/cplieger/webhttp/v2/sse"
+	"github.com/cplieger/webhttp/v3"
 )
+
+// keepaliveInterval is the cadence of the named keepalive sse.WithKeepalive writes
+// per connection; the client's watchdog is three of them. A var only so a test can
+// drive the hub at milliseconds; never reassigned in production, so the presence
+// table's window (liveness.AliveWindow) stays two of them.
+var keepaliveInterval = liveness.Keepalive
+
+// keepaliveEventName is pinned by every running bundle's SSE_HEARTBEAT_EVENT
+// listener: renaming it silences their silence watchdog.
+const keepaliveEventName = "heartbeat"
 
 const (
 	replayBufSize = 1024
-
-	// keepaliveInterval is shared by SSE keepalive comments and WebSocket pings.
-	// iOS Safari kills idle background connections after ~30s.
-	keepaliveInterval = 15 * time.Second
-
-	// reconnectDelay is the stream's advertised `retry:` field, governing the
-	// reconnect the BROWSER performs after a transient drop — transport.ts's own
-	// backoff never sees that case. Without it the delay is the browser default and
-	// the two disagree (3s Chrome, 5s Firefox). Not lower: a DOWN server retries on it.
-	reconnectDelay = 1500 * time.Millisecond
+	// replayTTL bounds the ring in time where the count alone bounded it before: a
+	// frame older than this is not replayed, and a client away longer gets a fresh
+	// hello plus a digest, which is cheaper than a stale kilo-frame replay.
+	replayTTL = 10 * time.Minute
+	// replyMaxEvents caps one resume's replay. Past it the hello says gap_budget
+	// and the client reconciles through the digest; on a busy peer the ring
+	// rarely covers a real absence anyway.
+	replyMaxEvents = 256
 
 	// outputBufferLimit is the byte budget for subprocess output ring buffers.
 	// 64 KB covers a 200x50 terminal screen with generous ANSI escapes.
@@ -110,26 +120,35 @@ type bridges struct {
 }
 
 // bus groups Runtime fields related to SSE transport, replay and pending
-// permissions. The transport is webhttp/sse's; vibekit layers chat-topic
+// permissions. The transport is cplieger/sse's; vibekit layers chat-topic
 // filtering and pending-state replay on top.
 type bus struct {
 	fanout       *sse.Hub
 	pendingPerms *pendingPermsTracker
+	// legacyConnects and v3Connects count connects by wire generation: a legacy
+	// connect (no SSE-Wire header) is the v2 bundle still running somewhere, and
+	// the counter is what says when the overlap can go. Observability only.
+	legacyConnects atomic.Uint64
+	v3Connects     atomic.Uint64
+	// closeAfter, when positive, cuts the NEXT connection after that many data
+	// frames (sse_probe.go). Test-only; armed by nothing in production.
+	closeAfter atomic.Int64
+	// presence receives the hub's connect/disconnect feed and the client
+	// acknowledgements (alive_route.go). nil drops both; WithPresence fills it.
+	presence presenceTable `wiring:"optional"`
 	// steers is the projection of KAS's steering buffer the connect replay serves
 	// from. Beside pendingPerms rather than folded into it: the two answer for
 	// different wire objects and neither removal path can settle the other's.
 	steers *steerBuffer
-	// chatStatus holds each chat's last self-declared status, the one turn_state
+	// chatStatus holds each chat's last self-declared status, the one status_snapshot
 	// input that lives on no message and in no replay (chat_status.go).
 	chatStatus *chatStatusCache
 	// stageStatusDesc records a declared description on the chat's open turn, which is
 	// what the agent_finished push body reads.
 	stageStatusDesc func(vibekit.ChatID, string)
-	// lastPublishAt is the unix-nano instant something last reached the fan-out,
-	// read by the heartbeat's idle gate (heartbeat.go). An atomic rather than a
-	// mutexed field because emit is on every broadcast path and the heartbeat
-	// goroutine only ever reads it.
-	lastPublishAt atomic.Int64
+	// retractPush drops a held push about a subject whose ask was just settled
+	// (BridgeCoordinator.RetractPush); the bus has no push reference of its own.
+	retractPush func(vibekit.PushSubject)
 }
 
 // Runtime is the central coordinator.
@@ -138,6 +157,16 @@ type Runtime struct {
 	bridge    *bridges
 	bus       *bus
 	coord     *BridgeCoordinator
+	// versions is the digest registry: the workspace stores mint into it under
+	// their own locks, the chat store mints `chat`/`chats` into the same instance
+	// (composition hands both the one WithVersions gave), and the resolver and the
+	// REST envelopes read it.
+	versions *subject.Versions
+	// digestSlots bounds concurrent digest resolutions (digestConcurrency).
+	digestSlots digestSemaphore
+	// digestHook runs inside a held slot; nil in production, a test's probe of
+	// the bound.
+	digestHook func()
 
 	push      pushService
 	chatStore chatRecords
@@ -237,9 +266,22 @@ func WithTabs(st *tabs.Store) Option {
 	return func(h *Runtime) { h.tabs = st }
 }
 
+// WithVersions wires the shared subject registry. Absent, the runtime mints into a
+// private one, which keeps every stamp honest but reaches no chat-store mint.
+func WithVersions(v *subject.Versions) Option {
+	return func(h *Runtime) { h.versions = v }
+}
+
 // WithPush wires the push notification service at construction time.
 func WithPush(p pushService) Option {
 	return func(h *Runtime) { h.push = p }
+}
+
+// WithPresence wires the push presence table the hub's connect/disconnect feed and
+// the alive route write into. Absent, both feeds are dropped and every push is
+// sent, which is the fail-open direction.
+func WithPresence(p presenceTable) Option {
+	return func(h *Runtime) { h.bus.presence = p }
 }
 
 // WithMCPConfig wires the MCP configuration store. The registry reads the three
@@ -287,10 +329,27 @@ func WithSessionSweepGate(gate <-chan struct{}) Option {
 // cancels the runtime's own child. chatStore is REQUIRED on the same terms,
 // refused at construction rather than crashing on the first ACP frame.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Runtime {
-	sseHub := sse.NewHub(
+	// The bus exists before its hub so the presence hook can close over it; the
+	// options fill bus.presence before anything can connect.
+	sseP := &bus{
+		pendingPerms: newPendingPermsTracker(),
+		steers:       newSteerBuffer(),
+		chatStatus:   newChatStatusCache(),
+	}
+	// MustNew rather than New: every option is a constant, so an incoherent set is
+	// a build defect no runtime input can produce, and the first test that builds
+	// a runtime is the gate. The write timeout is stated rather than left at the
+	// library's default so the listener's TCP_USER_TIMEOUT and the presence window
+	// provably read the same number.
+	sseP.fanout = sse.MustNew(
 		sse.WithReplay(replayBufSize),
+		sse.WithReplayTTL(replayTTL),
+		sse.WithReplyMaxEvents(replyMaxEvents),
 		sse.WithKeepalive(keepaliveInterval),
-		sse.WithReconnectDelay(reconnectDelay),
+		sse.WithKeepaliveEvent(keepaliveEventName),
+		sse.WithWriteTimeout(liveness.AliveWindow),
+		sse.WithReconnectDelay(liveness.ReconnectDelay),
+		sse.WithPresence(sseP.forwardPresence),
 	)
 	lc := &lifetime{
 		workDir: workDir,
@@ -312,16 +371,11 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		factory: factory,
 		mgr:     newBridgeManager(factory),
 	}
-	sseP := &bus{
-		fanout:       sseHub,
-		pendingPerms: newPendingPermsTracker(),
-		steers:       newSteerBuffer(),
-		chatStatus:   newChatStatusCache(),
-	}
 	configP := newSettings(lc, nil) // broadcast assigned below, with the rest
 	runs := &Runs{
 		bridges:   bridgeP.mgr,
 		lifecycle: lc,
+		workDir:   workDir,
 		chats:     chatStore,
 		perms:     sseP,
 		bus:       sseP,
@@ -335,6 +389,8 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		config:       configP,
 		chatStore:    chatStore,
 		catalog:      &Catalog{},
+		versions:     &subject.Versions{},
+		digestSlots:  newDigestSemaphore(digestConcurrency),
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
@@ -343,15 +399,27 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	for _, o := range opts {
 		o(h)
 	}
+	// The workspace stores mint into the registry WithVersions chose, so the wiring
+	// runs after the options and before anything can mint.
+	sseP.pendingPerms.versions = h.versions
+	sseP.steers.versions = h.versions
+	sseP.chatStatus.versions = h.versions
+	runs.asks.versions = h.versions
+	h.catalog.versions = h.versions
 	// CONSTRUCTION, then WIRING, in that order and not interleaved: every role below
 	// is bound to its owner BY VALUE, so a field still nil at the literal stays nil
 	// forever. TestNew_EveryTranslateRoleIsWired pins it.
 	h.utility = &utilityLease{build: h.buildUtility}
-	h.runRoutes = &runRoutes{runs: runs}
+	h.runRoutes = &runRoutes{runs: runs, epoch: h.Epoch}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
-	h.replay = &replay{chats: chatStore, lifetime: lc, projections: map[vibekit.ChatID]*loadProjection{}}
+	h.replay = &replay{
+		chats: chatStore, lifetime: lc, workDir: workDir,
+		projections: map[vibekit.ChatID]*loadProjection{},
+		broadcast:   sseP.Broadcast,
+	}
 	h.coord = newBridgeCoordinator(h)
 	sseP.stageStatusDesc = h.coord.turns.stageStatusDescription
+	sseP.retractPush = h.coord.RetractPush
 	// Built here rather than in the struct literal because two of its collaborators
 	// (coord, and the ignore matcher installed below) do not exist yet at that point.
 	h.inbound = &inbound{
@@ -392,7 +460,6 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	requireCollaborators(h)
 	lc.loops.Go(h.cullIdleUtilityBridge)
 	lc.loops.Go(h.sweepSessionsLoop)
-	lc.loops.Go(h.heartbeatLoopEvery(heartbeatInterval))
 	return h
 }
 
@@ -457,6 +524,14 @@ func (rt *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	// refuseWhenDraining.
 	mux.Handle("/api/events", rt.refuseWhenDraining(http.HandlerFunc(rt.handleSSE)))
 	mux.Handle("/api/command", rt.refuseWhenDraining(rt.dispatcher))
+	// The digest sits behind the same drain gate as the stream it revalidates, and
+	// under a RouteTimeout (legal: it is a bounded request, not a streaming one) so a
+	// resolution parked on a lock cannot hold its slot for the peer's lifetime.
+	mux.Handle("POST /api/sync", rt.refuseWhenDraining(
+		webhttp.RouteTimeout(rt.bus.fanout.DigestHandler(rt.resolveDigest), digestTimeout, "digest timed out")))
+	// The keepalive acknowledgement is not drain-gated: a receipt landing while the
+	// stream it acknowledges is being torn down changes nothing worth refusing.
+	mux.HandleFunc("POST /api/events/alive", rt.handleAlive)
 	mux.HandleFunc("/api/shell/ws", rt.shellMgr.handleWS)
 	mux.HandleFunc("POST /api/shell/restart", rt.shellMgr.handleRestart)
 	mux.HandleFunc("/api/file-changes", rt.handleFileChanges)
@@ -528,7 +603,9 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	// 5. Tear down shell + SSE clients. These run whatever the budget did:
 	// kill signals first and only then waits on ctx.
 	rt.shellMgr.kill(ctx)
-	rt.bus.fanout.Shutdown()
+	if err := rt.bus.fanout.Shutdown(ctx); err != nil {
+		slog.Warn("sse hub shutdown", "error", err)
+	}
 	if teardownErr != nil {
 		return teardownErr
 	}
@@ -572,6 +649,13 @@ const bridgeIdleTimeout = 30 * time.Minute
 // / error.
 func (rt *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	rt.bus.emit(evt)
+}
+
+// Epoch is the hub's current epoch, the value every REST envelope's subject stamp
+// carries so the client's version map can refuse a response issued under a
+// previous one.
+func (rt *Runtime) Epoch() string {
+	return rt.bus.fanout.Position().Epoch
 }
 
 // refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two

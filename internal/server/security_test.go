@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 func helloMux() http.Handler {
@@ -352,7 +352,7 @@ func TestCSPPolicy_StructuralInvariants(t *testing.T) {
 		directives[name] = val
 	}
 
-	required := []string{"default-src", "script-src", "style-src", "connect-src", "frame-ancestors", "img-src"}
+	required := []string{"default-src", "script-src", "style-src", "connect-src", "frame-ancestors", "img-src", "font-src"}
 	for _, d := range required {
 		if _, ok := directives[d]; !ok {
 			t.Errorf("missing required directive: %s", d)

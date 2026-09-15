@@ -12,6 +12,7 @@
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
 import { decodeEffectiveSettings } from "../wire/decoders.gen.js";
 import type { EffectiveSettings } from "../wire/types.gen.js";
+import type { IdentityVerdict } from "../identity.js";
 
 // --- Steering save ---
 
@@ -30,22 +31,30 @@ export const saveSteering = apiAction<{ content: string }>({
 
 // --- Logout ---
 
-export const logout = apiAction<{ emailEl: HTMLElement; stAuthEl: HTMLElement }, unknown, string>({
+export const logout = apiAction<
+  { render: (v: IdentityVerdict) => void; prev: IdentityVerdict },
+  unknown,
+  IdentityVerdict
+>({
   name: "settings.logout",
   retryable: retryNetwork,
   request: () => ({ method: "POST", path: "/api/logout" }),
-  optimistic: ({ emailEl, stAuthEl }) => {
-    const prev = emailEl.textContent;
-    emailEl.textContent = "";
-    stAuthEl.textContent = "not signed in";
+  // The callback is INJECTED rather than imported: settings.ts imports this action,
+  // so importing renderIdentity here would close a cycle. The TYPE has no such
+  // problem — identity.ts is a leaf this module can reach directly.
+  optimistic: ({ render, prev }) => {
+    render({ state: "signed_out" });
     return prev;
   },
-  rollback: ({ emailEl, stAuthEl }, op) => {
+  // The whole VERDICT rather than the address, so all THREE arms are restorable.
+  // Carrying the address could not distinguish `signed_out` from `unavailable`: a
+  // logout attempted while the verdict was `unavailable` and then refused used to
+  // render "not signed in" where "unknown" had been.
+  rollback: ({ render }, op) => {
     if (op === undefined) {
       return;
     }
-    emailEl.textContent = op;
-    stAuthEl.textContent = op !== "" ? "signed in" : "not signed in";
+    render(op);
   },
   error: "Couldn't log out",
 });

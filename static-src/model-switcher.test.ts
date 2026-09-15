@@ -34,18 +34,16 @@ let cachedModels: ModelInfo[] = [];
  *  does with it. */
 let notice: { text: string; busy: boolean } | null = null;
 
-const { onExpand, effortDispatch, setLastEffortSpy } = vi.hoisted(() => ({
+const { onExpand, effortDispatch } = vi.hoisted(() => ({
   onExpand: { fn: null as null | (() => void) },
   effortDispatch: vi.fn(),
-  setLastEffortSpy: vi.fn(),
 }));
 
-/** The remembered last pick (`last_effort` + the model it was picked under) the
- *  module reads through session-context. The mocked setter writes the pair, so
- *  one holder both drives the model-scoped seed and records that a click
- *  remembered the level. */
-let lastEffort = "";
-let lastEffortModel = "";
+/** The remembered picks (`last_effort_by_model`, one level per model) the module
+ *  READS through session-context. Read-only here as in production: the seed is
+ *  written by the set_effort command, so a level the session refuses is never
+ *  remembered. */
+let lastEffortByModel: Record<string, string> = {};
 
 vi.mock("./pill-expand.js", () => ({
   makeExpandable: (_pill: HTMLElement, _content: HTMLElement, opts?: { onExpand?: () => void }) => {
@@ -108,12 +106,7 @@ vi.mock("./session-context.js", () => ({
   setCurrentModel: vi.fn(),
   setLastModel: vi.fn(),
   getLastEffortFor: (model: string) =>
-    model !== "" && model === lastEffortModel ? lastEffort : "",
-  setLastEffort: (level: string, model: string) => {
-    lastEffort = level;
-    lastEffortModel = model;
-    setLastEffortSpy(level, model);
-  },
+    model !== "" && Object.hasOwn(lastEffortByModel, model) ? (lastEffortByModel[model] ?? "") : "",
 }));
 // Only `humanName` is stubbed, to identity, so an assertion reads the model id it
 // was given. Everything else stays REAL: `rateLabel` is pure and its whole job is
@@ -222,9 +215,7 @@ describe("the effort section", () => {
     cachedModels = [];
     notice = null;
     onExpand.fn = null;
-    lastEffort = "";
-    lastEffortModel = "";
-    setLastEffortSpy.mockClear();
+    lastEffortByModel = {};
     setCatalogEfforts([], "");
     initModelSwitcher();
   });
@@ -418,7 +409,7 @@ describe("the effort section", () => {
     expect(markedTier()).toBe("max");
   });
 
-  // --- The remembered last pick (`last_effort`) ---
+  // --- The remembered last pick (`last_effort_by_model`) ---
   //
   // The level was per-chat with nothing remembering the last pick, so every NEW
   // chat silently reopened at the current model's default tier however many times
@@ -426,8 +417,7 @@ describe("the effort section", () => {
   // every new chat) and effort had no equivalent.
 
   it("opens a new chat on the level the user last picked, under the same model", () => {
-    lastEffort = "max";
-    lastEffortModel = "opus-5";
+    lastEffortByModel = { "opus-5": "max" };
     setCatalogEfforts(fiveTiers(), "high");
     cachedModels = [model("opus-5", "high")];
     // A brand-new chat: no choice of its own and no session to report a level.
@@ -441,8 +431,7 @@ describe("the effort section", () => {
   it("a level picked under ANOTHER model yields the current model's default", () => {
     // The seed is model-scoped (user report, 2026-08-31): a tier chosen on
     // opus-5 must not override gpt-luna's own default.
-    lastEffort = "max";
-    lastEffortModel = "opus-5";
+    lastEffortByModel = { "opus-5": "max" };
     setCatalogEfforts(fiveTiers(), "high");
     cachedModels = [model("gpt-luna", "medium")];
     setSession({ id: "c1", model: "gpt-luna", effort: "", effort_levels: fiveTiers() });
@@ -451,8 +440,7 @@ describe("the effort section", () => {
   });
 
   it("ignores a remembered level the current model does not offer", () => {
-    lastEffort = "max";
-    lastEffortModel = "sonnet-5";
+    lastEffortByModel = { "sonnet-5": "max" };
     cachedModels = [model("sonnet-5", "medium")];
     setSession({
       id: "c1",
@@ -467,8 +455,7 @@ describe("the effort section", () => {
   });
 
   it("marks the level the session reports over the remembered pick", () => {
-    lastEffort = "low";
-    lastEffortModel = "opus-5";
+    lastEffortByModel = { "opus-5": "low" };
     cachedModels = [model("opus-5", "high")];
     setSession({
       id: "c1",
@@ -481,15 +468,6 @@ describe("the effort section", () => {
     // A live session reports what it is RUNNING at; the seed only answers for a
     // chat that has no session yet.
     expect(markedTier()).toBe("xhigh");
-  });
-
-  it("remembers a pick as the level the next new chat opens on", async () => {
-    cachedModels = [model("opus-5", "high")];
-    setSession({ id: "c1", model: "opus-5", effort: "", effort_levels: fiveTiers() });
-
-    await press("{End}");
-
-    expect(setLastEffortSpy).toHaveBeenCalledWith("max", "opus-5");
   });
 
   it("sends nothing when the pick is the level this chat already chose", async () => {

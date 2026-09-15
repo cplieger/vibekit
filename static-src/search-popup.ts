@@ -2,11 +2,14 @@
 // reveal, for every page whose search narrows or re-scopes a LIST. It owns the
 // popup lifecycle (outside click, document-level Escape, the single-open group,
 // the trigger's ARIA), the hidden-before-first-open normalization, focus save and
-// restore, and one rule the shell has no reason to have:
+// restore, and two rules the shell has no reason to have:
 //
 //   CLOSING CLEARS THE QUERY, because a hidden box is not its own explanation for
 //   a narrowed list. One closed holding `redis` leaves three of forty rows on
 //   screen with nothing saying why.
+//
+//   A FILTER TRIMS, A SEARCH DOES NOT, and whitespace alone is no query for
+//   either: a filter folds against rows on screen, a server splits a search itself.
 //
 // The transcript's box stays in find-in-chat.ts: it has a cursor, its teardown
 // unwraps DOM it wrote into the page, and its Escape must not clear.
@@ -88,6 +91,13 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
     popup?.hide();
   }
 
+  function normalize(raw: string): string {
+    if (raw.trim() === "") {
+      return "";
+    }
+    return spec.kind === "filter" ? raw.trim() : raw;
+  }
+
   function build(): boolean {
     if (shell !== null) {
       return true;
@@ -124,8 +134,12 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
         el("div", { className: "page-find-row" }, glyph, input, closeButton),
         note,
       ],
-      query: spec.query,
-      render: spec.render,
+      // Both callbacks see the normalized text, so a page cannot filter on one
+      // string and paint for another.
+      query: (q, ctx) => spec.query(normalize(q), ctx),
+      render: (result, q) => {
+        spec.render(result, normalize(q));
+      },
       // Escape CLOSES, and the close is what clears.
       onDismiss: close,
       onSubmit:
@@ -155,9 +169,11 @@ export function createSearchPopup<R>(spec: SearchPopupSpec<R>): SearchPopup {
       },
       onClose: () => {
         built.cancel();
-        // Guarded, so closing an untouched box is not a refetch.
-        if (built.input.value !== "") {
-          built.input.value = "";
+        // Guarded on the query the page SAW, so closing an untouched box, or one
+        // holding only whitespace, is not a refetch.
+        const held = normalize(built.input.value) !== "";
+        built.input.value = "";
+        if (held) {
           built.run();
         }
         trigger()?.setAttribute("aria-pressed", "false");

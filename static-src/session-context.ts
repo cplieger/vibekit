@@ -3,9 +3,10 @@
 // the reasoning-effort level they last picked. Separated from app.ts so multiple
 // modules can read/write without going through the orchestrator.
 //
-// Both are also synced to server settings so they follow the user across
-// devices. There is no ambient agent — v3 roles are modes, set via the mode
-// picker, not an ambient agent.
+// Both live in server settings so they follow the user across devices, but only
+// the model is WRITTEN here: the effort seed is written by the server, inside the
+// set_effort command that justifies it, and this side only adopts it. There is no
+// ambient agent — v3 roles are modes, set via the mode picker.
 //
 // The two are ambient MEMORY, not state: the model a chat runs on and the tier it
 // runs at both live on the chat record. These answer the different question a NEW
@@ -19,15 +20,13 @@ import { patchSettings } from "./persist.js";
 class SessionContextController {
   private currentModel = "auto";
   private lastModelCache = "auto";
-  /** Empty means the user has never picked a level, so a new chat has nothing to
-   *  open with and falls through to the model's own default tier. */
-  private lastEffortCache = "";
-  /** The model lastEffort was picked under. The seed applies only to a chat
-   *  running THAT model: a tier is a judgement about one model, so carrying it
-   *  onto another overrode that model's own default (user report, 2026-08-31).
-   *  Empty (a pre-pair install) means the seed never applies, which self-heals
-   *  on the next pick. */
-  private lastEffortModelCache = "";
+  /** The level last picked under each model. A model with no entry has nothing
+   *  for a new chat to open with and falls through to that model's own default
+   *  tier. PER MODEL because a tier is a judgement about one model's
+   *  speed/quality trade, so one level for the whole app retracted every other
+   *  model's remembered pick the moment a tier was chosen anywhere (user report,
+   *  2026-08-31). */
+  private lastEffortByModel: Record<string, string> = {};
 
   getCurrentModel(): string {
     return this.currentModel;
@@ -62,30 +61,16 @@ class SessionContextController {
   }
 
   getLastEffortFor(model: string): string {
-    if (model === "" || this.lastEffortModelCache !== model) {
+    // A model id is arbitrary text, so an inherited member (`constructor`) must
+    // answer like an absent one rather than like an entry.
+    if (model === "" || !Object.hasOwn(this.lastEffortByModel, model)) {
       return "";
     }
-    return this.lastEffortCache;
+    return this.lastEffortByModel[model] ?? "";
   }
-  setLastEffort(level: string, model: string): void {
-    // Same redundant-write guard as setLastModel, for the same reason: the
-    // settings_updated handler must not be able to patch a confirmed value back
-    // and loop, and a repeat pick of the level already in force must not wake the
-    // save indicator.
-    if (this.lastEffortCache === level && this.lastEffortModelCache === model) {
-      return;
-    }
-    this.lastEffortCache = level;
-    this.lastEffortModelCache = model;
-    void patchSettings({ last_effort: level, last_effort_model: model });
-  }
-
-  restoreLastEffort(level: string | undefined, model: string | undefined): void {
-    if (level !== undefined) {
-      this.lastEffortCache = level;
-    }
-    if (model !== undefined) {
-      this.lastEffortModelCache = model;
+  restoreLastEffort(byModel: Record<string, string> | undefined): void {
+    if (byModel !== undefined) {
+      this.lastEffortByModel = { ...byModel };
     }
   }
 }
@@ -111,21 +96,17 @@ export function restoreLastModel(id: string | undefined): void {
   instance.restoreLastModel(id);
 }
 
-/** The remembered effort level, when it was picked under `model`; "" otherwise.
- *  The model gate is what stops a tier chosen on one model overriding another
- *  model's default — the seed's two readers (this and the server's effortFor)
- *  apply the same scope or the pill lies about what the session runs. */
+/** The level remembered for `model`; "" when that model has none. The per-model
+ *  lookup is what stops a tier chosen on one model overriding another model's
+ *  default — the seed's two readers (this and the server's effortFor) apply the
+ *  same scope or the pill lies about what the session runs. */
 export function getLastEffortFor(model: string): string {
   return instance.getLastEffortFor(model);
 }
-export function setLastEffort(level: string, model: string): void {
-  instance.setLastEffort(level, model);
-}
 
-/** Restore last_effort (+ the model it was picked under) from settings on
- *  startup, and from the settings_updated SSE. Cache-only, like
- *  restoreLastModel: setLastEffort would patch the server-confirmed value
- *  straight back and loop at debounce speed. */
-export function restoreLastEffort(level: string | undefined, model: string | undefined): void {
-  instance.restoreLastEffort(level, model);
+/** Adopt last_effort_by_model from settings on startup and from the
+ *  settings_updated SSE. Cache-only: the SEED is written by the server, inside
+ *  the set_effort command that justifies it, so this side never patches. */
+export function restoreLastEffort(byModel: Record<string, string> | undefined): void {
+  instance.restoreLastEffort(byModel);
 }

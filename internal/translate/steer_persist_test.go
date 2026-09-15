@@ -127,6 +127,46 @@ func TestSteeringCleared_DoesNotOverwriteAReadSteer(t *testing.T) {
 	}
 }
 
+// The REPORTED defect, in the shape a reader met it: a steer this server sent,
+// cleared unread by a manual stop, whose ledger entry was missing at queue time.
+// The row must still be the USER's, because the id says so.
+//
+// Both halves of the damage key on this one field. The note's label comes from
+// (origin, dropped), so an agent verdict titles the reader's own words "Workflow
+// result not delivered"; and pendingSteerCarry keeps only user-origin rows, so the
+// boundary resend DISCARDS the text instead of sending it as the next turn — the
+// one thing the dropped state promises will happen.
+//
+// The ledger is left empty deliberately: that is every one of its loss modes at
+// once (the queued-frame race, TTL expiry, cap eviction, chat teardown, restart).
+func TestSteeringCleared_ADerivedIDTheLedgerLostIsStillTheUsers(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(rolesOf(deps))
+	const id = "steer-m-mtyaeheu-i481u605rb5m5u2c1y"
+
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_queued", map[string]any{
+			"messageId": id,
+			"content":   "correction, the url does not work",
+		}), FrameAttribution{})
+	tr.HandleSessionInfoUpdate(t.Context(), "c1",
+		steerFrame(t, "steering_cleared", map[string]any{
+			"messageIds": []string{id},
+		}), FrameAttribution{})
+
+	rows := steerRows(t, store, "c1")
+	if len(rows) != 1 {
+		t.Fatalf("persisted %d steer rows, want 1", len(rows))
+	}
+	if rows[0].SteerOrigin != vibekit.SteerOriginUser {
+		t.Errorf("SteerOrigin = %q, want %q — a %q id is one this server sent",
+			rows[0].SteerOrigin, vibekit.SteerOriginUser, vibekit.SteerIDPrefix)
+	}
+	if rows[0].SteerState != vibekit.SteerStateDropped {
+		t.Errorf("SteerState = %q, want %q", rows[0].SteerState, vibekit.SteerStateDropped)
+	}
+}
+
 // An agent-origin steer keeps its own origin, or the note's title claims a
 // workflow's report is something the reader typed — the defect SteerOrigin exists
 // to prevent, which the durable row would otherwise reintroduce on every reload.

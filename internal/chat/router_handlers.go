@@ -15,7 +15,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/logsafe"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
@@ -31,8 +31,8 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	headers := rt.store.List(r.Context())
-	webhttp.WriteJSON(w, map[string]any{"chats": headers})
+	headers, stamp := rt.store.ListStamped(r.Context())
+	webhttp.WriteJSON(w, map[string]any{"chats": headers, "subject": stamp})
 }
 
 // handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
@@ -79,7 +79,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), vibekit.ChatID(id))
+	c, stamp, ok := rt.store.GetStamped(r.Context(), vibekit.ChatID(id))
 	if !ok {
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
@@ -127,6 +127,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	turn := rt.store.TurnOpen(vibekit.ChatID(id))
 	page := map[string]any{
 		"chat":                c.Header(),
+		"subject":             stamp,
 		"messages":            window,
 		"has_more":            start > 0,
 		"draft":               c.Draft,
@@ -393,6 +394,11 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vib
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a session-wide lexical scan.
 // Server-side because the client's store is a paginated window.
+//
+// It reads the PERSISTED record, so the in-flight turn is not searched: the
+// assistant message being streamed lives in the agent's buffer until turn end.
+// The DOM holds that text, so the client's own pass covers it, which is why the
+// two counts are reported side by side rather than subtracted.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
@@ -409,9 +415,7 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vi
 	}
 	// Both halves of the in-chat search must agree on the match-case toggle.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	webhttp.WriteJSON(w, map[string]any{
-		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
-	})
+	webhttp.WriteJSON(w, Search(c.Messages, r.URL.Query().Get("q"), caseSensitive))
 }
 
 // parseLimitParam returns the ?limit= page size, honouring 1..500 inclusive;

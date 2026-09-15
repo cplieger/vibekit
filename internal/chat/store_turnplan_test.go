@@ -15,7 +15,7 @@ import (
 func TestUpsertTurnPlan_SteerDoesNotBoundTheTurn(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-	if err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "plan turn"
 		return true
 	}); err != nil {
@@ -65,7 +65,7 @@ func TestUpsertTurnPlan_SteerDoesNotBoundTheTurn(t *testing.T) {
 func TestUpsertTurnPlan_PromptStillBoundsTheTurn(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
-	if err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "plan turn"
 		return true
 	}); err != nil {

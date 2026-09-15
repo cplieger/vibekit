@@ -113,7 +113,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 func TestRetireBridges_ClosesIdleChatBridges(t *testing.T) {
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestRetireBridges_MarksBusyBridgeAndReplacesItAtNextOpen(t *testing.T) {
 	}, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	first, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -202,7 +202,7 @@ func TestOpenBridge_ChecksIdentityBeforeReuse(t *testing.T) {
 	h, cs, _ := newTestHub()
 	checks := 0
 	h.SetIdentityCheck(func(context.Context) { checks++ })
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)

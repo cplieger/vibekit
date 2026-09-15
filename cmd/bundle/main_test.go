@@ -299,3 +299,120 @@ func TestCleanOutputs_SweepsThePrecacheManifest(t *testing.T) {
 		t.Errorf("static/manifest.json was removed, want the committed asset untouched: %v", err)
 	}
 }
+
+// stageScripts lays out a static-src/ holding the two script entries bundleScripts
+// builds, with the worker body given, and makes the parent the process cwd. The page
+// entry reads __SSE_WORKER_URL__ so the injected literal reaches app.js. t.Chdir is
+// process-wide, so no caller may be parallel.
+func stageScripts(t *testing.T, workerBody string) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, srcDir)
+	for _, d := range []string{src, filepath.Join(dir, outDir)} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := "declare const __SSE_WORKER_URL__: string;\nconsole.log(__SSE_WORKER_URL__);\n"
+	if err := os.WriteFile(filepath.Join(src, "app.ts"), []byte(app), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeWorker(t, dir, workerBody)
+	t.Chdir(dir)
+	return dir
+}
+
+func writeWorker(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, srcDir, "sse-worker.ts"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// workerChunks lists the sse-worker scripts under static/chunks/, sourcemaps excluded.
+func workerChunks(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(dir, outDir, "chunks"))
+	if err != nil {
+		t.Fatalf("read chunks: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "sse-worker-") && filepath.Ext(e.Name()) == ".js" {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// TestBundleScripts_InjectsTheHashedWorkerURL: the worker lands under /chunks/ at a
+// content-hashed name, exactly one of them, and app.js names it — the page constructs
+// the worker from that literal, so a mismatch is a worker that never spawns. A change
+// to the worker's source moves the name and the rebuild removes the old one, which is
+// what makes the URL the worker's identity across a deploy.
+func TestBundleScripts_InjectsTheHashedWorkerURL(t *testing.T) {
+	dir := stageScripts(t, "self.onconnect = () => { console.log('one'); };\n")
+	build := func() {
+		if err := cleanOutputs(); err != nil {
+			t.Fatalf("cleanOutputs() = %v", err)
+		}
+		if err := bundleScripts(); err != nil {
+			t.Fatalf("bundleScripts() = %v", err)
+		}
+	}
+	build()
+	first := workerChunks(t, dir)
+	if len(first) != 1 {
+		t.Fatalf("worker chunks after build = %q, want exactly one", first)
+	}
+	if !strings.HasPrefix(first[0], "sse-worker-") || first[0] == "sse-worker-.js" {
+		t.Errorf("worker chunk = %q, want sse-worker-<hash>.js", first[0])
+	}
+	app, err := os.ReadFile(filepath.Join(dir, outDir, "app.js"))
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	want := `"/chunks/` + first[0] + `"`
+	if !strings.Contains(string(app), want) {
+		t.Errorf("app.js does not carry %s; body = %s", want, app)
+	}
+
+	writeWorker(t, dir, "self.onconnect = () => { console.log('two'); };\n")
+	build()
+	second := workerChunks(t, dir)
+	if len(second) != 1 {
+		t.Fatalf("worker chunks after rebuild = %q, want exactly one", second)
+	}
+	if second[0] == first[0] {
+		t.Errorf("worker chunk after a source change = %q, want a different hash than %q", second[0], first[0])
+	}
+	app, err = os.ReadFile(filepath.Join(dir, outDir, "app.js"))
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	if !strings.Contains(string(app), `"/chunks/`+second[0]+`"`) {
+		t.Errorf("app.js after rebuild does not carry the new worker name %q", second[0])
+	}
+}
+
+// TestEmittedEntry_RefusesAnAmbiguousMetafile: the page needs ONE worker URL, so a
+// metafile naming two entry scripts (or none) is refused rather than picked from.
+func TestEmittedEntry_RefusesAnAmbiguousMetafile(t *testing.T) {
+	cases := map[string]string{
+		"none": `{"outputs":{"static/chunks/x.js.map":{}}}`,
+		"two": `{"outputs":{"static/chunks/a-1.js":{"entryPoint":"static-src/a.ts"},` +
+			`"static/chunks/b-2.js":{"entryPoint":"static-src/b.ts"}}}`,
+	}
+	for name, meta := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got, err := emittedEntry(meta); err == nil {
+				t.Errorf("emittedEntry(%s) = %q, nil; want a refusal", name, got)
+			}
+		})
+	}
+	got, err := emittedEntry(`{"outputs":{"static/chunks/sse-worker-AB.js":{"entryPoint":"static-src/sse-worker.ts"},` +
+		`"static/chunks/sse-worker-AB.js.map":{}}}`)
+	if err != nil || got != "/chunks/sse-worker-AB.js" {
+		t.Errorf("emittedEntry(one) = %q, %v; want /chunks/sse-worker-AB.js, nil", got, err)
+	}
+}

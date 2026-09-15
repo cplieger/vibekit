@@ -31,7 +31,7 @@ vi.mock("./tabs.js", () => ({
   // a tab, or reads which tab is on screen.
   openEditorView: vi.fn(),
   setTabDirty: vi.fn(),
-  toggleGitView: vi.fn(),
+  openGitView: vi.fn(),
   closeTab: vi.fn(),
   getActiveTabId: vi.fn(() => ""),
   // `(kind, ref)` in, opaque id out — and "" for "no tab". The fake answers with

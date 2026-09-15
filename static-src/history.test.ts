@@ -26,8 +26,16 @@ const cancelSessions = vi.fn();
 // to refresh the list, so the mock answers the ordinary arm by default.
 const openPreviousSession = vi.fn(() => Promise.resolve("opened"));
 const openRunView = vi.fn();
-const openChatTab = vi.fn();
-const searchDispatch = vi.fn(async () => ({ matches: [], scanned: 0, truncated: false }));
+// Resolves with the tab OUTCOME: a search row's click hands the reader to the
+// chat's find only once the tab is open, so the mock answers the ordinary arm.
+const openChatTab = vi.fn(() => Promise.resolve("opened"));
+const openChatFindAt = vi.fn();
+const searchDispatch = vi.fn(async () => ({
+  matches: [],
+  scanned: 0,
+  matched: 0,
+  truncated: false,
+}));
 const deleteChatDispatch = vi.fn(async () => ({ ok: true }));
 const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
 const confirmMock = vi.fn(async () => true);
@@ -66,16 +74,15 @@ vi.mock("./chat.js", () => ({ openPreviousSession, openChatTab }));
 vi.mock("./actions/chat-search.js", () => ({
   searchChats: { dispatch: searchDispatch, cancel: vi.fn() },
 }));
+// The transcript's find, which a match row hands the query and the hit to. Its
+// landing has its own tests; here the seam is what a click hands over, and the
+// real module reaches the store's whole surface where this suite stubs one read.
+vi.mock("./find-in-chat.js", () => ({ openChatFindAt }));
 vi.mock("./run-view.js", () => ({ openRunView }));
-// The toggle takes NO callback any more: `mount` and `teardown` are what the tab
-// factory reaches through this module's own lazy-imported `loadHistoryView` /
-// `teardownHistoryView`, so every door into the page gets one behaviour. It only
-// has to resolve here; the suites below mount the page themselves.
-const toggleHistoryView = vi.fn(() => Promise.resolve());
 // `hasTab` is keyed by `(kind, ref)`: ids are opaque and server-minted, so a
 // chat id is no longer a tab id and the predicate takes the subject instead.
 const hasTab = vi.fn((_kind: string, _ref?: string) => false);
-vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab }));
+vi.mock("./tabs.js", () => ({ hasTab }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   // A spy rather than a bare arrow: whether the ARM fires at all is the observable
   // the settled-empty case pins, and the painter's own refusal is skeleton.test.ts's.
@@ -96,8 +103,6 @@ vi.mock("./scroll.js", () => ({
     fn();
   },
 }));
-vi.mock("./tool-group.js", () => ({ trackInProgress: noop }));
-
 const chatRow = {
   session_id: "sess_chat",
   title: "A conversation",
@@ -132,13 +137,13 @@ const runAt = (status: string) => ({ ...runRow, status });
  *  plain container: a role on it would flatten the delete button beside it out of
  *  the accessibility tree. */
 const openName = (row: Element): string | null =>
-  row.querySelector("button.list-row-name")?.getAttribute("aria-label") ?? null;
+  row.querySelector("button.history-row-main")?.getAttribute("aria-label") ?? null;
 
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
-  // The pair `activateTabQuietly` runs. Not `showHistoryView`: that one toggles the
-  // TAB, which is a round trip that paints nothing here.
+  // The pair `activateTabQuietly` runs. Not `tabs.ts`'s `toggleHistoryView`: that one
+  // toggles the TAB, which is a round trip that paints nothing here.
   const { loadHistoryView, refreshHistoryView } = (await import(
     /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
   )) as typeof ModHistory;
@@ -672,14 +677,12 @@ describe("history: the tab-restore loader", () => {
     return document.getElementById("history-table")!;
   }
 
-  it("fills the page without going through the tab toggle", async () => {
+  it("fills the page from the activation pair alone", async () => {
     const c = await restore();
     expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
-    // The toggle is the thing that would have closed a restored, active tab.
-    expect(toggleHistoryView).not.toHaveBeenCalled();
   });
 
-  it("is a reload when fired again, never a close", async () => {
+  it("is a reload when fired again, and paints one row rather than two", async () => {
     const c = await restore();
     const { loadHistoryView, refreshHistoryView } = (await import(
       /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
@@ -691,7 +694,6 @@ describe("history: the tab-restore loader", () => {
         throw new Error("not reloaded");
       }
     });
-    expect(toggleHistoryView).not.toHaveBeenCalled();
     expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
   });
 
@@ -784,8 +786,10 @@ const match = (over: Record<string, unknown> = {}) => ({
     turn_message_id: "m1",
     excerpt: "we moved the cache to redis",
     role: "user",
+    segment_kind: "content",
     turn: 1,
-    offset: 0,
+    offset: 22,
+    segment_len: 27,
   },
   hits: 3,
   score: 12,
@@ -818,9 +822,9 @@ async function search(
   document.body.innerHTML = `<div id="history-view"><div id="history-table"></div></div>`;
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
-  // `loadHistoryView` rather than `showHistoryView`: the latter toggles the TAB,
-  // which is a round trip that paints nothing here, while the page's own loader is
-  // what every door reaches through the tab factory's lazy import.
+  // `loadHistoryView` rather than `tabs.ts`'s `toggleHistoryView`: the latter toggles
+  // the TAB, which is a round trip that paints nothing here, while the page's own
+  // loader is what every door reaches through the tab factory's lazy import.
   const { loadHistoryView } = (await import(
     /* @vite-ignore */ `./history.ts?boot=${bootSeq}`
   )) as typeof ModHistory;
@@ -856,7 +860,12 @@ describe("history: cross-chat search", () => {
   });
 
   it("renders matching CHATS with their best line", async () => {
-    const { table } = await search({ matches: [match()], scanned: 12, truncated: false });
+    const { table } = await search({
+      matches: [match()],
+      scanned: 12,
+      matched: 1,
+      truncated: false,
+    });
     const row = table.querySelector("[data-search-chat]");
     expect(row?.getAttribute("data-search-chat")).toBe("c-redis");
     expect(row?.textContent).toContain("Redis migration");
@@ -864,48 +873,124 @@ describe("history: cross-chat search", () => {
     expect(row?.textContent).toContain("3 matches");
   });
 
-  // A title-only match has no line to quote, and must not render an empty row
-  // that looks like a rendering bug.
+  // A title-only match carries no best hit at all, and must not render an empty
+  // row that looks like a rendering bug.
   it("explains a title-only match instead of showing an empty excerpt", async () => {
-    const titleOnly = match({
-      hits: 0,
-      best: { message_id: "", turn_message_id: "", excerpt: "", role: "", turn: 0, offset: 0 },
+    const { best: _best, ...titleOnly } = match({ hits: 0 });
+    const { table } = await search({
+      matches: [titleOnly],
+      scanned: 4,
+      matched: 1,
+      truncated: false,
     });
-    const { table } = await search({ matches: [titleOnly], scanned: 4, truncated: false });
     expect(table.textContent).toContain("matches the conversation name");
   });
 
-  it("opens the matched chat on click", async () => {
-    const { table } = await search({ matches: [match()], scanned: 3, truncated: false });
+  it("opens the matched chat on click and hands its find the query and the best hit", async () => {
+    // The row said `3 matches`; without the handoff the reader landed in the chat
+    // with nothing marked and the query to retype, so that count was unreachable.
+    const { table } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
     table.querySelector<HTMLElement>("[data-search-chat]")!.click();
     expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
     // Search results are chats that already exist; adopting a session is the
     // OTHER door and must not fire here.
     expect(openPreviousSession).not.toHaveBeenCalled();
+    // After the tab resolved — the switch closes and clears the transcript's box,
+    // so a handoff running before it would be undone by it.
+    await vi.waitFor(() => {
+      expect(openChatFindAt).toHaveBeenCalledTimes(1);
+    });
+    expect(openChatFindAt).toHaveBeenCalledWith("redis", match().best);
+  });
+
+  it("opens a title-only match without a find, because it has no hit to step to", async () => {
+    const { best: _best, ...titleOnly } = match({ hits: 0 });
+    const { table } = await search({
+      matches: [titleOnly],
+      scanned: 4,
+      matched: 1,
+      truncated: false,
+    });
+    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    await vi.waitFor(() => {
+      expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
+    });
+    await Promise.resolve();
+    expect(openChatFindAt).not.toHaveBeenCalled();
+  });
+
+  it("hands nothing to a find when the chat did not open", async () => {
+    // Deleted since the search: the tab refused, so there is no transcript for the
+    // query to land in, and opening the box would search whatever chat IS active.
+    openChatTab.mockResolvedValueOnce("not-found");
+    const { table } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
+    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    await vi.waitFor(() => {
+      expect(openChatTab).toHaveBeenCalledTimes(1);
+    });
+    await Promise.resolve();
+    expect(openChatFindAt).not.toHaveBeenCalled();
+  });
+
+  // The note is the shared search grammar over this surface's one noun: a match is
+  // a conversation and the scan reads conversations, so the sentence says
+  // "conversations" on both axes and never "files" or "messages".
+  it("states the cut and the scan's reach in the shared grammar", async () => {
+    const { note } = await search({
+      matches: [match()],
+      scanned: 500,
+      matched: 62,
+      truncated: true,
+    });
+    // The cut is `matched > matches.length`; `truncated` says only that older
+    // conversations were not read, and it is the tally that says so, not a
+    // sentence of this page's own.
+    expect(note.textContent).toBe(
+      "1 of 62 conversations shown; 500 conversations scanned, not everything was read",
+    );
+  });
+
+  it("states a whole answer without a cut clause", async () => {
+    const { note } = await search({
+      matches: [match()],
+      scanned: 12,
+      matched: 1,
+      truncated: false,
+    });
+    expect(note.textContent).toBe("1 conversation; 12 conversations scanned");
   });
 
   // The honest-empty-state rule: without saying the scan was capped, "no
   // matches" implies the text is nowhere.
-  it("says older conversations were not searched when the scan truncated", async () => {
-    const { note } = await search({ matches: [], scanned: 500, truncated: true });
-    expect(note.textContent).toContain("were not searched");
+  it("says not everything was searched on an empty answer the scan did not finish", async () => {
+    const { note } = await search({ matches: [], scanned: 500, matched: 0, truncated: true });
+    expect(note.textContent).toBe("No matches in 500 conversations; not everything was searched");
   });
 
-  it("reports the scanned count on a clean empty result", async () => {
-    const { note } = await search({ matches: [], scanned: 7, truncated: false });
-    expect(note.textContent).toContain("7 conversations");
-    expect(note.textContent).not.toContain("were not searched");
+  it("says plainly that nothing matched when the scan read everything", async () => {
+    const { note } = await search({ matches: [], scanned: 7, matched: 0, truncated: false });
+    expect(note.textContent).toBe("No matches");
   });
 
   it("surfaces a failed search rather than an empty list", async () => {
     const { note } = await search(null);
-    expect(note.textContent).toContain("Search failed");
+    expect(note.textContent).toBe("Could not search");
   });
 
   it("is a role=search landmark carrying the shared field attributes", async () => {
     // The box used to be hand-authored markup with no role at all, so it was the
     // one search on the page not reachable by landmark navigation.
-    await search({ matches: [match()], scanned: 3, truncated: false });
+    await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     const region = document.getElementById("hist-search");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Search conversations");
@@ -927,7 +1012,7 @@ describe("history: cross-chat search", () => {
     // is asked from memory, and memory does not remember capitalisation" — and
     // titleHits folds unconditionally. A toggle here would be wired to nothing,
     // which is worse than its absence.
-    await search({ matches: [match()], scanned: 3, truncated: false });
+    await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     expect(document.querySelector('#hist-search [aria-label="Match case"]')).toBeNull();
     // And the query carries nothing but the text, so there is no flag to be
     // silently dropped on the way to a server that would ignore it.
@@ -939,7 +1024,7 @@ describe("history: cross-chat search", () => {
     // the loaded list does not contain. A funnel would promise it only narrows
     // what is here, which is what the docs and git boxes DO promise — same
     // component, the other glyph.
-    await search({ matches: [match()], scanned: 3, truncated: false });
+    await search({ matches: [match()], scanned: 3, matched: 1, truncated: false });
     expect(document.querySelector("#hist-search .page-find-icon circle")).not.toBeNull();
     expect(document.querySelector("#hist-search .page-find-icon polygon")).toBeNull();
     // And the × says which of the two it is closing.
@@ -947,7 +1032,12 @@ describe("history: cross-chat search", () => {
   });
 
   it("closes on Escape, and the close is what returns the full list", async () => {
-    const { table, find } = await search({ matches: [match()], scanned: 3, truncated: false });
+    const { table, find } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     input.dispatchEvent(
@@ -968,8 +1058,43 @@ describe("history: cross-chat search", () => {
     expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
+  it("sends a search as typed, trailing space included", async () => {
+    // This box is a SEARCH, so the popup's trim rule leaves the text alone and no
+    // rule about the text lives on this page; the server splits the query on
+    // whitespace itself, so what it finds is unchanged.
+    await search({ matches: [match()], scanned: 3, matched: 1, truncated: false }, "redis ");
+    expect(searchDispatch).toHaveBeenLastCalledWith("redis ");
+  });
+
+  it("shows the list, not a search, for a box holding only whitespace", async () => {
+    const { table } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    searchDispatch.mockClear();
+
+    const input = document.getElementById("hist-search-input") as HTMLInputElement;
+    input.value = "   ";
+    input.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => {
+      if (table.querySelectorAll("[data-key]").length === 0) {
+        throw new Error("list not restored");
+      }
+    });
+    expect(searchDispatch).not.toHaveBeenCalled();
+    expect(table.querySelector("[data-search-chat]")).toBeNull();
+  });
+
   it("returns to the full list when the box is cleared", async () => {
-    const { table } = await search({ matches: [match()], scanned: 3, truncated: false });
+    const { table } = await search({
+      matches: [match()],
+      scanned: 3,
+      matched: 1,
+      truncated: false,
+    });
     dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
 
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
@@ -1048,20 +1173,34 @@ describe("history: the per-row delete", () => {
   it("keeps the delete button out of a control, so it is not nested in one", async () => {
     // A role="button" on the row is Children-Presentational: it flattens this
     // button out of the accessibility tree, which axe reports as
-    // nested-interactive on every row. The open control is a real button beside
-    // it instead, and the platform gives that one Enter and Space — which the
-    // row's role never had, because nothing ever added the key handler it needs.
+    // nested-interactive on every row. The open control is a real button holding
+    // the row's own content instead, with the delete button as its SIBLING — so
+    // the target is the box and neither control sits inside the other. The
+    // platform also gives the open button Enter and Space, which the row's role
+    // never had, because nothing ever added the key handler it needs.
     const c = await render({ sessions: [ownedRow], runs: [runRow] });
     for (const key of ["s:sess_owned", "r:wf_1"]) {
       const row = c.querySelector<HTMLElement>(`[data-key="${key}"]`)!;
       expect(row.getAttribute("role"), `${key} row is a control`).toBeNull();
       expect(row.getAttribute("tabindex"), `${key} row is focusable`).toBeNull();
-      const open = row.querySelector("button.list-row-name");
+      const open = row.querySelector<HTMLElement>("button.history-row-main");
       expect(open, `${key} has no open button`).not.toBeNull();
       expect(open?.getAttribute("aria-label")).toMatch(/^Open /);
       // Nothing else in the row may be interactive: two controls, no nesting.
       const controls = [...row.querySelectorAll("button, [role='button'], [tabindex]")];
       expect(controls).toHaveLength(2);
+      const del = row.querySelector<HTMLElement>("[data-history-delete]")!;
+      expect(open?.contains(del), `${key}'s delete button is inside the open control`).toBe(false);
+      // The control holds the row's own content, which is what makes its box the
+      // row's box. `history-row-target.test.ts` measures the geometry that follows;
+      // this is the structure it measures, asserted against the real builder so the
+      // two cannot drift.
+      for (const part of [".list-row-title", ".list-row-meta", ".history-kind"]) {
+        expect(
+          open?.querySelector(part),
+          `${key}: ${part} is outside the open control`,
+        ).not.toBeNull();
+      }
     }
   });
 

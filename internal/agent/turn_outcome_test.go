@@ -95,7 +95,7 @@ func TestCloseOnWireEnd_TruncationCompletesRatherThanFails(t *testing.T) {
 // and vanished from the turn index.
 func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -128,7 +128,7 @@ func TestCloseOnWireEnd_AnEmptyFailedTurnPersistsAMarker(t *testing.T) {
 // Cost, accepted: one invisible EventTurnOutcome row per clean empty prompted turn.
 func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -158,13 +158,13 @@ func TestCloseOnWireEnd_AnEmptyCompletedPromptedTurnPersistsItsMarkerToo(t *test
 // which is why it asserts a suppression and an emission together. No marker: an
 // engine-opened turn has no trigger row, so the marker would be the whole turn and it
 // opens a headerless card that renders nothing. Still announced: this turn is the chat's
-// own and it really ended, and the client latches busy from server truth — replayTurnState
-// sets thinking at connect, GET /api/chats/{id} reports turn_open — with only a settled
+// own and it really ended, and the client latches busy from server truth — the connect's
+// `busy_chats` sets thinking, GET /api/chats/{id} reports turn_open — with only a settled
 // turn_ended or a transport gap able to retract them, so suppressing the frame leaves the
 // chat reading `running` with Cancel showing and Send meaning steer, indefinitely.
 func TestCloseOnWireEnd_AnEmptyEngineTurnPersistsNoMarkerButStillAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {

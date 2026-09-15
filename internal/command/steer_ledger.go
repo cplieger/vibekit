@@ -92,6 +92,24 @@ func (l *SteerLedger) SteerOrigin(chatID vibekit.ChatID, steerID string) vibekit
 	return vibekit.SteerOriginAgent
 }
 
+// ForgetUserSteer drops ONE recorded steer, for a send that turned out not to
+// have reached KAS's buffer.
+//
+// It exists because CmdSteer records the derived id BEFORE its RPC — the only
+// ordering that beats the notification — so a refused send has to be able to take
+// its entry back. Not a correctness fix: nothing else can carry a `steer-` id, so
+// a stale entry mislabels nothing and the TTL reclaims it. What it protects is the
+// bounded map, whose sweep evicts the entry closest to expiry once it is full, so
+// slots spent on sends that never happened cost real records.
+func (l *SteerLedger) ForgetUserSteer(chatID vibekit.ChatID, steerID string) {
+	if l == nil || steerID == "" {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.sent, steerKey{chat: chatID, id: steerID})
+}
+
 // ForgetChat drops every steer recorded for one chat, at its teardown.
 //
 // A linear scan over a map the bound above keeps in the low hundreds, because

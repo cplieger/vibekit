@@ -49,12 +49,6 @@ vi.mock("./editor-openers.js", () => ({
     /* noop */
   },
 }));
-vi.mock("./tool-group.js", () => ({
-  trackInProgress: () => {
-    /* noop */
-  },
-}));
-
 function mount(node: HTMLElement): HTMLElement {
   host.replaceChildren(node);
   return node;

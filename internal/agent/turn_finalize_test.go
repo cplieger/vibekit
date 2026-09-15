@@ -48,7 +48,7 @@ func hubOnDisk(t *testing.T, chatID vibekit.ChatID) (*Runtime, *chat.Store) {
 		t.Fatalf("chat.NewStore: %v", err)
 	}
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -72,7 +72,7 @@ func deadContext(t *testing.T) context.Context {
 // leaves it: a record on the registry and a buffer with content in it.
 func startedTurnOn(t *testing.T, h *Runtime, cs *fakeChatStore, chatID vibekit.ChatID, text string) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -139,7 +139,7 @@ func TestCloseTurnOnBridgeDeath_ClosesAnOpenTurn(t *testing.T) {
 // interrupted from, on every bridge exit the app performs.
 func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestCloseTurnOnBridgeDeath_IgnoresAChatWithNoOpenTurn(t *testing.T) {
 // the frame leaves a dead chat reading `running` with Cancel showing.
 func TestCloseTurnOnBridgeDeath_AnEmptyEngineTurnPersistsNoRowButStillAnnounces(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	h.stageTurnBuffer(t, "c1")
@@ -429,7 +429,7 @@ func abortedToolIDs(t *testing.T, h *Runtime) []string {
 // permanent spinner on each later reload of that chat.
 func TestEmitTurnEnded_EndTurnAbortsInFlightTools(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch := h.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
@@ -503,7 +503,7 @@ func TestFlushInFlightTurnOnSwitch_AnIdleChatRecordsNothing(t *testing.T) {
 // writes itself. That is what stops a second closer producing another one.
 func TestFinalizeLocalShellTurn_AnnouncesTheEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
@@ -520,7 +520,7 @@ func TestFinalizeLocalShellTurn_AnnouncesTheEnd(t *testing.T) {
 // produced the output.
 func TestStartTurn_LocalShellRecordsNoModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -545,7 +545,7 @@ func TestStartTurn_LocalShellRecordsNoModel(t *testing.T) {
 // next.
 func TestStartTurn_CapturesTheCreditBaseline(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Usage.Credits = 4.5
 		return true
@@ -564,7 +564,7 @@ func TestStartTurn_CapturesTheCreditBaseline(t *testing.T) {
 	}
 	// The spend is the difference against it, so a turn that costs 0.5 reports 0.5
 	// rather than the chat's running total.
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 5.0
 		return true
 	}); err != nil {
@@ -584,7 +584,7 @@ func TestStartTurn_CapturesTheCreditBaseline(t *testing.T) {
 // a question the agent had already answered.
 func TestFinalizeTurn_MeasuresEmptinessAfterFlushingTheCarry(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
@@ -625,7 +625,7 @@ func TestFinalizeTurn_MeasuresEmptinessAfterFlushingTheCarry(t *testing.T) {
 // could be evicted before that caller read it.
 func TestAwaitTurn_HandleOutlivesTheFinalizeAndDropsOnRelease(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
@@ -665,7 +665,7 @@ func TestAwaitTurn_UnknownEpochReportsNoSuchTurn(t *testing.T) {
 // abandoned wait left the chat's lifecycle usable.
 func TestAwaitTurn_DeadContextReturnsRatherThanParking(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourceLocalShell)
@@ -693,7 +693,7 @@ func TestAbandonInFlightTurn_WithNoEpochClosesNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// A turn the ENGINE started, streaming. It holds no prompt slot, so admission
 	// control never refused the prompt whose open then failed.
@@ -727,7 +727,7 @@ func TestCloseTurn_ConcurrentFoldDoesNotRaceTheContentSnapshot(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	const chatID vibekit.ChatID = "c1"
-	_ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	epoch, buf := h.stagePromptTurn(t, chatID)
 	buf.StartTurn(newMessageID())

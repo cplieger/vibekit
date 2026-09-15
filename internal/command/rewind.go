@@ -10,9 +10,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -38,22 +40,24 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 	if idx < 0 {
 		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
+	target := &chat.Messages[idx]
 
 	bridge, err := resumeForRevert(ctx, bridges, cmd.ChatID, chat.ACPSessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	result, status, err := revertToMessage(ctx, bridge, p.MessageID)
+	result, status, err := revertToMessage(ctx, bridge, target.AgentSideID())
 	if err != nil {
-		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status, keyError, err)
-		return nil, StatusError(status, err)
+		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status,
+			"kas_id_known", target.KASMessageID != "", keyError, err)
+		return nil, StatusError(status, explainRevertRefusal(target, err))
 	}
 
 	// Cut at idx, not idx+1: the addressed message is discarded with its
 	// successors (KAS slices from the target inclusive), so the prompt at
 	// that turn is gone and has to be retyped.
-	if mErr := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if _, mErr := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -102,9 +106,9 @@ func resumeForRevert(ctx context.Context, bridges BridgeAccess, chatID vibekit.C
 		return nil, StatusError(http.StatusConflict, errRewindSessionNotResumed)
 	}
 
-	// A resume replays into a projection swapped in on the Forward goroutine, and
-	// mergeProjection returns its messages wholesale — so a swap landing after the
-	// truncation hands every reverted turn straight back. Refuse rather than cut.
+	// A resume replays into a projection swapped in on the Forward goroutine, and the
+	// merge PRESERVES a record row newer than the replay's newest — so a swap landing
+	// after the truncation hands every reverted turn straight back. Refuse rather than cut.
 	if err := bridges.AwaitReplayAdopted(ctx, chatID); err != nil {
 		slog.Warn("rewind: replay not adopted, refusing to truncate",
 			"chat", chatID, keyError, err)
@@ -145,9 +149,23 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 	return result, http.StatusOK, nil
 }
 
-// userMessageIndex locates the revert target, returning -1 when absent.
-// User-only because KAS requires it, and only user messages share an id space
-// with KAS — an assistant turn carries KAS's own id.
+// explainRevertRefusal adds vibekit's own account of an unaddressable turn to a refusal
+// KAS could not have explained. It keys on the fallback having been taken rather than on
+// the reason, because the reply carries no code and KAS's prose is not vibekit's to
+// match — so on a legacy row the sentence is appended whatever the refusal was, mid-turn
+// included, where it names something that is not the cause. No test pins that case.
+// It APPENDS rather than replaces, so a more specific reason survives. Exact in the other
+// direction: Chat.RecordSession drops a stamp at a retirement, so an empty field is every
+// row vibekit holds no reachable id for rather than only the ones predating the stamp.
+func explainRevertRefusal(m *vibekit.Message, err error) error {
+	if m.KASMessageID != "" {
+		return err
+	}
+	return fmt.Errorf("%w — %w", err, errRewindNoAgentID)
+}
+
+// userMessageIndex locates the revert target, returning -1 when absent. User-only
+// because KAS requires it: the verb refuses an id naming any other record type.
 func userMessageIndex(messages []vibekit.Message, id string) int {
 	for i := range messages {
 		if messages[i].ID == id && messages[i].Role == vibekit.RoleUser {
@@ -162,7 +180,19 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 // persisted on the chat and applied to later sessions through StartOpts.Effort.
 // Per-chat, so two chats can disagree and a model switch discards nothing. A
 // bridgeless chat is not a 409, and auto-create mirrors CmdSetMode.
-func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
+//
+// It also records the level as the SEED a new chat on this model opens with. That
+// write is last because it must not outlive a refusal: the session's answer and
+// the chat's own record come first, and only a level this chat actually took is
+// remembered as a preference.
+func CmdSetEffort(
+	ctx context.Context,
+	bridges BridgeAccess,
+	chats ChatStore,
+	bus Broadcaster,
+	ws Workspace,
+	cmd *vibekit.ClientCommand,
+) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -182,7 +212,10 @@ func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cm
 		return nil, err
 	}
 
-	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	// The model comes off the record rather than the payload, which carries none.
+	var model string
+	if _, err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+		model = c.Model
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 			c.Effort = string(p.Level)
@@ -198,5 +231,41 @@ func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cm
 	}
 
 	slog.Info("effort set", "chat", cmd.ChatID, "level", p.Level)
+	recordEffortSeed(ctx, bus, ws.ConfigDir, model, p.Level)
 	return responseWith(map[string]any{"level": p.Level}), nil
+}
+
+// recordEffortSeed remembers level as what a NEW chat on model opens with, and
+// tells the other devices. A failure here does not fail the command: the chat now
+// runs at this level whatever the seed says, and the seed is memory for chats that
+// do not exist yet.
+//
+// A chat with no model yet is skipped rather than seeded under an empty key, which
+// is a key no reader resolves.
+func recordEffortSeed(ctx context.Context, bus Broadcaster, configDir, model string, level vibekit.EffortLevel) {
+	if configDir == "" || model == "" {
+		return
+	}
+	if _, err := settings.Update(ctx, configDir, func(doc map[string]json.RawMessage) error {
+		byModel := map[string]string{}
+		if raw, ok := doc[settings.KeyLastEffortByModel]; ok {
+			// A value that does not decode is one the effective-settings reader
+			// already ignores, so replacing it repairs the key rather than losing
+			// a level anything could read.
+			if err := json.Unmarshal(raw, &byModel); err != nil {
+				byModel = map[string]string{}
+			}
+		}
+		byModel[model] = string(level)
+		raw, err := json.Marshal(byModel)
+		if err != nil {
+			return err
+		}
+		doc[settings.KeyLastEffortByModel] = raw
+		return nil
+	}); err != nil {
+		slog.Warn("effort seed not recorded", "model", model, "level", level, keyError, err)
+		return
+	}
+	bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 }

@@ -232,7 +232,7 @@ func depsWithStore(t *testing.T, chatID vibekit.ChatID) (*baseDeps, *[]vibekit.S
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewInMemoryChatStore()
 	deps.store = store
-	if err := store.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := store.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	return deps, events, store

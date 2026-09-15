@@ -567,7 +567,7 @@ describe("a dropped workflow step's tool call is bookkeeping-only", () => {
 // paint, a spy on `projectTurns`, and a mounted view to read the rendered card off.
 //
 // The defect: `thinking` is client memory that starts false, so between
-// `GET /api/chats/{id}` painting and the HELD `turn_state` frame releasing, a turn
+// `GET /api/chats/{id}` painting and the HELD `connected` frame releasing, a turn
 // whose reply is still in the server's in-memory buffer read "not running". The
 // projection then derived `unknown` — "nothing closed this turn" — and mounted an
 // outcome mark and a `.turn-notice` row for a turn the server knew was running.

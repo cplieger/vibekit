@@ -73,7 +73,7 @@ func hubOnDiskWatchingBroadcasts(t *testing.T, chatID vibekit.ChatID) (*Runtime,
 		t.Fatalf("chat.NewStore: %v", err)
 	}
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, cs)
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -303,7 +303,7 @@ func TestLostClaim_ADeletedCarrierIsNotResurrected(t *testing.T) {
 	h.coord.WireTurnEnd(t.Context(), chatID, vibekit.StopReasonError, "")
 
 	// A rewind between the two closers: the carrier is gone from the record.
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = nil
 		return true
 	}); err != nil {
@@ -343,7 +343,7 @@ func TestLostClaim_AnAbsentCarrierRowIsNotReportedAsTheGateDeclining(t *testing.
 
 	// A rewind between the two closers: the carrier's row is gone, so the mutate
 	// closure never runs.
-	if err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Messages = nil
 		return true
 	}); err != nil {

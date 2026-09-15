@@ -17,7 +17,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)
@@ -69,7 +69,7 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, _ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("OpenBridge: %v", err)

@@ -165,7 +165,7 @@ export function shapeExtends(prev: readonly string[], next: readonly string[]): 
 }
 
 /** One member of a PIPELINE: a delegate plus the identity its stage id carries. */
-export interface SubagentMember {
+interface SubagentMember {
   /** The delegate's `agent_subtask_id`. */
   subtaskID: string;
   /** The stage's author-given name, or "" for a delegate that is not a stage. */

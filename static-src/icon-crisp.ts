@@ -252,21 +252,3 @@ export function initIconCrisp(): void {
   // A web font landing changes control heights, moving every icon inside them.
   void document.fonts.ready.then(scheduleFull);
 }
-
-export function stopIconCrisp(): void {
-  resize?.disconnect();
-  resize = undefined;
-  added?.disconnect();
-  added = undefined;
-  if (settleTimer !== undefined) {
-    clearTimeout(settleTimer);
-    settleTimer = undefined;
-  }
-  pending.clear();
-  for (const el of document.querySelectorAll<SVGSVGElement>(TIERS)) {
-    if (applied.has(el)) {
-      el.style.translate = "";
-      applied.delete(el);
-    }
-  }
-}

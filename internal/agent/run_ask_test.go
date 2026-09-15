@@ -604,7 +604,7 @@ func TestReconcileNeedInput(t *testing.T) {
 				"workflowId": "wf_1", "status": "paused", "parentSessionId": "sess_owned",
 			}),
 		}
-		if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+		if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "A"
 			c.RecordSession("sess_owned")
 			return true

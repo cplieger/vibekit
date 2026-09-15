@@ -45,7 +45,14 @@ const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist
 // Spreading configDefaults.exclude also widens the previous top-level-only
 // `node_modules/**`. Both projects need the whole list: a project's `exclude`
 // REPLACES the root one rather than adding to it.
-const sharedExclude = [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"];
+const sharedExclude = [
+  ...configDefaults.exclude,
+  "../static/**",
+  "**/.stryker-tmp/**",
+  // The third project's files: node, but against a spawned vibekit binary rather
+  // than a fake, so neither of the two unit projects may collect them.
+  "e2e-sse/**",
+];
 
 // Trace view records a DOM snapshot per browser interaction, and the recording is
 // only readable through a reporter that serves it. VITEST_TRACE=1 turns on both
@@ -63,6 +70,10 @@ const sharedExclude = [...configDefaults.exclude, "../static/**", "**/.stryker-t
 const traceView = process.env["VITEST_TRACE"] === "1";
 
 export default defineConfig({
+  // cmd/bundle injects the SSE worker's content-hashed URL into the page bundle; a test
+  // build ships no worker, and the empty string is the adapter's "run the per-tab
+  // stream" reading (static-src/globals.d.ts).
+  define: { __SSE_WORKER_URL__: JSON.stringify("") },
   resolve: {
     alias: [
       // Allow deep imports into @cplieger/actions internals for test reset
@@ -111,6 +122,28 @@ export default defineConfig({
           // Package-root-relative, because the tests sit at the package root.
           include: ["**/*.node.test.ts"],
           exclude: sharedExclude,
+        },
+      },
+      {
+        // The SSE lifecycle against the REAL server: `SSE_FIXTURE` names a vibekit
+        // binary built with `-tags vibekit_test`, the globalSetup starts it on a
+        // scratch config dir and a free port, and every file skips itself when the
+        // variable is unset (the same belt the library's own fixture suite wears).
+        // Node rather than the browser: the fixture answers a cross-site POST with
+        // 403 and sets no CORS header, so a page on vite's origin could neither
+        // command it nor read its stream.
+        extends: true,
+        test: {
+          name: "e2e-sse",
+          environment: "node",
+          pool: "threads",
+          isolate: true,
+          include: ["e2e-sse/**/*.test.ts"],
+          exclude: [...configDefaults.exclude, "../static/**", "**/.stryker-tmp/**"],
+          globalSetup: ["./__test-helpers__/vibekit-server.setup.ts"],
+          // One file at a time: the cases arm the server's close-after hook, which
+          // cuts the NEXT connection whoever opens it.
+          fileParallelism: false,
         },
       },
       {

@@ -142,13 +142,16 @@
 
      `:not(:empty)` is load-bearing: `history.ts` renders this span unconditionally
      and leaves it empty for a row with no timestamp, and an empty item with a 100%
-     basis would still open a second flex line and charge the row's 8px `gap` for
-     it. */
-  .history-table-row {
+     basis would still open a second flex line and charge the 8px `gap` for it.
+
+     On `.history-row-main` rather than the row: that element is the flex container
+     the date is a child of, and the row's own two children are the control and the
+     delete button, which never wrap. */
+  .history-row-main {
     flex-wrap: wrap;
   }
 
-  .history-table-row > .list-row-meta:not(:empty) {
+  .history-row-main > .list-row-meta:not(:empty) {
     order: 1;
     flex-basis: 100%;
   }
@@ -998,12 +1001,15 @@
   text-transform: capitalize;
 }
 
-/* Up to three lines of content, so the padding grows with them: a 3-line row at
-   the 1-line row's padding reads as cramped against its neighbours. The trailing
-   elements keep `.list-row`'s `align-items: center`. Top-aligning them under one
-   flat 0.1rem margin aligned nothing: five intrinsic heights (chip 18.6, status
-   15, date 13, glyph 14, button 28) put five centres 7.5px apart, the delete
-   button 8.6px below the title's. Centring needs no per-element number. */
+/* THE ROW IS A CONTAINER OF TWO CONTROLS AND CARRIES NO INSET OF ITS OWN: the
+   inset moved to `.history-row-main`, because that element is the row's click
+   target and a target the row's padding holds off its own edges is not the box.
+
+   No `align-items: stretch`, and that was measured rather than assumed: the
+   control and the delete button are both `button`s, so both read the SAME
+   `--hit-floor` from the universal hit-target rule (61-mcp-tools.css) and neither
+   can outgrow the other — a one-line row on a coarse pointer is 44px of control
+   beside 44px of delete. Adding stretch flipped no assertion at either tier. */
 .history-table-row {
   /* Row height comes from the TIER, not from the font. Without it this row
      resolved to its line box plus padding — the trap `--ctl-h-sm` exists to
@@ -1012,33 +1018,47 @@
      own height: measured, this moves desktop by at most 1px and gives every
      list row a real 36px target on touch. */
   min-block-size: var(--ctl-h-sm);
-  cursor: pointer;
-  padding-block: var(--sp-2);
+  padding: 0;
+  gap: 0;
 }
 
-/* The row's open control. A real button, so the platform supplies Enter and Space
-   and the delete button beside it stays in the accessibility tree; it is reset to
-   the span it replaced, because a control inherits neither the page font SIZE nor
-   its padding and paints a UA border. The mono family is re-asserted after `font`,
-   which this rule's own specificity would otherwise take back from
-   `.list-row-name`. */
-button.list-row-name {
+/* THE ROW'S BOX IS THE ROW'S TARGET, and this element is both: it holds every
+   non-interactive part of the row, it grows to every edge the delete button does
+   not claim, and in its button form it is the open control. The inset is `--sp-2`
+   on both axes rather than `.list-row`'s `--sp-1` block: this row carries up to
+   three lines, and a 3-line row at the 1-line row's padding reads as cramped
+   against its neighbours.
+
+   Its children keep `align-items: center`. Top-aligning them under one flat
+   0.1rem margin aligned nothing: five intrinsic heights (chip 18.6, status 15,
+   date 13, glyph 14, name 17) put five centres 7.5px apart. Centring needs no
+   per-element number. */
+.history-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+}
+
+/* The control form. Reset to the div it shares the class with, because a control
+   inherits neither the page font SIZE nor its colour and paints a UA border; the
+   mono family and the primary ink stay on `.list-row-name`, which is a span again.
+
+   The ring frames the ROW because the control IS the row, so it needs no `:has()`
+   on the container and no `outline: none` here to stop the two nesting. */
+button.history-row-main {
   appearance: none;
-  padding: 0;
   border: 0;
   background: none;
   font: inherit;
-  font-family: var(--font-mono);
+  color: inherit;
   text-align: start;
   cursor: pointer;
 }
 
-/* The ring frames the ROW, because clicking anywhere on the row is what the
-   button does; the button suppresses its own so the two do not nest. */
-button.list-row-name:focus-visible {
-  outline: none;
-}
-.history-table-row:has(> .list-row-title > .list-row-name:focus-visible) {
+button.history-row-main:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset-inset);
 }
@@ -1049,11 +1069,19 @@ button.list-row-name:focus-visible {
    A hover-only affordance is unreachable on touch, and this page is used on a
    phone.
 
-   No auto margin: `.list-row-title` is `flex: 1` and absorbs every spare pixel,
+   No auto margin: `.history-row-main` is `flex: 1` and absorbs every spare pixel,
    so the last flex child already sits at the trailing edge. An auto margin here
-   would compete with that growth and leave a ragged column. */
+   would compete with that growth and leave a ragged column.
+
+   The trailing margin is what the row's own padding used to give it. There is no
+   LEADING one: the separation from the date is `.history-row-main`'s own trailing
+   inset, so declaring both would double it and drift this control 8px right of
+   where it has always sat. The two targets abut and neither overlaps the other,
+   which is what the rule is — a target may not reach INTO the one beside it. No
+   `align-self`: `.list-row` already centres. */
 .history-delete {
   flex: 0 0 auto;
+  margin-inline-end: var(--sp-2);
   display: grid;
   place-items: center;
   inline-size: 1.75rem;

@@ -19,12 +19,7 @@ import { $, setBusy } from "./dom.js";
 import { humanName, rateLabel } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
-import {
-  setCurrentModel,
-  setLastModel,
-  getLastEffortFor,
-  setLastEffort,
-} from "./session-context.js";
+import { setCurrentModel, setLastModel, getLastEffortFor } from "./session-context.js";
 import {
   refreshPickerIfVisible,
   getCachedModels,
@@ -358,10 +353,11 @@ class ModelSwitchController {
    *  set_mode, which auto-creates), so there is nothing left to branch on and no
    *  settings write at all.
    *
-   *  It does record the pick as the level a NEW chat opens on (`last_effort`, the
-   *  twin of `last_model`). That is ambient memory rather than the chat's state:
-   *  the level still lives on this chat's record, so two chats keep disagreeing,
-   *  and the next new chat stops reopening at the model's default tier.
+   *  The SEED — the level a new chat on this model opens with
+   *  (`last_effort_by_model`) — is written by the command, not from here: a level
+   *  the session refuses must not be remembered as a preference. Nothing local is
+   *  needed for the pill either, because the optimistic write below sets this
+   *  chat's own effort, which outranks the seed in effortVocabulary's order.
    *
    *  A repeat pick of the level THIS CHAT has already chosen is dropped. It is a
    *  no-op command and the store write it drives is a no-op too, but the POST is
@@ -379,7 +375,6 @@ class ModelSwitchController {
     if ((session.effort ?? "") === level) {
       return;
     }
-    setLastEffort(level, session.model);
     void setEffortAction.dispatch({ chatID: session.id, level });
   }
 
@@ -511,7 +506,7 @@ export function drainModelSwitchQueue(chatID: string): void {
   controller.drainForChat(chatID);
 }
 
-export function applyLocalModel(modelID: string): void {
+function applyLocalModel(modelID: string): void {
   setCurrentModel(modelID);
   setLastModel(modelID);
   const session = getActive();

@@ -8,15 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/policyfile"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // POST /api/permissions/profile — select the named security posture.
@@ -412,33 +410,18 @@ func (s *Server) failProfileSelection(ctx context.Context, w http.ResponseWriter
 }
 
 // persistProfile writes the profile id into config.json, merging rather than
-// replacing so it cannot drop a sibling preference.
-//
-// It takes the same settingsMu the settings writer takes: two concurrent writers
-// of one file would otherwise read-modify-write over each other, and one of them
-// deleting a preference is exactly the silent loss the atomic write exists to
-// prevent. For the same reason a config.json that cannot be read refuses the
-// write rather than merging over an empty map, which would replace the file with
-// this one key — the caller then restores the policy files it already rewrote.
+// replacing so it cannot drop a sibling preference. A document that cannot be
+// read refuses the write, and the caller then restores the policy files it has
+// already rewritten.
 func (s *Server) persistProfile(ctx context.Context, id string) error {
-	path := filepath.Join(s.configDir, settings.Filename)
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	merged, err := readStoredSettings(path)
-	if err != nil {
-		return err
-	}
 	raw, err := json.Marshal(id)
 	if err != nil {
 		return err
 	}
-	merged[settings.KeySecurityProfile] = raw
-	pretty, err := json.MarshalIndent(merged, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = atomicfile.WriteFile(ctx, path, append(pretty, '\n'),
-		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
+	_, err = settings.Update(ctx, s.configDir, func(doc map[string]json.RawMessage) error {
+		doc[settings.KeySecurityProfile] = raw
+		return nil
+	})
 	return err
 }
 

@@ -144,6 +144,9 @@ func TestSetPreferences(t *testing.T) {
 	if !s.prefs[vibekit.PushKindAgentFinished] || !s.prefs[vibekit.PushKindPermission] {
 		t.Error("default preferences should be true")
 	}
+	if s.prefs[vibekit.PushKindPRStatus] {
+		t.Error("pr_status defaults on; it is the one keyed kind whose default is OFF, so a fresh install sends no pull-request pushes")
+	}
 	s.mu.Unlock()
 
 	s.SetPreferences(map[vibekit.PushKind]bool{

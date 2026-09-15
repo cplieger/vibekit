@@ -41,7 +41,7 @@
 
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes, GLOBAL_BANNER } from "./banner-stack.js";
-import { onBus, BUS_TRANSPORT_GAP } from "./bus.js";
+import { onBus, BUS_RECONCILE } from "./bus.js";
 import { openSetting } from "./settings-highlight.js";
 import { showLoginModal } from "./modals.js";
 import { getVersions } from "./versions.js";
@@ -265,10 +265,10 @@ export async function checkRuntimeHealth(): Promise<void> {
   clearBannerCodes(GLOBAL_BANNER, [CODE, AUTH_CODE]);
 }
 
-/** Wire the boot probe + transport-gap re-probes. Called once from app.ts. */
+/** Wire the boot probe + the re-probe on a whole reconcile. Called once from app.ts. */
 export function initRuntimeHealth(): void {
   void checkRuntimeHealth();
-  onBus(BUS_TRANSPORT_GAP, () => {
+  onBus(BUS_RECONCILE, () => {
     void checkRuntimeHealth();
   });
 }

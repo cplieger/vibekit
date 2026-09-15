@@ -184,6 +184,97 @@ func TestRecordSession(t *testing.T) {
 	}
 }
 
+// The revert verb only accepts an id the CURRENT session's log holds, so a stamp that
+// outlives the session that minted it names a record no revert can reach while still
+// reading as addressable — the bare `Message "…" not found` toast the original report
+// showed. Sibling of TestRecordSession rather than a column on it: those cases are about
+// the chain and carry no messages.
+func TestRecordSession_DropsStampsMintedUnderTheRetiredSession(t *testing.T) {
+	stamped := func() []Message {
+		return []Message{
+			{ID: "m-1", Role: RoleUser, KASMessageID: "a-rec-1"},
+			{ID: "a-1", Role: RoleAssistant},
+			{ID: "m-2", Role: RoleUser, KASMessageID: "a-rec-2"},
+		}
+	}
+
+	cases := []struct {
+		name       string
+		start      Chat
+		record     string
+		wantStamps []string
+		wantCur    string
+		wantPrior  []string
+	}{
+		{
+			name:       "switching sessions clears every stamp",
+			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
+			record:     "sess_b",
+			wantStamps: []string{"", "", ""},
+			wantCur:    "sess_b",
+			wantPrior:  []string{"sess_a"},
+		},
+		{
+			// The detach half of the failed-load pair: the rows are unaddressable the
+			// instant the chat has no session, not only once a fresh one is recorded.
+			name:       "detaching clears them too",
+			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
+			record:     "",
+			wantStamps: []string{"", "", ""},
+			wantCur:    "",
+			wantPrior:  []string{"sess_a"},
+		},
+		{
+			// The early return: an idempotent call retires nothing, so it must not write.
+			name:       "recording the current id keeps them",
+			start:      Chat{ACPSessionID: "sess_a", Messages: stamped()},
+			record:     "sess_a",
+			wantStamps: []string{"a-rec-1", "", "a-rec-2"},
+			wantCur:    "sess_a",
+			wantPrior:  nil,
+		},
+		{
+			// The resume_session / fork shape: RecordSession runs on an empty chat.
+			name:      "a chat with no messages keeps its chain",
+			start:     Chat{ACPSessionID: "sess_a"},
+			record:    "sess_b",
+			wantCur:   "sess_b",
+			wantPrior: []string{"sess_a"},
+		},
+		{
+			name:       "rows with no stamp are untouched",
+			start:      Chat{ACPSessionID: "sess_a", Messages: []Message{{ID: "m-1", Role: RoleUser}}},
+			record:     "sess_b",
+			wantStamps: []string{""},
+			wantCur:    "sess_b",
+			wantPrior:  []string{"sess_a"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.start
+			c.RecordSession(tc.record)
+
+			// Index-only range: Message is far past gocritic's rangeValCopy threshold.
+			stamps := make([]string, 0, len(c.Messages))
+			for i := range c.Messages {
+				stamps = append(stamps, c.Messages[i].KASMessageID)
+			}
+			if !slices.Equal(stamps, tc.wantStamps) {
+				t.Errorf("RecordSession(%q) on %q: stamps = %v, want %v",
+					tc.record, tc.start.ACPSessionID, stamps, tc.wantStamps)
+			}
+			if c.ACPSessionID != tc.wantCur {
+				t.Errorf("RecordSession(%q): ACPSessionID = %q, want %q", tc.record, c.ACPSessionID, tc.wantCur)
+			}
+			if !slices.Equal(c.PriorACPSessionIDs, tc.wantPrior) {
+				t.Errorf("RecordSession(%q): PriorACPSessionIDs = %v, want %v",
+					tc.record, c.PriorACPSessionIDs, tc.wantPrior)
+			}
+		})
+	}
+}
+
 // Copy-on-return on BOTH branches: a caller mutating the chain it was handed must not
 // rewrite the chat's retention set.
 func TestSessionChain_ReturnsACopy(t *testing.T) {

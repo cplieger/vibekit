@@ -14,7 +14,6 @@ import fc from "fast-check";
 
 import type { TurnSummary } from "./rail-merge.js";
 import {
-  HERE_PX,
   markerPosition,
   maxMarkers,
   railAt,
@@ -62,13 +61,6 @@ describe("position is a function of the turn's own number", () => {
   it("puts a one-turn session at the top rather than dividing by zero", () => {
     expect(railAt(1, 1, railSpan(1, 800, 24))).toBe(0);
     expect(markerPosition(1, 1, 800, 24)).toBe(0);
-  });
-
-  it("centres the reader's caret inside the marker box it stands on", () => {
-    // The caret is a decoration and takes no pointer tier of its own, so the box it
-    // is centred in is what follows the tier.
-    expect((44 - HERE_PX) / 2).toBe(18);
-    expect((24 - HERE_PX) / 2).toBe(8);
   });
 });
 

@@ -539,8 +539,16 @@ function syntheticMessage(id: string, slice: SubagentSlice): Message {
  *
  *  It takes no name: the tab factory derives the label from the chat store, so a tab
  *  restored on boot and a tab opened from a card read the same. */
-export function openSubagentView(chatID: string, subtaskID: string): void {
-  void openSubagentTab(chatID, subtaskID);
+/** RETURNS the open, so a DEEP LINK can await it. `router.ts`'s claim on the location
+ *  is released when `applyRoute`'s promise settles, and opening the tab is a server round
+ *  trip — so voiding it here resolved that promise as soon as the CHUNK had loaded and
+ *  the claim came off mid-flight, letting the next projection emit write the restored
+ *  tab's route over the URL the reader opened. Measured on the live app: a fresh load of
+ *  `/chat/{id}/subagent/{taskId}` was showing `/chat/{firstChatId}` within six seconds,
+ *  with the delegate's page never rendered. Every other caller is a click that has
+ *  nothing to wait for and voids it. */
+export function openSubagentView(chatID: string, subtaskID: string): Promise<void> {
+  return openSubagentTab(chatID, subtaskID);
 }
 
 /** Whether an open subagent tab projects `chatID`'s transcript — the eviction

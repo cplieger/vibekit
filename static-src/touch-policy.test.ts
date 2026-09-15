@@ -58,44 +58,56 @@ describe("a control that must stay visually small opts out of the box floor", ()
     const bar = ruleContaining(shell, ".shell-resize", "top");
     expect(bar.body).toMatch(/min-width:\s*0/u);
     expect(bar.body).toMatch(/min-height:\s*0/u);
-    expect(bar.body, "the visual bar must stay thin").toMatch(/height:\s*0\.1875rem/u);
-  });
-
-  it("expands the target DOWNWARD, and the header pays the same term", () => {
-    // THE PREMISE OF THIS CASE REVERSED (item 18). It used to assert
-    // `/0\s+-0\.25rem/` — an expander reaching UP into the transcript's dead space
-    // and only 4px down, on the reasoning that downward is the header's own
-    // buttons. The direction is wrong because `.shell-panel` declares
-    // `overflow: hidden`, so every pixel the old expander reached upward was
-    // CLIPPED: hit-tested on the real target, 6px against the 24/44 the
-    // declaration claimed. Down is the only direction available, so the header
-    // moves its buttons out of the way instead — which is why this case reads
-    // BOTH rules: the reach, and the header paying for it.
-    //
-    // The source-level companion to the elementFromPoint case at the end of this
-    // file. That one measures the target and cannot say which selectors carry it;
-    // this one cannot say the arithmetic works.
-    const shell = loadCSS("21-shell-panel.css");
+    expect(bar.body, "the visual bar must stay thin").toMatch(/height:\s*var\(--shell-bar-h\)/u);
 
     const panel = ruleContaining(shell, ".shell-panel", "top");
-    expect(panel.body, "the reach is declared once, on the shared ancestor").toMatch(
-      /--shell-resize-reach:\s*calc\(var\(--hit-floor\) - 0\.1875rem\)/u,
-    );
+    expect(panel.body, "and the hairline is 3px").toMatch(/--shell-bar-h:\s*0\.1875rem/u);
+  });
+
+  it("expands the target DOWNWARD, and nothing else pays for it", () => {
+    // THE PREMISE OF THIS CASE HAS REVERSED TWICE, so both are on the record.
+    //
+    // (1) It first asserted `/0\s+-0\.25rem/` — an expander reaching UP and only
+    // 4px down, on the reasoning that downward is the header's own buttons. Wrong,
+    // because `.shell-panel` declares `overflow: hidden`, so every pixel reaching
+    // upward was CLIPPED: hit-tested, 6px of real target against the 24/44 the
+    // declaration claimed. (Up is also the wrong direction unclipped — the
+    // panel's previous sibling is the composer, whose Send button ends 13px above
+    // the seam.)
+    //
+    // (2) The reversal to DOWN then made `.shell-header` pay the reach in its top
+    // padding AND its height, to keep its buttons out of the target. Measured cost
+    // at the fine tier: a 56px header around a 32px content band, so 43% of the bar
+    // was empty, and 89px around a 44px band on a coarse pointer. The buttons
+    // out-stack the expander now (the case below), so the header pays nothing and
+    // this case asserts the ABSENCE of that arithmetic.
+    //
+    // The source-level companion to the elementFromPoint cases at the end of this
+    // file. Those measure the target and cannot say which selectors carry it; this
+    // one cannot say the arithmetic works.
+    const shell = loadCSS("21-shell-panel.css");
 
     const expander = ruleContaining(shell, ".shell-resize::before", "top");
-    expect(expander.body, "reaching DOWN, by the whole term").toMatch(
-      /inset:\s*0 0 calc\(-1 \* var\(--shell-resize-reach\)\)/u,
+    expect(expander.body, "reaching DOWN, by the floor minus the bar it paints").toMatch(
+      /inset:\s*0 0 calc\(var\(--shell-bar-h\) - var\(--hit-floor\)\)/u,
     );
 
-    // `box-sizing: border-box` is global (02-reset.css), so padding alone would eat
-    // the header's declared height and crush its buttons. Both halves or neither.
     const header = ruleContaining(shell, ".shell-header", "top");
-    expect(header.body, "the header's top padding is what moves its buttons").toContain(
-      "var(--shell-resize-reach)",
+    expect(header.body, "the header is one content row").toMatch(/height:\s*2rem/u);
+    expect(header.body, "with no block padding to hold a target").toMatch(
+      /padding-inline:\s*var\(--sp-3\)/u,
     );
-    expect(header.body, "and its height grows by the same term").toMatch(
-      /height:\s*calc\(2rem \+ var\(--shell-resize-reach\) \+ 0\.1875rem\)/u,
-    );
+    expect(
+      header.body.includes("--hit-floor") || header.body.includes("--shell-bar-h"),
+      "the header restates no part of the target's arithmetic",
+    ).toBe(false);
+
+    // The half that makes all of the above safe, declared on the control that has
+    // to win: the bar carries `z-index: 1`, so a button under the expander needs a
+    // higher one or the seam takes its clicks.
+    const button = ruleContaining(shell, ".shell-header-btn", "top");
+    expect(button.body, "the buttons out-stack the bar").toMatch(/z-index:\s*2/u);
+    expect(button.body, "and a z-index needs a position to apply").toMatch(/position:\s*relative/u);
   });
 });
 
@@ -332,8 +344,8 @@ describe("the + menu's switch takes its target from its row, not an expander", (
 });
 
 // ---------------------------------------------------------------------------
-// The file browser's git letter is the third member of the grow-the-TARGET
-// family, beside `.status-dot` and `.shell-resize` above. It IS a control (it
+// The file browser's git letter is the second member of the grow-the-TARGET
+// family, beside `.shell-resize` above. It IS a control (it
 // opens that file's diff — `files-decoration.test.ts` drives the click) so
 // `role="button"` is correct and the app-wide floor matching it is correct; what
 // the floor may not do is grow the MARK, which `19-files.css` declares as a fixed
@@ -569,25 +581,36 @@ describe("the shell resize bar's real target", () => {
     const box = bar.getBoundingClientRect();
     expect(box.height, "the painted bar stays a 3px hairline").toBeCloseTo(3, 1);
 
+    // Sampled at the bar's centre, which is over the TITLE: that is the header's
+    // inert region and the only span where the target is unobstructed, since the
+    // buttons deliberately out-stack it at the row's trailing end (case ii).
     const x = box.left + box.width / 2;
     // (i) the bar owns every row from its own top edge down to the floor.
     for (let dy = 0.5; dy < floor; dy += 1) {
       expect(ownerAt(x, box.top + dy), `the bar owns y+${dy} on ${t}`).toBe(bar);
     }
     // (iii) and not one row further — which is what makes this a MEASUREMENT of
-    // the reach rather than a lower bound. 3px of painted bar plus
-    // --shell-resize-reach below it.
+    // the reach rather than a lower bound: the painted bar plus the floor minus the
+    // bar, reaching down.
     expect(ownerAt(x, box.top + floor + 0.5), `the target ends at the floor on ${t}`).not.toBe(bar);
   });
 
   it.each(["fine", "coarse"] as const)("leaves the header button its own whole box on %s", (t) => {
-    // (ii) The half the reach costs, and the reason `.shell-header` pays for it in
-    // BOTH its padding and its height: the bar lies over the header at
-    // `z-index: 1`, so every pixel of the button that sits inside the reach is a
-    // pixel that resizes the panel when the reader meant to press Close. Before
-    // item 18 the expander could not reach the header at all (it was clipped
-    // upward), so this is the property the reversal has to buy back rather than
-    // one it inherits.
+    // (ii) THE OTHER HALF OF THE REACH, and the case the current mechanism rests
+    // on: the bar lies over the header at `z-index: 1`, so every pixel of a button
+    // inside the reach is a pixel that resizes the panel when the reader meant to
+    // press Close. On a coarse pointer the expander covers this row WHOLE — 44px of
+    // target over a 44px button — so nothing geometric separates them and the only
+    // thing that does is `.shell-header-btn`'s own `z-index: 2`. Deleting it fails
+    // here, and so does making `.shell-header` a STACKING CONTEXT — red-checked with
+    // `isolation: isolate`, a `transform`, an `opacity` below 1, and `position` plus
+    // a non-auto `z-index`. A bare `position: relative` does not create one and does
+    // not fail, which is why the CSS comment names the context rather than the
+    // property.
+    //
+    // It used to be separated by geometry instead: the header carried the whole
+    // reach as top padding and grew its height to match, which is what made the bar
+    // 56px tall on a mouse and 89px under a finger.
     tier(t);
     const { bar, button } = mountPanel();
     const box = button.getBoundingClientRect();
@@ -604,5 +627,23 @@ describe("the shell resize bar's real target", () => {
         true,
       );
     }
+  });
+
+  it.each([
+    ["fine", 32],
+    ["coarse", 45],
+  ] as const)("stays one content row tall on %s (%ipx)", (t, expected) => {
+    // (iv) THE READER-VISIBLE HALF, and the case this bar was reported for: it was
+    // 56px around a 32px content band on a mouse and 89px around 44px under a
+    // finger, because the header was buying its buttons clearance from the resize
+    // target. The numbers are hardcoded rather than derived, so re-deriving the
+    // header's height from the floor — which is the shape that produced the defect —
+    // fails here instead of passing by construction. 45 is 44 plus the 1px border
+    // the header declares, which `box-sizing: border-box` charges to its height.
+    tier(t);
+    const { bar } = mountPanel();
+    const head = bar.parentElement?.querySelector(".shell-header");
+    expect(head, "fixture has a header").not.toBeNull();
+    expect(head?.getBoundingClientRect().height, `header height on ${t}`).toBeCloseTo(expected, 1);
   });
 });

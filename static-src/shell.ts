@@ -40,10 +40,12 @@ import { refreshGitStatus } from "./git-status-store.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited by the kernel before the first server resize so the PTY is sized
-// against the real cell metrics. vibekit's mono stack is system-provided (no
-// web font to fetch), unlike web-terminal-kiro's bundled Monaspace; 14px matches
-// the `.term` font-size the UI CSS sets.
-const SHELL_FONT_READY = "14px ui-monospace";
+// against the real cell metrics. Every family here must be one an @font-face
+// matches (css/00-fonts.css): `document.fonts.load` resolves against NOTHING for
+// a family it has no rule for, so the await returns immediately and the first
+// PTY resize measures the fallback cell. 14px matches the `.term` font-size the
+// UI CSS sets, which is also the only size the glyph font tiles at.
+const SHELL_FONT_READY = '14px "Web Terminal Glyphs", "Monaspace Neon NF"';
 
 // The scrollback store is built at MODULE load, not inside ensureTerminal, even
 // though the terminal itself stays lazy. Constructing it is what runs its orphan
@@ -61,6 +63,12 @@ const shellScrollback = localScrollbackStorage({ prefix: "vibekit.shell-scrollba
 // per-theme code. Set on the #shell-terminal root by createTerminal, so only
 // the terminal subtree is affected.
 const SHELL_THEME: Readonly<Record<string, string>> = {
+  // The glyph font FIRST, ahead of the text face: it carries only the codepoints
+  // that have to tile, so the browser takes box drawing, blocks, shades, braille
+  // and the mosaic blocks from it and everything else from Monaspace behind it.
+  // Scoped to the terminal root by createTerminal, so 01-tokens.css's app-wide
+  // --font-mono (~100 non-terminal sites) is untouched.
+  "--font-mono": '"Web Terminal Glyphs", "Monaspace Neon NF", monospace',
   "--bg": "var(--c-term-bg)",
   "--text": "var(--c-term-fg)",
   "--accent": "var(--c-accent)",
@@ -336,6 +344,15 @@ const SHELL_MIN_H = 96;
 /** Keyboard resize step (2rem) per ArrowUp/ArrowDown on the handle. */
 const SHELL_KEY_STEP = 32;
 
+/** The panel's height while nothing has applied one: the CSS default in
+ *  `.shell-panel { height: var(--shell-h, 16rem) }` (21-shell-panel.css).
+ *
+ *  Shadowed here rather than read back, because neither reading is available when
+ *  it is needed: a CLOSED panel measures 0 (the closed state pins height 0) and a
+ *  computed read during the open transition measures the tween. `shell.test.ts`
+ *  pins this against that declaration's own fallback, so the two cannot drift. */
+const SHELL_DEFAULT_H = 256;
+
 /** Upper clamp: leave at least 20% of the viewport for the chat column. */
 function shellMaxH(): number {
   return Math.round(window.innerHeight * 0.8);
@@ -345,11 +362,31 @@ function clampShellH(h: number): number {
   return Math.min(Math.max(h, SHELL_MIN_H), shellMaxH());
 }
 
+/** The separator's VALUE, which ARIA requires of it and axe reports as a critical
+ *  `aria-required-attr` without: `role="separator"` plus a tabindex is a focusable
+ *  widget, so it is a splitter with a position rather than a decorative rule, and
+ *  a screen-reader user resizing with the arrow keys otherwise hears no value at
+ *  all. Written from the panel height in px, which is the number the reader is
+ *  changing.
+ *
+ *  The bounds are `clampShellH`'s own, so the three attributes cannot disagree
+ *  with the clamp. `aria-valuemax` follows the viewport and is therefore only as
+ *  fresh as the last apply — which is exactly how fresh the panel's own height is,
+ *  since nothing re-clamps it on a window resize either. Reporting a bound the app
+ *  does not maintain would be the less honest half. */
+function syncResizeAria(h: number): void {
+  const bar = $.shellResize;
+  bar.setAttribute("aria-valuenow", String(h));
+  bar.setAttribute("aria-valuemin", String(SHELL_MIN_H));
+  bar.setAttribute("aria-valuemax", String(shellMaxH()));
+}
+
 /** Clamp (and round) a panel height, then apply it via the --shell-h custom
  *  property the panel's `height` consumes. Returns the applied value. */
 function applyShellH(h: number): number {
   const clamped = Math.round(clampShellH(h));
   $.shellPanel.style.setProperty("--shell-h", `${String(clamped)}px`);
+  syncResizeAria(clamped);
   return clamped;
 }
 
@@ -424,7 +461,13 @@ function initShellResize(): void {
   const saved = shellHeight();
   if (saved > 0) {
     applyShellH(saved);
+    return;
   }
+  // Nothing stored, so the panel is on the CSS default and the separator still
+  // needs a value. Seed it from the same number WITHOUT setting --shell-h: writing
+  // that property would take the panel's height off CSS for the rest of the
+  // session, which is a behaviour change this attribute does not need.
+  syncResizeAria(clampShellH(SHELL_DEFAULT_H));
 }
 
 /** Build the terminal exactly once, into the (empty) #shell-terminal root. The
@@ -495,7 +538,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     // space, so the same content stays in view once it opens.
     const prevHeight = getScrollEl().clientHeight;
     ensureTerminal();
-    $.shellPanel.classList.remove("shell-closed", "collapsed");
+    $.shellPanel.classList.remove("shell-closed");
     $.shellBtn.classList.add("active");
     requestAnimationFrame(() => {
       if (opts.focus !== false) {

@@ -259,10 +259,15 @@ func (b *Bridge) loadSession(ctx context.Context, opts *vibekit.StartOpts) error
 	sid := string(b.sessionID)
 	b.mu.Unlock()
 
-	// Re-assert the chat's effort level on a resume, and ONLY that. Every other option
-	// is reconciled by tryLoadSession copying it back onto the chat record; Chat.Effort
-	// is the user's CHOICE and nothing overwrites it, so a lost level would never heal.
+	// Re-assert the chat's effort level on a resume, because Chat.Effort is the user's
+	// CHOICE and nothing overwrites it, so a lost level would never heal; every option
+	// tryLoadSession copies back onto the record reconciles itself instead.
 	b.applyInitialEffort(ctx, sid, opts.Effort)
+	// And the supervised gate, which a resume alone would not need: KAS persists
+	// `autopilot` per session and its own fork copies none of it, so a supervised chat's
+	// tangent would otherwise run in autopilot while vibekit's record says supervised.
+	// Idempotent elsewhere: a no-op when the chat is not supervised.
+	b.applySupervised(ctx, sid, opts.Supervised)
 	return nil
 }
 

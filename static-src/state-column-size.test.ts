@@ -61,6 +61,15 @@ interface Column {
   readonly slot: string;
   /** Build the row for a state and return the mark slot inside it. */
   readonly mount: (state: string) => HTMLElement;
+  /** The in-flight states this column can paint, in ITS OWN vocabulary: two of the
+   *  three read the exec vocabulary (`running`), and the run bar reads the workflow
+   *  mark's (`working`) because its subject is a RUN rather than a step. */
+  readonly inFlight: readonly string[];
+  /** Whether the in-flight ring is a PSEUDO-element over the slot or the slot
+   *  itself. The bar's mark is the slot: it shares the workflow mark's rules, whose
+   *  ::before is spent on the beat, so there is no second layer to draw a ring on
+   *  and the reserved column is the mark's own box. */
+  readonly markIsPseudo: boolean;
 }
 
 function el(tag: string, cls: string, attrs: Record<string, string> = {}): HTMLElement {
@@ -87,6 +96,8 @@ const COLUMNS: readonly Column[] = [
       host.appendChild(page);
       return slot;
     },
+    inFlight: ["running", "waiting", "unknown", "pending"],
+    markIsPseudo: true,
   },
   {
     name: "the run card",
@@ -102,21 +113,28 @@ const COLUMNS: readonly Column[] = [
       host.appendChild(card);
       return slot;
     },
+    inFlight: ["running", "waiting"],
+    markIsPseudo: true,
   },
   {
     name: "the run bar",
     slot: ".run-bar-glyph",
+    // `data-status` on the GLYPH, not `data-state` on the row: the bar's mark is the
+    // workflow mark, so its state rides the attribute that mark reads. The row keeps
+    // its own `data-state` for the word and the ordering, which paint no mark.
     mount: (state) => {
       const bar = el("div", "run-bar");
       const row = el("div", "run-bar-row", { "data-state": state });
       const open = el("button", "run-bar-open");
-      const slot = el("span", "run-bar-glyph");
+      const slot = el("span", "run-bar-glyph", { "data-status": state });
       open.appendChild(slot);
       row.appendChild(open);
       bar.appendChild(row);
       host.appendChild(bar);
       return slot;
     },
+    inFlight: ["working", "waiting", "input"],
+    markIsPseudo: false,
   },
 ];
 
@@ -141,8 +159,10 @@ function paintedDisc(col: Column): number {
 /** The outer diameter of an in-flight ring, and the box-sizing that decides it. */
 function paintedRing(col: Column, state: string): { outer: number; boxSizing: string } {
   const slot = col.mount(state);
-  const ring = getComputedStyle(slot, "::before");
-  expect(ring.content, `${col.name}: ${state} draws a ring`).not.toBe("none");
+  const ring = col.markIsPseudo ? getComputedStyle(slot, "::before") : getComputedStyle(slot);
+  if (col.markIsPseudo) {
+    expect(ring.content, `${col.name}: ${state} draws a ring`).not.toBe("none");
+  }
   expect(
     Number.parseFloat(ring.borderTopWidth),
     `${col.name}: ${state} draws it as a ring`,
@@ -159,12 +179,9 @@ describe("a state column's mark", () => {
       host.replaceChildren();
 
       // Every in-flight state in that column, so a rule added for one of them
-      // cannot pick its own diameter.
-      const states =
-        col.slot === ".ev-state"
-          ? ["running", "waiting", "unknown", "pending"]
-          : ["running", "waiting"];
-      for (const state of states) {
+      // cannot pick its own diameter. Declared per column rather than derived from
+      // the slot's name, because the run bar reads a different state vocabulary.
+      for (const state of col.inFlight) {
         const { outer, boxSizing } = paintedRing(col, state);
         // Named, because it is the property whose absence caused the defect and a
         // content-box ring is off by exactly its border on both sides.
@@ -175,12 +192,16 @@ describe("a state column's mark", () => {
     },
   );
 
-  it.each(COLUMNS.map((c) => [c.name, c] as const))(
+  it.each(COLUMNS.filter((c) => c.markIsPseudo).map((c) => [c.name, c] as const))(
     "fits inside the slot it is centred in, in %s",
     (_name, col) => {
       // The run-step ring used to fill its slot edge to edge, which is what its
       // `margin: 0 auto` was compensating for; a mark that exactly fills its slot
       // has no room to be centred in and reads as a different component.
+      //
+      // The RUN BAR is excluded rather than exempted: its mark is the slot now, so
+      // "room inside the slot" is not a property it has — the reserved column IS the
+      // mark's 8px box, and the case above is what holds that box to one size.
       const slot = col.mount("running");
       const slotWidth = slot.getBoundingClientRect().width;
       const outer = Number.parseFloat(getComputedStyle(slot, "::before").width);

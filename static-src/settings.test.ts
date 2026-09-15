@@ -103,7 +103,7 @@ vi.mock("./files.js", () => ({
   // graph imports the name, and Browser Mode links for real rather than reading
   // properties off a namespace object. `undefined` is what the node runner gave
   // these, so no path under test changes behavior.
-  restoreFileBrowser: undefined,
+  noteDefaultBrowsePath: undefined,
 }));
 vi.mock("./editor-core.js", () => ({
   // Present-but-undefined so real-ESM linking succeeds: another module in this

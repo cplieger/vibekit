@@ -890,15 +890,12 @@ describe("expanding a stub", () => {
     // Reference: the same turn mounted RESIDENT and folded by the ordinary paint.
     //
     // Identity artifacts are normalized on BOTH sides before comparing; none of
-    // them is turn shape. The chat-switch stagger style is the switch's entry
-    // animation (an on-demand build mounts silently, like pagination); the
-    // disclosure ids come off a page-global counter; the delegate's Open link
-    // carries its own chat's id.
+    // them is turn shape. The disclosure ids come off a page-global counter; the
+    // delegate's Open link carries its own chat's id. A `--stagger-index` strip
+    // sat here until 2026-09-14, when that property turned out to have no reader
+    // and its writes were deleted (00-header.css).
     const normalize = (html: string, chat: string): string =>
-      html
-        .replaceAll(/ style="--stagger-index: \d+;"/g, "")
-        .replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N")
-        .replaceAll(chat, "CHAT");
+      html.replaceAll(/uip-disclosure-\d+/g, "uip-disclosure-N").replaceAll(chat, "CHAT");
     const warmChat = chatID();
     // Opened by the reader, because the window is only grown over turns that
     // render open: a folded turn behind the newest one is a stub, so "resident and

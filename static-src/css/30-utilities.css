@@ -177,6 +177,56 @@
   color: var(--c-text-secondary);
 }
 
+/* Deep-linked target (?highlight=<id> / openSetting, or a notification's
+   #pr=<identity>) — flash-target.ts. Two accent rings that fade, so the mark reads
+   on an element of any shape (checkbox, select, text input, a PR row) without
+   moving it: outline draws outside the box and takes no layout, unlike a border.
+   `outline` rather than `box-shadow` so it also traces a non-rectangular control
+   faithfully. */
+@keyframes deep-link-flash {
+  0%,
+  100% {
+    outline-color: transparent;
+    background-color: transparent;
+  }
+
+  15%,
+  55% {
+    outline-color: var(--c-accent);
+    background-color: var(--c-selected-bg);
+  }
+}
+
+/* Zero-specificity so a component's own radius wins: the ring traces the element's
+   real corner, and a bare control with no radius of its own still gets one. At equal
+   specificity this would SHRINK a flashed `.git-pr-row`'s corners for the flash's
+   duration, which is the opposite of the intent. Same mechanism as this file's
+   sibling hit-target floor in 61-mcp-tools.css. */
+:where(.deep-link-flash) {
+  border-radius: var(--r-sm);
+}
+
+.deep-link-flash {
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: deep-link-flash 1.6s var(--ease-standard);
+}
+
+/* A flash is a "look here" cue, not information: a reader who has asked for no
+   motion still gets the scroll, and a steady ring instead of a pulsing one.
+   The class is stripped on a timer as well as on animationend, so suppressing
+   the animation here cannot leave the ring on permanently.
+
+   REAL specificity on both declarations, because each exists to beat the rule
+   immediately above: `animation: none` over its shorthand, and `outline-color` over
+   the `transparent` its `outline` shorthand set. */
+@media (prefers-reduced-motion: reduce) {
+  .deep-link-flash {
+    outline-color: var(--c-accent);
+    animation: none;
+  }
+}
+
 /* THE DIFF VOCABULARY IS NOT HERE. This file used to carry `.diff-inline`,
    `.diff-line`, `.diff-text`, `.diff-add`, `.diff-del`, `.diff-hunk`,
    `.diff-mini` and `.diff-gutter` — a renderer that no longer exists. The live

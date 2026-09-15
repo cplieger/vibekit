@@ -18,8 +18,10 @@
 
 import { resolveUnknownChat } from "./chat.js";
 import { chatListLoaded, serverMayAnswer } from "./store-load.js";
-import { parseRoute, replaceRoute } from "./router.js";
-import type { Route, RouteOrigin } from "./router.js";
+import { parseRoute } from "./route-path.js";
+import type { Route } from "./route-path.js";
+import { replaceRoute } from "./router.js";
+import type { RouteOrigin } from "./router.js";
 import { getActiveTabRoute, tabIdForRoute } from "./tabs.js";
 import { error as toastError } from "./toast.js";
 
@@ -53,7 +55,7 @@ export type DeepLinkOutcome =
  *  It is also what makes the unresolved notice bearable: a notice about a link the
  *  reader abandoned is noise, and this is what stops one. */
 function stillNames(id: string): boolean {
-  const now = parseRoute(location.pathname);
+  const now = parseRoute(location.pathname, location.hash);
   return now.kind === "chat" && now.id === id;
 }
 

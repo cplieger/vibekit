@@ -20,12 +20,12 @@ func TestEvictLocked_dropsExpiredFirst(t *testing.T) {
 	// 32 expired + 32 fresh = 64; at-cap path runs.
 	for i := range 32 {
 		p.cache.entries[fmt.Sprintf("exp%d", i)] = registryCacheEntry{
-			insertedAt: now.Add(-time.Hour), body: []byte("x"),
+			insertedAt: now.Add(-time.Hour),
 		}
 	}
 	for i := range 32 {
 		p.cache.entries[fmt.Sprintf("fresh%d", i)] = registryCacheEntry{
-			insertedAt: now, body: []byte("x"),
+			insertedAt: now,
 		}
 	}
 
@@ -59,7 +59,6 @@ func TestEvictLocked_whenAllFresh_dropsOldest(t *testing.T) {
 	for i := range maxCacheEntries {
 		p.cache.entries[fmt.Sprintf("k%02d", i)] = registryCacheEntry{
 			insertedAt: now.Add(time.Duration(i) * time.Millisecond),
-			body:       []byte("x"),
 		}
 	}
 
@@ -105,19 +104,19 @@ func TestEvictLocked_underCap_isNoop(t *testing.T) {
 }
 
 func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
-	payload := []byte(`{"servers":[{"name":"test","url":"http://example.com"}]}`)
+	payload := RegistrySearchResult{Servers: []RegistryEntry{{Name: "test"}}}
 
 	b.Run("hit_same_key", func(b *testing.B) {
 		cache := newRegistryCache(maxCacheEntries)
 		// Pre-seed.
 		cache.mu.Lock()
-		cache.entries["bench-key"] = registryCacheEntry{insertedAt: time.Now(), body: payload}
+		cache.entries["bench-key"] = registryCacheEntry{insertedAt: time.Now(), result: payload}
 		cache.mu.Unlock()
 
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(b.Context(), "bench-key", func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), "bench-key", func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -129,7 +128,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(b.Context(), "sf-key", func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), "sf-key", func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -144,7 +143,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 			for pb.Next() {
 				key := fmt.Sprintf("key-%d", i)
 				i++
-				_, _, _ = cache.GetOrFetch(b.Context(), key, func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), key, func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
 			}
@@ -164,23 +163,26 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := NewRegistryProxy()
+		// Filtered is an arbitrary marker telling the two values apart.
+		cachedReply := RegistrySearchResult{Filtered: 1}
+		upstreamReply := RegistrySearchResult{Filtered: 2}
 		fetches := 0
-		fetch := func() ([]byte, error) {
+		fetch := func() (RegistrySearchResult, error) {
 			fetches++
-			return []byte("upstream"), nil
+			return upstreamReply, nil
 		}
 
-		p.cache.entries["k"] = registryCacheEntry{insertedAt: time.Now(), body: []byte("cached")}
+		p.cache.entries["k"] = registryCacheEntry{insertedAt: time.Now(), result: cachedReply}
 
 		// A nanosecond short of the TTL is still fresh, so nothing is fetched.
 		synctest.Sleep(registryCacheTTL - time.Nanosecond)
-		body, cached, err := p.cache.GetOrFetch(t.Context(), "k", fetch)
+		got, cached, err := p.cache.GetOrFetch(t.Context(), "k", fetch)
 		if err != nil {
 			t.Fatalf("GetOrFetch a nanosecond inside the TTL: %v", err)
 		}
-		if !cached || string(body) != "cached" {
-			t.Errorf("GetOrFetch a nanosecond inside the TTL = (%q, cached=%v), want the cached body",
-				body, cached)
+		if !cached || got.Filtered != cachedReply.Filtered {
+			t.Errorf("GetOrFetch a nanosecond inside the TTL = (%+v, cached=%v), want the cached reply",
+				got, cached)
 		}
 		if fetches != 0 {
 			t.Errorf("a fresh entry caused %d upstream fetches, want 0", fetches)
@@ -188,12 +190,12 @@ func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 
 		// On the edge it is stale, so the reader goes upstream.
 		synctest.Sleep(time.Nanosecond)
-		body, _, err = p.cache.GetOrFetch(t.Context(), "k", fetch)
+		got, _, err = p.cache.GetOrFetch(t.Context(), "k", fetch)
 		if err != nil {
 			t.Fatalf("GetOrFetch exactly on the TTL: %v", err)
 		}
-		if string(body) != "upstream" {
-			t.Errorf("GetOrFetch exactly on the TTL = %q, want a fresh fetch", body)
+		if got.Filtered != upstreamReply.Filtered {
+			t.Errorf("GetOrFetch exactly on the TTL = %+v, want a fresh fetch", got)
 		}
 		if fetches != 1 {
 			t.Errorf("an entry exactly on the TTL caused %d upstream fetches, want 1", fetches)
@@ -201,7 +203,7 @@ func TestRegistryCache_theTTLEdgeIsExpired(t *testing.T) {
 
 		// And the evictor agrees: the entry it just replaced is collectable the
 		// instant it reaches the same age.
-		p.cache.entries["old"] = registryCacheEntry{insertedAt: time.Now(), body: []byte("x")}
+		p.cache.entries["old"] = registryCacheEntry{insertedAt: time.Now()}
 		synctest.Sleep(registryCacheTTL)
 		p.cache.mu.Lock()
 		p.cache.evictLocked()

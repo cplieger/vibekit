@@ -16,7 +16,7 @@ import (
 	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename, copy, move) ---

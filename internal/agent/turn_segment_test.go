@@ -110,7 +110,7 @@ func TestSealTurnSegment_RefusesWithAToolInFlight(t *testing.T) {
 // turn is a phantom assistant message on a chat that was idle.
 func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -131,7 +131,7 @@ func TestSealTurnSegment_RefusesWithNoTurnOpen(t *testing.T) {
 // and hands the rest of the reply a second id the client is not streaming under.
 func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -139,7 +139,7 @@ func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 	}
 	h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	buf := h.stageTurnBuffer(t, "c1")
-	if !buf.StartTurn(newMessageID()) {
+	if opened, _ := buf.StartTurn(newMessageID()); !opened {
 		t.Fatal("the fixture could not mint the turn's message id")
 	}
 
@@ -164,7 +164,7 @@ func TestSealTurnSegment_RefusesBetweenTheIDMintAndTheFirstDelta(t *testing.T) {
 // for a segment nothing persisted.
 func TestSealTurnSegment_RefusesATurnThatEmittedNothing(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -197,7 +197,7 @@ func TestCloseOnWireEnd_ASplitTurnWithNothingAfterItKeepsItsFooter(t *testing.T)
 		t.Fatal("the fixture could not seal a segment")
 	}
 	// Spend after the baseline was latched, so the turn has a credit delta.
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {
@@ -237,7 +237,7 @@ func TestCloseOnWireEnd_ASplitEngineTurnKeepsItsFooterToo(t *testing.T) {
 		t.Fatal("the fixture could not seal a segment")
 	}
 	// Spend after the baseline was latched, so the turn has a credit delta.
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {
@@ -272,7 +272,7 @@ func TestCloseOnWireEnd_ACancelledSplitTurnKeepsItsFooter(t *testing.T) {
 	if !h.coord.SealTurnSegment(t.Context(), "c1") {
 		t.Fatal("the fixture could not seal a segment")
 	}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 0.5
 		return true
 	}); err != nil {

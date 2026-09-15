@@ -29,6 +29,7 @@ import type { TurnWindowBase } from "./turns.js";
 import { severityOf } from "./turn-severity.js";
 import { isSubagentInvocation } from "./tool-schema.js";
 import { isStepSubtask, parseStepSubtask } from "./step-subtask.js";
+import { isPadBlock, padBlocks, subtaskField } from "./block-pad.js";
 import {
   signal,
   computed,
@@ -38,7 +39,7 @@ import {
   SignalMap,
   type Signal,
 } from "@cplieger/reactive";
-import { forgetView, viewStale } from "./tab-freshness.js";
+import { forgetView, viewStale } from "./view-freshness.js";
 import {
   blockTextSigs,
   blockThinkingSigs,
@@ -408,8 +409,9 @@ export function evictChatMessages(chatID: string): void {
   pendingCause.delete(chatID);
   flushedCause.delete(chatID);
   messagesVersionSigs.clear(chatID);
-  // The ledger record describes the WINDOW, and the window just went. This is what
-  // makes the dispatcher's `viewStale`-only gate equivalent to `transcriptStale`.
+  // The held version describes the WINDOW, and the window just went. This is what
+  // makes the dispatcher's `viewStale`-only gate equivalent to `transcriptStale`, and
+  // what keeps the digest from asking about a transcript nobody holds.
   forgetView("chat", chatID);
 }
 
@@ -423,13 +425,13 @@ function noteResidentMutation(s: Session): void {
 }
 
 /** The chat kind's refetch gate: a window is trustworthy only if a newest-page load
- *  succeeded and no transport gap has intervened since its request went out.
+ *  succeeded and the version map still holds the `chat` subject its answer stamped.
  *
- *  The residency term is REDUNDANT-BUT-HARMLESS, because `evictChatMessages` drops the
- *  ledger record: every reachable non-`loaded` state therefore implies no record. It
- *  stays because `residency` is a real fact about the WINDOW that `store-load.ts` reads
- *  beside the load that may claim `loaded`, and a predicate reading it is easier to
- *  verify than one relying on the implication. */
+ *  The residency term is NOT redundant: a frame stamped for a chat with no resident
+ *  window is applied to nothing, so the transport observes no version for it and the
+ *  map stays honest — but a window can also be `partial` (background ingest after an
+ *  eviction) while an older claim is still held, and `residency` is the fact about the
+ *  WINDOW that `store-load.ts` reads beside the load that may claim `loaded`. */
 export function transcriptStale(s: Session): boolean {
   return s.residency !== "loaded" || viewStale("chat", s.id);
 }
@@ -1343,7 +1345,7 @@ export function removeChat(id: string): void {
     msgIndex.delete(id);
     clearChunkWatermark(id);
     clearLiveTurnMessage(id);
-    clearTruncatedSnapshots(id);
+    clearAdoptedSnapshots(id);
     // Every per-message streaming signal the chat's window minted: the renderer's
     // disposeMessage only reaches rows a reconcile removes, and a background chat's never see one.
     clearMessageSignals(id, doomed.messages);
@@ -1375,12 +1377,6 @@ export function reinsertSession(session: Session, atIndex?: number): void {
 
 function nonEmptyStr(v: string | undefined): v is string {
   return v !== undefined && v !== "";
-}
-
-/** Spread helper: include `agent_subtask_id` only when non-empty, since
- *  exactOptionalPropertyTypes forbids setting an optional field to undefined. */
-function subtaskField(id: string | undefined): { agent_subtask_id?: string } {
-  return nonEmptyStr(id) ? { agent_subtask_id: id } : {};
 }
 
 /** Ensure an assistant message has a `blocks` array so the renderer has ONE path. Legacy
@@ -1503,16 +1499,20 @@ function ingestMessage(chatID: string, incoming: Message, persisted: boolean): v
 }
 
 /** message_appended → merge path, and the PERSIST echo: an id arriving here is no
- *  longer the client's only copy, so it stops being the in-flight turn and heals a
- *  capped connect-time snapshot. Both clears live HERE rather than in the shared merge
- *  path, which `message_created` and `message_updated` also route through carrying
- *  partial messages — and the `turn_state` handler calls that merge right after noting
- *  the marker, so a clear inside it would erase the marker in the same tick. */
+ *  longer the client's only copy, so it stops being the in-flight turn and its adopted
+ *  snapshot is spent. Both clears live HERE rather than in the shared merge path, which
+ *  `message_created` and `message_updated` also route through carrying partial messages —
+ *  and `store-load.ts` adoptLiveTurn calls that merge right after recording the snapshot,
+ *  so a clear inside it would erase the record in the same tick.
+ *
+ *  Clearing the whole RECORD rather than the marker alone is what keeps the base honest:
+ *  `mergeMessage` adopts a non-empty incoming `blocks` wholesale, so this is the one door
+ *  a full array whose indices are already absolute comes through. */
 export function appendMessage(chatID: string, msg: Message): void {
   if (liveTurnMessage(chatID) === msg.id) {
     clearLiveTurnMessage(chatID);
   }
-  clearTruncatedSnapshot(chatID, msg.id);
+  clearAdoptedSnapshot(chatID, msg.id);
   ingestMessage(chatID, msg, true);
 }
 
@@ -1686,64 +1686,76 @@ export function clearChunkWatermark(chatID: string): void {
   chunkWatermarks.delete(chatID);
 }
 
-/** Message ids whose connect-time snapshot was TRUNCATED — the server capped the
- *  turn_state payload and sent only the TAIL — so the renderer can SAY so rather
- *  than read a bounded payload as complete. A set rather than a flag because a
- *  reconnect can name a different message than the previous one. */
-const truncatedSnapshots = new Map<string, Set<string>>();
+/** What the transcript GET's `live_turn` handed this client for one message: where the
+ *  block array it delivered SITS in the turn's own array, and whether anything above it
+ *  was withheld. TWO facts about ONE transfer — they arrive together on that payload and
+ *  they are cleared at the same doors — so they are one record rather than two stores
+ *  that can drift.
+ *
+ *  A map per message rather than a flag, because a reconnect can name a different message
+ *  than the previous one. */
+export interface AdoptedSnapshot {
+  /** The ABSOLUTE index of `msg.blocks[0]`. The server keeps the TAIL of a capped block
+   *  array and re-indexes it from zero while a live `message_chunk` keeps naming the
+   *  absolute index, so this is what maps one onto the other. */
+  readonly blockBase: number;
+  /** Whether the payload was the TAIL of the turn, so the renderer can SAY so rather
+   *  than read a bounded payload as complete. */
+  readonly truncated: boolean;
+}
 
-export function noteTruncatedSnapshot(chatID: string, messageID: string): void {
+const adoptedSnapshots = new Map<string, Map<string, AdoptedSnapshot>>();
+
+/** Record the window a `live_turn` just delivered. The writer calls this BEFORE its own
+ *  `upsertMessage`, so the body's first paint already carries both facts.
+ *
+ *  The empty-key refusal is load-bearing rather than inherited: `store-load.ts`
+ *  adoptLiveTurn's path does not test `chatID === ""`, so this is the only place an
+ *  empty-keyed record is refused — and one would make `snapshotBlockBase` answerable for a
+ *  chat that does not exist. */
+export function noteAdoptedSnapshot(
+  chatID: string,
+  messageID: string,
+  snap: AdoptedSnapshot,
+): void {
   if (chatID === "" || messageID === "") {
     return;
   }
-  const set = truncatedSnapshots.get(chatID);
-  if (set === undefined) {
-    truncatedSnapshots.set(chatID, new Set([messageID]));
+  const byMsg = adoptedSnapshots.get(chatID);
+  if (byMsg === undefined) {
+    adoptedSnapshots.set(chatID, new Map([[messageID, snap]]));
     return;
   }
-  set.add(messageID);
+  byMsg.set(messageID, snap);
+}
+
+/** The left edge of the block window the store holds for this message: subtract it from a
+ *  wire `block_index` to reach the local array position. 0 when nothing was adopted, which
+ *  is the right answer for an array the client has held from index 0. */
+export function snapshotBlockBase(chatID: string, messageID: string): number {
+  return adoptedSnapshots.get(chatID)?.get(messageID)?.blockBase ?? 0;
 }
 
 /** Whether the store's copy of this message is the TAIL of a capped snapshot. */
 export function isTruncatedSnapshot(chatID: string, messageID: string): boolean {
-  return truncatedSnapshots.get(chatID)?.has(messageID) === true;
+  return adoptedSnapshots.get(chatID)?.get(messageID)?.truncated === true;
 }
 
-/** Drop one id's marker: the whole message has arrived. */
-export function clearTruncatedSnapshot(chatID: string, messageID: string): void {
-  const set = truncatedSnapshots.get(chatID);
-  if (set === undefined) {
+/** Drop one id's record: the whole message has arrived, so the window IS the array. */
+export function clearAdoptedSnapshot(chatID: string, messageID: string): void {
+  const byMsg = adoptedSnapshots.get(chatID);
+  if (byMsg === undefined) {
     return;
   }
-  set.delete(messageID);
-  if (set.size === 0) {
-    truncatedSnapshots.delete(chatID);
+  byMsg.delete(messageID);
+  if (byMsg.size === 0) {
+    adoptedSnapshots.delete(chatID);
   }
 }
 
-/** Drop every marker for a chat (turn finished, transport gap, or chat removed). */
-export function clearTruncatedSnapshots(chatID: string): void {
-  truncatedSnapshots.delete(chatID);
-}
-
-/** Reserve the block indices below `upto` whose own frame has not arrived yet.
- *
- *  `block_index` is the server's position in ONE chronological array the client fills from
- *  TWO event streams, so a frame can legitimately name an index past the end of what has
- *  arrived. The pad reserves the DOM position, which is load-bearing rather than defensive:
- *  the block mounter is append-only, so a block whose frame lands late cannot be inserted
- *  between two mounted siblings. The kind is a GUESS — `text` because it mounts a FILLABLE
- *  node where `thinking` would mount nothing; `isPadBlock` lets the real frame correct it. */
-function padBlocks(blocks: Block[], upto: number): void {
-  while (blocks.length < upto) {
-    blocks.push({ type: "text" });
-  }
-}
-
-/** Whether `b` is still a pad: a kind, and nothing behind it. Every real block carries the
- *  content that created it, so this cannot misread one as a pad. */
-function isPadBlock(b: Block): boolean {
-  return b.text === undefined && b.thinking === undefined && b.tool_call_id === undefined;
+/** Drop every record for a chat (turn finished, transport gap, or chat removed). */
+export function clearAdoptedSnapshots(chatID: string): void {
+  adoptedSnapshots.delete(chatID);
 }
 
 /** The assistant message a chat's CURRENT turn is streaming into, while the server still
@@ -1799,7 +1811,7 @@ export function appendChunk(
     return;
   }
   // Dedup against whatever the server has already handed this client as a whole copy of
-  // the turn — the connect replay's `turn_state`, or the transcript GET's `live_turn`.
+  // the turn — the transcript GET's `live_turn`.
   const wm = chunkWatermarks.get(chatID);
   if (wm?.messageID === messageID && seq > 0 && seq <= wm.seq) {
     return;
@@ -1812,6 +1824,16 @@ export function appendChunk(
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
+  // The wire names the ABSOLUTE block index; the store may hold only a WINDOW of that
+  // array, whose left edge is the base the adopted snapshot reported. Read BEFORE the
+  // mint below, because for a message the store has never seen a below-window index means
+  // there is nothing worth minting: such a carrier gets non-empty `content` and an EMPTY
+  // block array, and that shape opens a headerless turn card whose body renders nothing.
+  // The watermark has already risen, so the chunk is not folded in twice.
+  const blockBase = snapshotBlockBase(chatID, messageID);
+  if (msg === undefined && blockIndex - blockBase < 0) {
+    return;
+  }
   let isNew = false;
   if (msg === undefined) {
     noteResidentMutation(s);
@@ -1838,14 +1860,30 @@ export function appendChunk(
   } else {
     msg.content = (msg.content ?? "") + delta;
   }
+  // LOCAL from here: every index below this line addresses `msg.blocks`, whose left edge
+  // is the base above — the block array, the per-block signal key, the mounted-text read
+  // and the mounted-block probe alike. A REBIND rather than a second name, because a
+  // second name converts one of those consumers and silently leaves the other four
+  // publishing under the absolute index the renderer never registers.
+  blockIndex -= blockBase;
+  if (blockIndex < 0) {
+    // The chunk addresses a block the server withheld from this window. The watermark has
+    // risen and the flat fields have grown; there is simply no slot to write.
+    return;
+  }
   // The server guarantees consecutive chunks of the same kind and subtask share a
   // block_index; a tool_call, a kind switch, or a subtask switch bumps to a new one.
   msg.blocks ??= [];
   const blockKind = isReasoning ? "thinking" : "text";
   let newBlock = false;
   let padRepaired = false;
-  if (msg.blocks[blockIndex] === undefined) {
-    padBlocks(msg.blocks, blockIndex);
+  // Read the slot ONCE, into a const: `blockIndex` is rebound above, and `tsc` narrows an
+  // element access only through an index it can prove never moves — so a second
+  // `msg.blocks[blockIndex]` inside the else arm is `Block | undefined` however the arm was
+  // reached. One read, and the narrowing is the branch's own.
+  const existing = msg.blocks[blockIndex];
+  if (existing === undefined) {
+    padBlocks(msg.blocks, blockIndex, subtaskID);
     msg.blocks.push({
       type: blockKind,
       ...subtaskField(subtaskID),
@@ -1853,12 +1891,16 @@ export function appendChunk(
     });
     newBlock = true;
   } else {
-    const existing = msg.blocks[blockIndex];
     // A PAD'S KIND IS A GUESS (see padBlocks), so the first real delta for the slot decides
     // it. Without this the guess stuck and a thinking delta merged into a `text` pad rendered
     // an empty row with its reasoning dropped outright.
     if (isPadBlock(existing)) {
       existing.type = blockKind;
+      // THE SUBTASK IS A GUESS TOO, inherited from whichever frame reached past this
+      // slot, so the real frame's own id REPLACES it — and replacing it with NONE takes
+      // a delete, because `subtaskField` spreads nothing for an absent id and would
+      // leave the guess standing on a block the parent agent wrote.
+      delete existing.agent_subtask_id;
       Object.assign(existing, subtaskField(subtaskID));
       padRepaired = true;
     }
@@ -1946,12 +1988,25 @@ export function upsertToolCall(
   const mi = getMsgIndex(chatID, s.messages);
   const idx = mi.get(messageID) ?? -1;
   let msg: Message | undefined = idx !== -1 ? s.messages[idx] : undefined;
+  // The window's left edge, read BEFORE the mint for `appendChunk`'s reason: a message
+  // minted for a withheld block would carry the call and an EMPTY block array, which is
+  // the shape that opens a headerless turn card whose body renders nothing. A later frame
+  // naming a resident block mints it honestly.
+  const blockBase = snapshotBlockBase(chatID, messageID);
+  if (msg === undefined && blockIndex - blockBase < 0) {
+    return;
+  }
+  // LOCAL from here: the store holds a window whose left edge is the base above. No
+  // entry-point return for an existing message — the `tool_calls` push below is keyed by
+  // call id and is independent of block position, so returning at the door would drop a
+  // call whose card has a home. Each block WRITE is guarded instead.
+  blockIndex -= blockBase;
   if (msg === undefined) {
     noteResidentMutation(s);
     // HONOUR `blockIndex` here too: hard-coding the tool_use block at index 0 left a turn
     // whose first frame was a `tool_call` at index 2 misaligned for the rest of the turn.
     const blocks: Block[] = [];
-    padBlocks(blocks, blockIndex);
+    padBlocks(blocks, blockIndex, call.agent_subtask_id);
     blocks[blockIndex] = {
       type: "tool_use",
       tool_call_id: call.id,
@@ -1991,14 +2046,20 @@ export function upsertToolCall(
     // server's next index — one hole early in a turn corrupted every call after it. A PAD is
     // overwritten; a REAL block is not, because replacing a standing text or thinking block
     // would delete transcript content the server already streamed.
-    padBlocks(msg.blocks, blockIndex);
-    const standing = msg.blocks[blockIndex];
-    if (standing === undefined || isPadBlock(standing)) {
-      msg.blocks[blockIndex] = {
-        type: "tool_use",
-        tool_call_id: call.id,
-        ...subtaskField(call.agent_subtask_id),
-      };
+    //
+    // The guard is the withheld-block case: unguarded, `padBlocks` no-ops and the write
+    // sets a NON-INDEX string property (`blocks["-112"]`) while `length` stays put, so the
+    // array is silently junked. The call itself is still recorded above.
+    if (blockIndex >= 0) {
+      padBlocks(msg.blocks, blockIndex, call.agent_subtask_id);
+      const standing = msg.blocks[blockIndex];
+      if (standing === undefined || isPadBlock(standing)) {
+        msg.blocks[blockIndex] = {
+          type: "tool_use",
+          tool_call_id: call.id,
+          ...subtaskField(call.agent_subtask_id),
+        };
+      }
     }
     // `dropCause` decides the pass: a drawn call needs the full one that mounts its card,
     // a delegate's own needs none.
@@ -2030,7 +2091,8 @@ export function upsertToolCall(
  *  unchanged.
  *
  *  A call this client does not hold is DROPPED, not created: a delta has nothing to
- *  apply to, and `turn_state` is the channel for a client that missed the beginning.
+ *  apply to, and the transcript GET's `live_turn` is the channel for a client that missed
+ *  the beginning.
  *  `undefined` reports that drop. RETURNS the folded call, so the handler can read a
  *  field off it without walking the message index and the call array again. */
 export function applyToolCallDelta(chatID: string, d: ToolCallUpdatePayload): ToolCall | undefined {

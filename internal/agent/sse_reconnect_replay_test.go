@@ -92,7 +92,7 @@ func openReplayGapTurn(t *testing.T, rt *Runtime) {
 // `messages` and every assertion below would pass for the wrong reason.
 func seedReplayGapPrompt(t *testing.T, cs *chat.Store) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), replayGapChat, func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), replayGapChat, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = string(replayGapChat)
 		c.Messages = []vibekit.Message{
 			{ID: "u1", Role: vibekit.RoleUser, Content: replayGapPrompt, Ts: 1},
@@ -130,17 +130,15 @@ func TestReconnectMidTurn_TheTranscriptGETCarriesTheInFlightTurn(t *testing.T) {
 	openReplayGapTurn(t, rt)
 	seedReplayGapPrompt(t, cs)
 
-	// The connect the reloaded window makes. `?snapshot=none` is what
-	// snapshotDeclaration() answers on a boot whose URL names no chat, and this half is
-	// CHARACTERISED rather than changed: it is what makes the GET the only channel left.
-	body := coldConnect(t, rt, "?"+snapshotParam+"="+snapshotNone).Body.String()
-	if got := strings.Count(body, string(vibekit.EventTurnState)); got != 1 {
-		t.Fatalf("the connect carries %d turn_state frames, want 1: the fixture is not busy, "+
-			"so nothing below is measuring the reconnect this test is about", got)
+	// The connect the reloaded window makes carries no turn content at all, which is
+	// what makes the GET the only channel for the in-flight reply. The retired frame
+	// type is checked by name so its return would fail here rather than pass by luck.
+	body := coldConnect(t, rt, "").Body.String()
+	if strings.Contains(body, string(vibekit.EventType("turn_state"))) || strings.Contains(body, replayGapText) {
+		t.Fatalf("the connect carries turn content; the GET assertions below would pass without it: %q", body)
 	}
-	if got := snapshotFrames(body); got != 0 {
-		t.Fatalf("the sentinel connect carries %d snapshot frames, want 0: the withhold is the "+
-			"premise of this test, so the GET assertions below would pass without it", got)
+	if !connectPayload(t, rt, "").BusyStated || !busySetOf(connectPayload(t, rt, ""))[replayGapChat] {
+		t.Fatal("the fixture's chat is not busy at connect, so nothing below is measuring the reconnect this test is about")
 	}
 
 	page := getTranscript(t, mux, replayGapChat)
@@ -189,7 +187,7 @@ func openTurnFrom(t *testing.T, rt *Runtime, id vibekit.ChatID, src vibekit.Turn
 	if buf == nil {
 		t.Fatalf("no live turn buffer for %q", id)
 	}
-	if !buf.StartTurn("m-" + string(id)) {
+	if opened, _ := buf.StartTurn("m-" + string(id)); !opened {
 		t.Fatalf("turn for %q was already started, so the fixture is not the one filling it", id)
 	}
 	return buf
@@ -221,5 +219,39 @@ func TestLiveTurn_WithholdsAnIdleChat(t *testing.T) {
 
 	if _, ok := rt.LiveTurn("c-never-had-a-turn"); ok {
 		t.Errorf("LiveTurn served a chat with no open turn, want it withheld")
+	}
+}
+
+// TestRuntimeLiveTurn_CarriesTheBase is the GET channel's COPY, which is the one fact
+// bridge_coord's LiveTurn can get wrong on its own — and it needs its own test because
+// this channel's base is almost always 0 in production, so nothing else would exercise
+// the field's journey onto vibekit.LiveTurn at all.
+func TestRuntimeLiveTurn_CarriesTheBase(t *testing.T) {
+	rt, _, _ := newReplayGapRuntime(t)
+	const cut vibekit.ChatID = "c-get-cut"
+	buf := openTurnFrom(t, rt, cut, vibekit.TurnSourcePrompt)
+	// The caps test's own fixture, shared rather than re-sized here: it is built to exceed
+	// liveTurnGETCaps.BlockTextBytes, the one dimension that cuts this channel's block
+	// array at a size worth building.
+	fillCuttingTurn(t, buf)
+
+	snap, ok := buf.SnapshotCapped(liveTurnGETCaps)
+	if !ok {
+		t.Fatal("the fixture's own snapshot reported no content")
+	}
+	if snap.BlockBase <= 0 {
+		t.Fatalf("the fixture's snapshot reports BlockBase = %d, want > 0: this channel's caps cut "+
+			"nothing here, so the comparison below would hold with the field carried nowhere",
+			snap.BlockBase)
+	}
+
+	live, ok := rt.LiveTurn(cut)
+	if !ok {
+		t.Fatal("LiveTurn withheld a turn with content, so there is no payload to check")
+	}
+	if live.BlockBase != snap.BlockBase {
+		t.Errorf("LiveTurn.BlockBase = %d, want %d: the read is right and the COPY onto the payload "+
+			"is what drops it, which is the one thing this channel can get wrong on its own",
+			live.BlockBase, snap.BlockBase)
 	}
 }

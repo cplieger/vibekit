@@ -23,7 +23,7 @@ import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { wireRowToggle } from "./disclosure-row.js";
-import { toolCallBulk } from "./tool-bulk.js";
+import { toolCallBulk, type ToolBulk } from "./tool-bulk.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
@@ -36,7 +36,6 @@ import {
   type ToolRenderInfo,
 } from "./tool-schema.js";
 import type { ToolDenial } from "./types.js";
-import { trackInProgress } from "./tool-group.js";
 import { el } from "@cplieger/reactive";
 
 /** Build a tool-call element. Does not append it to the DOM. */
@@ -85,8 +84,10 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     node.dataset["filePath"] = info.filePath;
   }
   if (opts.live && isToolActive(opts.status)) {
+    // `data-start-ms` MEANS this card is in flight: both fold guards in
+    // `tool-group.ts` refuse to collapse a group holding one. It is dropped by
+    // `applyStatusUpdate` on every settle.
     node.dataset["startMs"] = String(Date.now());
-    trackInProgress(node);
   }
 
   const summary = el("div", {
@@ -121,16 +122,44 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     // linkifier — is built on first open by `detailsBody`, because a collapsed
     // card is a claim line and a transcript mounts dozens of them.
     node.insertAdjacentHTML("beforeend", detailsShell());
-    wireToggle(node, detailsBody(node, opts, depth1));
-    // One arm per thing `detailsBody` writes, read back by `refreshToolDisclosure`. The
-    // region cannot be read for them: it is empty until first open, so a card whose only
-    // content is deferred looks exactly like one with none. `outputBytes` is stamped only
-    // where the store cut the OUTPUT, so a diffs-only cut's `hasFull` names an early return.
+    // What the transcript dropped and the bulk can put back, declared once so the
+    // load below and the `data-disclosable` arms cannot disagree about it.
+    const deferred: DeferredCtx = { opts, depth1, info };
+    // A card whose call has ALREADY failed is built OPEN, because open is that card's
+    // final state: `messages-tools.ts` opens a failed card's region so the error output
+    // is visible without a click, and a card mounted from the store is failed before it
+    // is built. Opening it after the mount animated the reveal on every re-mount —
+    // measured on the live app, 8 `Run Command` cards with `data-outcome="fail"` each
+    // running a 200ms height transition ~120ms after a tab switch, which is the reported
+    // symptom. `expandToolDetails` stays the path for the live status FLIP, where the
+    // reveal SHOULD animate. Gated on `live` like the flip it mirrors: a replay-mode card
+    // has settled and shows no expand-on-fail.
+    // The READER's own state and nothing else: a card is born open only where they had
+    // this region open before this render. A failed call is NOT born open — the
+    // expand-on-fail courtesy belongs to the live status FLIP (`expandToolDetails`,
+    // driven from `messages-tools.ts`), where the reveal is an event the reader is
+    // watching and SHOULD animate. Deriving it here instead would open every failed
+    // call in a reopened chat, which is a resting state rather than a reveal.
+    const buildOpen = opts.detailsOpen === true;
+    wireToggle(node, detailsBody(node, deferred), buildOpen);
+    // One arm per thing opening this card writes, read back by `refreshToolDisclosure`.
+    // The region cannot be read for them: it is empty until first open, so a card whose
+    // only content is deferred looks exactly like one with none. The first three arms are
+    // content this card already holds; the deferred pieces contribute their own through
+    // `reveals`, which is why a diffs-only cut is openable rather than bare.
+    //
+    // The chat id gates the WHOLE table and is not a per-member predicate: both pieces
+    // come from one bulk behind one guard, so two copies of the condition would be two
+    // things to keep in step — `bulkChatID` is that one owner, shared with
+    // `detailsBody`'s fetch guard. Without it a card with no chat id kept its chevron
+    // and opened onto a region that can never fill — reachable from
+    // `run-step-blocks.ts`, whose `toolCardOptsFor(tc, true)` carries no chat id, on a
+    // run step's `hasFull` edit.
     if (
       opts.denial !== undefined ||
       (opts.live && opts.input !== undefined) ||
       (opts.output !== undefined && opts.output.trim() !== "") ||
-      (opts.hasFull === true && (opts.outputBytes ?? 0) > 0)
+      (bulkChatID(opts) !== null && DEFERRED_PARTS.some((part) => part.reveals(deferred)))
     ) {
       node.dataset["disclosable"] = "1";
     }
@@ -141,63 +170,34 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   // An edit's diff IS its depth 1, which is why it is inserted here rather than
   // deferred with the details body. It used to be inserted for every kind, which
   // turned a merged multi-edit group into a wall of hunks by default.
-  if (depth1 === "diff") {
-    if (opts.diffs !== undefined && opts.diffs.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const d = opts.diffs[0]!;
-      insertDiffPreview(node, d.path, { oldText: d.old_text ?? "", newText: d.new_text });
-    } else if (info.writesFile && info.diffSources !== null) {
-      insertDiffPreview(node, info.filePath, info.diffSources);
-    } else if (opts.hasFull === true) {
-      // The transcript dropped this card's diff: a ToolDiff is a before/after
-      // pair the client runs its own line diff over, so the server sends it
-      // whole or not at all rather than a truncated pair that would render an
-      // edit nobody made. The bulk carries it.
-      appendDiffFetch(node, opts, info.filePath);
-    }
+  const resting = depth1 === "diff" ? restingDiff(opts, info) : null;
+  if (resting !== null) {
+    insertDiffPreview(node, resting.path, resting.src);
   }
 
   refreshToolDisclosure(node);
   return node;
 }
 
-/** A control that fetches the call's diff and replaces itself with the preview.
+/** The diff a card draws in its RESTING state, or null when it has none: the
+ *  call's own ToolDiff, else the before/after pair its INPUT carries.
  *
- *  Its own affordance rather than a silent fetch on mount, which would undo what
- *  the preview bought: the whole point is that a card nobody opened costs one
- *  claim line. */
-function appendDiffFetch(node: HTMLDivElement, opts: BuildToolCardOpts, filePath: string): void {
-  const chatID = opts.chatID ?? "";
-  if (chatID === "") {
-    return;
+ *  ONE owner, because the deferred table's diff member is its negation — a card
+ *  already drawing a diff must neither fetch a second one nor count the bulk as a
+ *  reason to be openable. Two conditions restated at the table would be two things
+ *  to keep in step, and a preview inserted twice is the drift they produce. */
+function restingDiff(
+  opts: BuildToolCardOpts,
+  info: ToolRenderInfo,
+): { path: string; src: { oldText: string; newText: string } } | null {
+  const d = opts.diffs?.[0];
+  if (d !== undefined) {
+    return { path: d.path, src: { oldText: d.old_text ?? "", newText: d.new_text } };
   }
-  const count = opts.diffCount ?? 0;
-  // `.tool-output-reveal` deliberately: it is already the card's reveal-button
-  // vocabulary ("Show N more lines" inside the details region), and this is the
-  // same affordance one level out. A class of its own would be a second
-  // stylesheet rule for one visual.
-  const btn = el(
-    "button",
-    { type: "button", className: "tool-output-reveal", "data-reveal": "diff" },
-    count > 1 ? `Show ${String(count)} diffs` : "Show the diff",
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", (e: Event) => {
-    e.stopPropagation();
-    btn.disabled = true;
-    void toolCallBulk(chatID, opts.id).then((bulk) => {
-      const d = bulk?.diffs?.[0];
-      if (d === undefined) {
-        btn.disabled = false;
-        return;
-      }
-      btn.remove();
-      insertDiffPreview(node, d.path === "" ? filePath : d.path, {
-        oldText: d.old_text ?? "",
-        newText: d.new_text,
-      });
-    });
-  });
-  node.insertBefore(btn, node.querySelector(".tool-details"));
+  if (info.writesFile && info.diffSources !== null) {
+    return { path: info.filePath, src: info.diffSources };
+  }
+  return null;
 }
 
 /** Two facts a move's claim line cannot carry. */
@@ -279,7 +279,18 @@ function buildHeader(
         "data-path": info.filePath,
         // The chip shows the BASENAME, so the full path is on no other surface
         // and rides the tooltip rather than a second native one beside it.
-        "data-tooltip": `Open the diff\n${info.filePath}`,
+        //
+        // THE PATH ALONE, and the action moved to the accessible name. Tooltips
+        // are one size class (01-tokens.css `--tooltip-lines`), and this is the
+        // only tooltip in the app whose content is long enough for that to bind:
+        // a leading `Open the diff` line left the path ONE line of the two, and
+        // one line holds 57 characters, which clips 19.26% of the 28,870 real
+        // file-path tool inputs on the live volume. Two lines hold 114 and clip
+        // 0.02%.
+        // Path-first is also what this row's tooltip is FOR — the fact the chip
+        // hides — where a tooltip restating the click says nothing.
+        "data-tooltip": info.filePath,
+        "aria-label": `Open the diff for ${info.fileBasename}`,
       },
       el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
       el("span", { className: "tool-file-name" }, info.fileBasename),
@@ -290,11 +301,6 @@ function buildHeader(
   if (opts.live && isToolActive(opts.status)) {
     const spinner = el("span", { className: "tool-spinner" });
     header.appendChild(spinner);
-  }
-
-  if (opts.live) {
-    const duration = el("span", { className: "tool-duration", [CHROME_ATTR]: "" });
-    header.appendChild(duration);
   }
 
   // No status WORD, and no second mark either. The row carries ONE mark — the
@@ -502,17 +508,115 @@ function detailsShell(): string {
   return `<div class="tool-details"><div class="tool-output"></div></div>`;
 }
 
+/** What a deferred piece of content is decided and applied against. */
+interface DeferredCtx {
+  readonly opts: BuildToolCardOpts;
+  readonly depth1: string;
+  /** The diff member needs `filePath` for a bulk diff carrying none, and
+   *  `restingDiff` for the negation its own predicate is. */
+  readonly info: ToolRenderInfo;
+}
+
+/** One piece of a card's content the transcript dropped, put back from the bulk
+ *  when the reader OPENS the card.
+ *
+ *  On open and never on mount: that is what the fetch button this replaced was
+ *  defending, and the argument survives it unchanged — a card nobody opened still
+ *  costs one claim line.
+ *
+ *  TWO predicates because they answer different questions, and for `output` they
+ *  differ. The bulk is APPLIED whenever the store previewed the call, because a
+ *  previewed output is sent PLAIN — TextSpan offsets are UTF-16 code units into
+ *  the whole text, and remapping them onto a head-and-tail window would be a
+ *  second implementation of `windowSpans` in Go against a different offset unit —
+ *  so the bulk is where an ANSI-styled output regains its colour even when the
+ *  text itself was not cut. Only a CUT output REVEALS anything, because otherwise
+ *  the reader can already see every line of it. */
+interface DeferredPart {
+  /** Should the bulk be applied for this piece on open. */
+  pending(ctx: DeferredCtx): boolean;
+  /** Does this piece give the card a reason to be openable at all: an arm of
+   *  `data-disclosable`. */
+  reveals(ctx: DeferredCtx): boolean;
+  apply(node: HTMLDivElement, bulk: ToolBulk, ctx: DeferredCtx): void;
+}
+
+/** A ToolDiff is a before/after pair the client runs its own line diff over, so
+ *  the server sends it whole or not at all rather than a truncated pair that would
+ *  render an edit nobody made — which is why a dropped diff is all-or-nothing here
+ *  and the two predicates coincide. */
+function diffDeferred({ opts, depth1, info }: DeferredCtx): boolean {
+  return depth1 === "diff" && opts.hasFull === true && restingDiff(opts, info) === null;
+}
+
+/** The chat this card's bulk is keyed on, or `null` when it has none.
+ *
+ *  ONE owner of "can this card reach its bulk at all", read by the `data-disclosable`
+ *  union — which must not offer a chevron onto a region that can never fill — and by
+ *  `detailsBody`'s fetch guard, which must not issue a request it cannot key. Two
+ *  spellings of one rule is how those two come to disagree, and the failure is the
+ *  one this conjunct exists to prevent: a card that opens onto nothing. Resolving
+ *  rather than answering a bool so the id is derived once and narrows for the caller. */
+function bulkChatID(opts: BuildToolCardOpts): string | null {
+  const id = opts.chatID ?? "";
+  return id === "" ? null : id;
+}
+
+const DEFERRED_PARTS: readonly DeferredPart[] = [
+  {
+    pending: ({ opts }) => opts.hasFull === true,
+    reveals: ({ opts }) => opts.hasFull === true && (opts.outputBytes ?? 0) > 0,
+    apply: (node, bulk, { depth1 }) => {
+      if (bulk.output.trim() === "") {
+        return;
+      }
+      const out = node.querySelector(".tool-output");
+      if (out === null) {
+        return;
+      }
+      out.replaceChildren();
+      appendOutput(node, bulk.output, bulk.outputSpans, depth1 === "output");
+    },
+  },
+  {
+    pending: diffDeferred,
+    reveals: diffDeferred,
+    apply: (node, bulk, { info }) => {
+      // The presence check `messages-tools.ts`'s `applyDiffUpdate` already makes, and
+      // for the same reason from the other side: this runs after an await, so a
+      // `tool_call_update` carrying diffs can land between the open and the bulk and
+      // insert the preview first — leaving two mini-diffs on one card. It is about the
+      // SECOND insert rather than emptiness; `insertDiffPreview` returns early on a
+      // zero-change diff by itself.
+      if (node.querySelector(".tool-diff-preview") !== null) {
+        return;
+      }
+      const d = bulk.diffs[0];
+      if (d === undefined) {
+        return;
+      }
+      insertDiffPreview(node, d.path === "" ? info.filePath : d.path, {
+        oldText: d.old_text ?? "",
+        newText: d.new_text,
+      });
+    },
+  },
+];
+
 /** The details body's builder, run at most once, on first open.
  *
  *  Registered on the toggle BEFORE the disclosure controller's own listener so it
  *  runs first: the controller measures `scrollHeight` to animate the reveal, and
  *  a region filled after that measurement would animate to zero and then jump.
  *
- *  A previewed card (`has_full`) fetches its bulk here and repaints when it
- *  lands. The preview is painted first regardless, so the reveal shows the head
- *  and tail immediately and fills in behind — the alternative, an empty region
- *  until the network answers, is a worse reveal than the one this replaced. */
-function detailsBody(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: string): () => void {
+ *  A previewed card (`has_full`) fetches its bulk here — ONE request for every
+ *  pending piece, because `toolCallBulk` answers all of them — and repaints when
+ *  it lands. The preview is painted first regardless, so the reveal shows the head
+ *  and tail immediately and fills in behind; the alternative, an empty region
+ *  until the network answers, is a worse reveal than the one this replaced. A
+ *  `null` bulk renders nothing and is not retried from here. */
+function detailsBody(node: HTMLDivElement, ctx: DeferredCtx): () => void {
+  const { opts, depth1 } = ctx;
   let built = false;
   return () => {
     if (built) {
@@ -523,9 +627,11 @@ function detailsBody(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: stri
     if (details === null) {
       return;
     }
+    // The command this prints is ALSO in `.tool-subtitle` (:99), so a reader of
+    // both — a rolling tail — has to dedupe the two.
     const inputBlock =
       opts.live && opts.input !== undefined
-        ? `<pre class="tool-input" ${CHROME_ATTR}>${escText(JSON.stringify(opts.input, null, 2))}</pre>`
+        ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
         : "";
     const head = denialBlock(opts.denial) + inputBlock;
     if (head !== "") {
@@ -534,37 +640,20 @@ function detailsBody(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: stri
     if (opts.output !== undefined && opts.output.trim() !== "") {
       appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
     }
-    if (opts.hasFull === true) {
-      fetchOutputBulk(node, opts, depth1);
+    const pending = DEFERRED_PARTS.filter((part) => part.pending(ctx));
+    const chatID = bulkChatID(opts);
+    if (pending.length === 0 || chatID === null) {
+      return;
     }
+    void toolCallBulk(chatID, opts.id).then((bulk) => {
+      if (bulk === null) {
+        return;
+      }
+      for (const part of pending) {
+        part.apply(node, bulk, ctx);
+      }
+    });
   };
-}
-
-/** Replace a previewed card's output with the whole of it, plus its style spans.
- *
- *  The spans are why the repaint is unconditional rather than gated on a line
- *  count: a previewed output is sent PLAIN, because TextSpan offsets are UTF-16
- *  code units into the whole text and remapping them onto a head-and-tail window
- *  would be a second implementation of `windowSpans` in Go against a different
- *  offset unit. So the bulk is where an ANSI-styled command output regains its
- *  colour. */
-function fetchOutputBulk(node: HTMLDivElement, opts: BuildToolCardOpts, depth1: string): void {
-  const chatID = opts.chatID ?? "";
-  if (chatID === "") {
-    return;
-  }
-  void toolCallBulk(chatID, opts.id).then((bulk) => {
-    const output = bulk?.output ?? "";
-    if (output.trim() === "") {
-      return;
-    }
-    const out = node.querySelector(".tool-output");
-    if (out === null) {
-      return;
-    }
-    out.replaceChildren();
-    appendOutput(node, output, bulk?.output_spans ?? [], depth1 === "output");
-  });
 }
 
 /** The rule that refused the call, and where it lives.
@@ -635,11 +724,20 @@ const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
 // immediately afterwards to offer "Explain this error".
 const detailBuilders = new WeakMap<HTMLElement, () => void>();
 
-function wireToggle(el: HTMLElement, buildBody: () => void): void {
+/** Wire a card's details region. `initialOpen` builds the body and creates the
+ *  controller ALREADY OPEN, which is the only silent way to mount an open region: the
+ *  primitive commits the closed height before it writes the change, so creating it
+ *  closed and opening it afterwards animates even inside the same task. `open: true`
+ *  needs no measurement either — `applyHeight(true, false)` writes `height: ""` — so
+ *  content arriving later is fine and the card may still be detached. */
+function wireToggle(el: HTMLElement, buildBody: () => void, initialOpen: boolean): void {
   const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
   const details = el.querySelector<HTMLElement>(".tool-details");
   if (toggle === null || details === null) {
     return;
+  }
+  if (initialOpen) {
+    buildBody();
   }
   // BEFORE createDisclosure registers its own click handler, so this one runs
   // first and the region is filled before the controller measures it to animate
@@ -661,7 +759,7 @@ function wireToggle(el: HTMLElement, buildBody: () => void): void {
   // new direction instead of being replaced mid-transition, and one convention
   // covers all eight disclosures in the app rather than this one.
   const ctl = createDisclosure(toggle, details, {
-    open: false,
+    open: initialOpen,
     onToggle: (open, source) => {
       if (!open && source === "user") {
         setUserScrolledUp(true);

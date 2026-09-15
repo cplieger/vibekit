@@ -19,7 +19,7 @@ import (
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		handleSettingsGet(w, path)
 	case http.MethodPut, http.MethodPatch:
-		s.handleSettingsWrite(w, r, path)
+		s.handleSettingsWrite(w, r)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
 	}
@@ -150,32 +150,25 @@ const maxSettingsBytes = 1 << 20 // 1 MiB
 // longer see are still on disk, and the remedy is config.json itself.
 const msgSettingsUnreadable = "config.json could not be read; your settings were not overwritten"
 
-// readStoredSettings reads and parses the on-disk settings document. BOTH verbs
-// call it: the GET resolves the effective view over the result, and a write merges
-// its request over it. An ABSENT file is the one outcome that yields an empty map
-// and a nil error: a fresh volume has no config.json, and neither reading nor
-// writing one is a failure.
+// readStoredSettings reads and parses the on-disk settings document for the READ
+// side: the GET resolves the effective view over the result, and lazySettings
+// answers one notification key out of it. An ABSENT file is the one outcome that
+// yields an empty map and a nil error, because a fresh volume has no config.json.
 //
 // Every other outcome is an error — a stat or read fault, a non-regular file at
 // the name, an oversize file, invalid JSON, a top-level null.
 //
-// The two verbs share these MECHANICS and not the failure POLICY, which is the
-// distinction to preserve when editing either caller. A write must REFUSE, because
-// its next act is an atomic whole-file write of the merge result and an empty map
-// there is indistinguishable from "nothing was stored", so it would replace
-// config.json with just the keys in the request and durably destroy the rest. A
-// read FAILS OPEN and serves defaults, because showing an operator the values in
-// force plus a warning beats showing them nothing, and because the write's
-// refusal is what actually protects the file.
+// The read and the write share these MECHANICS and not the failure POLICY, which
+// is the distinction to preserve when editing either. settings.Update REFUSES an
+// unreadable document; a read FAILS OPEN and serves defaults, because showing an
+// operator the values in force plus a warning beats showing them nothing, and
+// because the write's refusal is what actually protects the file.
 //
-// OpenRegular, not os.Open: handleSettingsWrite holds s.settingsMu across this
-// call, and os.Open on a FIFO blocks in open(2) with no context deadline to
-// rescue it, so one FIFO planted at config.json would wedge every settings write
-// for the life of the process. It also refuses a symlink at the final component,
-// which the read side in internal/settings already refuses, so the two halves of
-// this file agree about what may stand in for it. The GET inherits both, which is
-// the other half of why it shares this reader: it used to call os.ReadFile with no
-// size cap and no type check at all.
+// OpenRegular, not os.Open: os.Open on a FIFO blocks in open(2) with no context
+// deadline to rescue it, so one FIFO planted at config.json would strand a
+// handler goroutine per request. It also refuses a symlink at the final
+// component, which the read side in internal/settings already refuses, so the two
+// halves of this file agree about what may stand in for it.
 func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	// Absolute because OpenRegular requires it. A relative configDir resolved
 	// against the process cwd under os.Open and filepath.Abs preserves exactly
@@ -216,43 +209,36 @@ func readStoredSettings(path string) (map[string]json.RawMessage, error) {
 	return existing, nil
 }
 
-// mergeSettingsPatch resolves the request body against the file already on disk.
+// mergeSettingsPatch resolves the request body against the document on disk,
+// as the merge step of one settings.Update.
 //
-// PATCH merges the incoming keys over the existing file. PUT replaces the file,
-// but must not silently wipe server-managed keys written by other flows
-// (agent_ignore_files from the Permissions UI, model_effort from the model
-// switcher): carry over any managed key the PUT body omits so a full-object PUT
-// stays non-destructive of them. Any other method writes the body verbatim.
-//
-// The caller holds settingsMu across this and the write that follows: this is the
-// read half of a read-modify-write.
-func mergeSettingsPatch(method, path string, patch map[string]json.RawMessage) (map[string]json.RawMessage, error) {
-	switch method {
-	case http.MethodPatch:
-		existing, err := readStoredSettings(path)
-		if err != nil {
-			return nil, err
+// PATCH merges the incoming keys over the stored document. Every other method
+// REPLACES it, but must not silently wipe a key written by another flow
+// (settings.ServerManagedKeys): a managed key the body omits is carried over, so
+// a full-object PUT stays non-destructive of them.
+func mergeSettingsPatch(method string, patch map[string]json.RawMessage) func(map[string]json.RawMessage) error {
+	return func(doc map[string]json.RawMessage) error {
+		if method == http.MethodPatch {
+			maps.Copy(doc, patch)
+			return nil
 		}
-		maps.Copy(existing, patch)
-		return existing, nil
-	case http.MethodPut:
-		existing, err := readStoredSettings(path)
-		if err != nil {
-			return nil, err
-		}
+		carried := map[string]json.RawMessage{}
 		for _, k := range settings.ServerManagedKeys() {
 			if _, inBody := patch[k]; inBody {
 				continue
 			}
-			if v, ok := existing[k]; ok {
-				patch[k] = v
+			if v, ok := doc[k]; ok {
+				carried[k] = v
 			}
 		}
+		clear(doc)
+		maps.Copy(doc, patch)
+		maps.Copy(doc, carried)
+		return nil
 	}
-	return patch, nil
 }
 
-func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, path string) {
+func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request) {
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
@@ -269,43 +255,24 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 		patchKeys = append(patchKeys, k)
 	}
 	_ = settings.WarnUnknownKeys(patchKeys, r.Method+" "+r.URL.Path)
-	s.settingsMu.Lock()
-	defer s.settingsMu.Unlock()
-	patch, mErr := mergeSettingsPatch(r.Method, path, patch)
-	if mErr != nil {
-		httpreply.ServerError(w, msgSettingsUnreadable, mErr)
-		return
-	}
-	pretty, err := json.MarshalIndent(patch, "", "  ")
-	if err != nil {
-		httpreply.BadRequest(w, "invalid json")
-		return
-	}
 	if r.Context().Err() != nil {
 		return
 	}
-	// Atomic write via temp+fsync+rename+dir-fsync. Replaces a bare
-	// os.WriteFile so a crash mid-write cannot truncate config.json
-	// to zero bytes (which would silently revert every preference to
-	// its consumer-side default on the next read). A non-nil error
-	// means the data did not land — surface 500. A nil error with
-	// res.Durable==false means the config is on disk but the
-	// parent-dir fsync was unconfirmed; fall through so the broadcast
-	// and preference syncs still run.
-	res, wErr := atomicfile.WriteFile(r.Context(), path, append(pretty, '\n'),
-		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
-	if wErr != nil {
-		httpreply.InternalError(w, wErr)
+	merged, err := settings.Update(r.Context(), s.configDir, mergeSettingsPatch(r.Method, patch))
+	if err != nil {
+		// Two 500s with different bodies: an unreadable document is the user's own
+		// file and says so, where a failed write is this server's fault.
+		if errors.Is(err, settings.ErrUnreadable) {
+			httpreply.ServerError(w, msgSettingsUnreadable, err)
+			return
+		}
+		httpreply.ServerError(w, "config.json could not be saved", err)
 		return
-	}
-	if !res.Durable {
-		slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
-			"path", path)
 	}
 	webhttp.Ok(w)
 	s.agent.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
-	s.syncPushPreferences(patch)
-	syncDebugLogs(patch)
+	s.syncPushPreferences(merged)
+	syncDebugLogs(merged)
 }
 
 // syncPushPreferences reads notification preference toggles from the settings
@@ -370,10 +337,12 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	//
 	// ONLY AN EXPLICIT FALSE ZEROES, and the polarity is the whole reason this is a
 	// separate resolution rather than another row in the loop above. This key's default
-	// is OFF (it means "the reader has not opted in"), while every keyed kind's is ON
-	// ("if the master is on, which kinds"), so treating an ABSENT master as a decision
-	// would silence every kind for every workspace that has never touched Settings —
-	// turning an absence into a refusal. The population with an absent key also has no
+	// is OFF (it means "the reader has not opted in"), while each keyed kind carries its
+	// own declared default (settings.Default*, two ON and one OFF) answering "if the
+	// master is on, which kinds", so treating an ABSENT master as a decision would
+	// silence every kind for every workspace that has never touched Settings, whatever
+	// each kind's own default says — turning an absence into a refusal. The population
+	// with an absent key also has no
 	// subscribers by construction: `enableEverything` is the only path that starts a
 	// subscription and it PATCHes `notifications_enabled: true` in the same body.
 	//
@@ -418,7 +387,7 @@ func notificationsRefused(patch map[string]json.RawMessage, persisted *lazySetti
 // it is reached only after the write this runs behind already succeeded, so a
 // file that cannot be read here is a state no settings write produced.
 //
-// Single-goroutine: the caller holds settingsMu.
+// Single-goroutine by construction: each syncPushPreferences call builds its own.
 type lazySettings struct {
 	doc  map[string]json.RawMessage
 	path string

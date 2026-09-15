@@ -10,6 +10,8 @@ import {
   removeConfiguredEntry,
   insertConfiguredEntry,
 } from "../mcp-state.js";
+import { decodeRegistrySearchFailure, decodeRegistrySearchResult } from "../wire/decoders.gen.js";
+import type { RegistrySearchFailure, RegistrySearchResult } from "../wire/types.gen.js";
 
 /** Base path for MCP API endpoints — single source of truth. */
 export const MCP_API = "/api/mcp";
@@ -78,44 +80,6 @@ export function validationFieldsOf(err: { cause?: unknown } | undefined): Valida
     const c = f as { field?: unknown; message?: unknown };
     return typeof c.field === "string" && typeof c.message === "string";
   });
-}
-
-/** Result shape from the registry search endpoint. */
-export interface RegistrySearchResult {
-  servers: {
-    name: string;
-    title?: string;
-    description?: string;
-    version?: string;
-    repository?: string;
-    /** Upstream lifecycle status, present only when it is NOT active
-     *  (`deprecated` / `deleted`). The server omits the common case. */
-    status?: string;
-    /** The publisher's reason for a non-active status, when they gave one. */
-    status_message?: string;
-    packages?: {
-      registry_type: string;
-      identifier: string;
-      version?: string;
-      env_vars?: {
-        name: string;
-        description?: string;
-        required?: boolean;
-        secret?: boolean;
-      }[];
-    }[];
-    remotes?: {
-      type: string;
-      url: string;
-      headers?: {
-        name: string;
-        description?: string;
-        value?: string;
-        required?: boolean;
-        secret?: boolean;
-      }[];
-    }[];
-  }[];
 }
 
 // --- mcp.toggle_server ---
@@ -280,6 +244,39 @@ interface SearchRegistryArgs {
   q: string;
 }
 
+/** Narrow a 502 body through the generated decoder. A body that is not a
+ *  classified failure (an off-shape 502, a proxy's own error page) reads as no
+ *  classification at all rather than failing the dispatch's error branch. */
+function readRegistryFailure(body: unknown): RegistrySearchFailure | undefined {
+  try {
+    return decodeRegistrySearchFailure(body);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Carries the 502's classification onto the error's `cause`, the way the
+ *  validation errors above carry their field list, so the panel can say
+ *  whether to wait and for how long. The dispatch still fails. */
+function decodeRegistryFailure<T>(info: ApiErrorInfo): ApiErrorDecision<T> | undefined {
+  const failure = readRegistryFailure(info.body);
+  if (failure === undefined) {
+    return undefined;
+  }
+  return {
+    kind: "error",
+    error: new ActionError(info.message, { status: info.status, cause: failure }),
+  };
+}
+
+/** Reads the classification back off a failed dispatch's error. Undefined for
+ *  a failure the server never classified (a network error, a timeout). */
+export function registryFailureOf(
+  err: { cause?: unknown } | undefined,
+): RegistrySearchFailure | undefined {
+  return readRegistryFailure(err?.cause);
+}
+
 // No automatic retry, alone among the MCP actions: the registry refuses
 // connections after a burst, so a retry would wait out every upstream
 // timeout in series. The panel's own Retry button covers it.
@@ -290,6 +287,8 @@ export const searchRegistry = apiAction<SearchRegistryArgs, RegistrySearchResult
     method: "GET",
     path: `${MCP_API}/registry/search?q=${encodeURIComponent(q)}&limit=20`,
   }),
+  decode: decodeRegistrySearchResult,
+  decodeError: decodeRegistryFailure,
   error: false,
 });
 

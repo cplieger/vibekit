@@ -77,8 +77,8 @@ func (k PushKind) Valid() bool {
 //
 // ChatID is a notification about one chat. Key is a notification with NO chat
 // behind it, and it carries a kind prefix (`pr:`) rather than a URL because the
-// client owns the route vocabulary (router.ts) — a path assembled here would be a
-// second copy of it. Exactly one field is set; an empty PushSubject is the
+// client owns the route vocabulary (route-path.ts) — a path assembled here would be
+// a second copy of it. Exactly one field is set; an empty PushSubject is the
 // workspace-global case that coalesces under a constant tag.
 type PushSubject struct {
 	ChatID ChatID `json:"chat_id,omitempty"`

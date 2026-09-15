@@ -33,7 +33,11 @@ describe("expandable pill markup (static/index.html)", () => {
   it("puts every expand card beside its trigger, never inside a button", () => {
     const regions = [
       slice(indexHtml, '<div class="prompt-pills">', "</form>"),
-      slice(indexHtml, '<div class="sidebar-footer">', '<a id="user-email"'),
+      // The closing marker was `'<a id="user-email"'`, which no longer exists: the
+      // address is a SPAN inside the trigger now. `.sidebar-footer-actions` is the
+      // next thing after the whole anchor, so the region still covers the card and
+      // its trigger and nothing else.
+      slice(indexHtml, '<div class="sidebar-footer">', '<div class="sidebar-footer-actions">'),
     ];
 
     let cards = 0;
@@ -56,7 +60,11 @@ describe("expandable pill markup (static/index.html)", () => {
   it("gives every expandable trigger a card next to it", () => {
     const regions = [
       slice(indexHtml, '<div class="prompt-pills">', "</form>"),
-      slice(indexHtml, '<div class="sidebar-footer">', '<a id="user-email"'),
+      // The closing marker was `'<a id="user-email"'`, which no longer exists: the
+      // address is a SPAN inside the trigger now. `.sidebar-footer-actions` is the
+      // next thing after the whole anchor, so the region still covers the card and
+      // its trigger and nothing else.
+      slice(indexHtml, '<div class="sidebar-footer">', '<div class="sidebar-footer-actions">'),
     ];
 
     for (const region of regions) {

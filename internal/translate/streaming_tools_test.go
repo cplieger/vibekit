@@ -55,8 +55,7 @@ type workDirDeps struct {
 func (d *workDirDeps) WorkDir() string { return d.workDir }
 
 // hookStatusDeps wraps baseDeps and overrides IsHookStatusEnabled so the
-// hook-ask suppression path is exercisable in both states (baseDeps hard-
-// codes false).
+// hooks.showStatus gate is exercisable in both states (baseDeps hard-codes false).
 type hookStatusDeps struct {
 	*baseDeps
 	enabled bool
@@ -226,10 +225,12 @@ func hasToolCallEvent(events *[]vibekit.ServerEvent) bool {
 	return false
 }
 
-// TestHandleToolCall_HookAskSuppression: a pre-tool-use hook's ask-permission gate
-// arrives as a kind:"other" call tagged _meta.kiro.hookAsk, because v3's zToolKind has
-// no "hook". Its card follows hooks.showStatus; a normal call never does.
-func TestHandleToolCall_HookAskSuppression(t *testing.T) {
+// TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting: a pre-tool-use hook's
+// ask-permission gate arrives as a kind:"other" call tagged _meta.kiro.hookAsk, because
+// v3's zToolKind has no "hook". Its card is NOT gated on hooks.showStatus: suppressing
+// it also dropped the follow-up carrying the user's answer, so a hook needing approval
+// always reaches the transcript.
+func TestHandleToolCall_HookAskRenderedRegardlessOfStatusSetting(t *testing.T) {
 	hookAsk := map[string]any{
 		"toolCallId": "hook-ask-1",
 		"title":      "Run hook",
@@ -240,17 +241,17 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		}},
 	}
 
-	t.Run("SuppressedWhenStatusDisabled", func(t *testing.T) {
+	t.Run("ShownWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 		chatID := vibekit.ChatID("c1")
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), FrameAttribution{})
-		if hasToolCallEvent(events) {
-			t.Error("hook-ask tool call broadcast a tool_call event; want suppressed (hooks.showStatus off)")
+		if !hasToolCallEvent(events) {
+			t.Error("hook-ask tool call broadcast no tool_call event with hooks.showStatus off; want shown (the ask is ungated)")
 		}
-		if n := len(base.bufStore.GetOrInit(chatID).ToolCalls); n != 0 {
-			t.Errorf("buffered tool calls = %d, want 0 (hook-ask must not be buffered)", n)
+		if n := len(base.bufStore.GetOrInit(chatID).ToolCalls); n != 1 {
+			t.Errorf("buffered tool calls = %d, want 1 (the ask must be buffered so its answer update lands)", n)
 		}
 	})
 
@@ -1561,7 +1562,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := toolCallFromWire(
 				&ACPToolCallWire{ToolCallID: "tc", Title: tc.in},
-				"", "", toolUpdateContent{},
+				"", "", toolUpdateContent{}, 0,
 			)
 			if got.Title != tc.want {
 				t.Errorf("toolCallFromWire(title %q).Title = %q, want %q", tc.in, got.Title, tc.want)
@@ -1575,7 +1576,7 @@ func TestToolCallTitle_IsTreatedAtTheDecodeDoor(t *testing.T) {
 // where nothing else caps it.
 func TestToolCallTitle_IsBounded(t *testing.T) {
 	long := strings.Repeat("x", 4096)
-	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", "", toolUpdateContent{})
+	got := toolCallFromWire(&ACPToolCallWire{ToolCallID: "tc", Title: long}, "", "", toolUpdateContent{}, 0)
 	// The preset carries its "..." marker OUTSIDE the cap, so a truncated value is
 	// maxDisplayTextBytes+3 bytes.
 	if maxLen := maxDisplayTextBytes + len("..."); len(got.Title) > maxLen {

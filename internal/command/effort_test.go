@@ -8,11 +8,16 @@ package command
 // switch is not persisted as a level the session never took.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/testsupport"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -30,13 +35,166 @@ func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.Clien
 	}
 }
 
+// setEffort drives the command with one double answering the bridge, the store
+// and the bus. An empty configDir means the seed is not this case's subject: the
+// per-model memory is skipped, and nothing touches a settings file.
+func setEffort(t *testing.T, host hostDouble, configDir string, chatID vibekit.ChatID, level string) (any, error) {
+	t.Helper()
+	return CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: configDir},
+		effortReq(t, chatID, level))
+}
+
+// recordingBus counts the events a command published, so a test can tell a seed
+// write that landed from one that was refused.
+type recordingBus struct {
+	events []vibekit.ServerEvent
+}
+
+func (b *recordingBus) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
+	b.events = append(b.events, evt)
+}
+
+func (b *recordingBus) countOf(kind vibekit.EventType) int {
+	n := 0
+	for _, e := range b.events {
+		if e.Type == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func seedChatOnModel(t *testing.T, store ChatStore, id vibekit.ChatID, model string) {
+	t.Helper()
+	if _, err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "a chat"
+		c.Model = model
+		return true
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+func writeConfig(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, settings.Filename), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed config.json: %v", err)
+	}
+}
+
+// effortSeeds reads the per-model memory back off disk, which is where the client
+// used to write it and where the pill now reads it from.
+func effortSeeds(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, settings.Filename))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	var doc struct {
+		ByModel map[string]string `json:"last_effort_by_model"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse config.json (%s): %v", data, err)
+	}
+	return doc.ByModel
+}
+
+// TestCmdSetEffort_ARefusedSwitchWritesNoSeed is the hazard the seed's move
+// server-side closes: the client wrote it before dispatching, so a level the
+// session REFUSED was still recorded as the user's preference for that model —
+// they were told it did not apply and the app had already remembered it.
+func TestCmdSetEffort_ARefusedSwitchWritesNoSeed(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"last_effort_by_model":{"opus-5":"low"}}`)
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "opus-5")
+	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "s"}
+	host := newBridgeHost(store, b)
+	bus := &recordingBus{}
+
+	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir},
+		effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", statusOf(err))
+	}
+	if got := effortSeeds(t, dir)["opus-5"]; got != "low" {
+		t.Errorf("seed for opus-5 = %q, want %q; a refused level was remembered as a preference", got, "low")
+	}
+	if n := bus.countOf(vibekit.EventSettingsUpdated); n != 0 {
+		t.Errorf("settings_updated broadcasts = %d, want 0 after a refusal", n)
+	}
+}
+
+// TestCmdSetEffort_SeedsOnlyThePickedModel pins the per-model scope of the write.
+// One slot for the whole app made a pick on any chat retract every other model's
+// remembered level, which is the user report the map shape exists for.
+func TestCmdSetEffort_SeedsOnlyThePickedModel(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `{"theme":"dark","last_effort_by_model":{"opus-5":"low","gpt-luna":"high"}}`)
+	store := testsupport.NewInMemoryChatStore()
+	seedChatOnModel(t, store, "c1", "opus-5")
+	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
+	bus := &recordingBus{}
+
+	_, err := CmdSetEffort(t.Context(), host, host, bus, Workspace{ConfigDir: dir},
+		effortReq(t, "c1", "max"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	got := effortSeeds(t, dir)
+	want := map[string]string{"opus-5": "max", "gpt-luna": "high"}
+	if !maps.Equal(got, want) {
+		t.Errorf("last_effort_by_model = %v, want %v", got, want)
+	}
+	// The sibling key proves the write merged rather than replacing the document.
+	if theme := storedKey(t, dir, settings.KeyTheme); theme != `"dark"` {
+		t.Errorf("theme = %s, want \"dark\"; the seed write replaced the document", theme)
+	}
+	if n := bus.countOf(vibekit.EventSettingsUpdated); n != 1 {
+		t.Errorf("settings_updated broadcasts = %d, want 1 so the other devices converge", n)
+	}
+}
+
+func storedKey(t *testing.T, dir, key string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, settings.Filename))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse config.json: %v", err)
+	}
+	return string(doc[key])
+}
+
+// TestCmdSetEffort_AChatWithNoModelIsNotSeeded holds the one skip: an auto-created
+// record has no model, and a seed under an empty key is one no reader resolves.
+func TestCmdSetEffort_AChatWithNoModelIsNotSeeded(t *testing.T) {
+	dir := t.TempDir()
+	store := testsupport.NewInMemoryChatStore()
+	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
+
+	_, err := CmdSetEffort(t.Context(), host, host, host, Workspace{ConfigDir: dir},
+		effortReq(t, "c-brand-new", "high"))
+
+	if statusOf(err) != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
+	}
+	if _, err := os.Stat(filepath.Join(dir, settings.Filename)); !os.IsNotExist(err) {
+		t.Errorf("config.json exists after a modelless pick (stat err %v), want no seed file at all", err)
+	}
+}
+
 func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
 	b := &recordingBridge{result: map[string]any{}, sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "high"))
+	_, err := setEffort(t, host, "", "c1", "high")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -67,8 +225,8 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 	seedEmptyChat(t, store, "c2")
 	host := newBridgeHost(store, &recordingBridge{result: map[string]any{}, sessionID: "s"})
 
-	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "low"))
-	_, _ = CmdSetEffort(t.Context(), host, host, effortReq(t, "c2", "max"))
+	_, _ = setEffort(t, host, "", "c1", "low")
+	_, _ = setEffort(t, host, "", "c2", "max")
 
 	c1, _ := store.Get(t.Context(), "c1")
 	c2, _ := store.Get(t.Context(), "c2")
@@ -92,7 +250,7 @@ func TestCmdSetEffort_NoBridgeIsNotAConflict(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "medium"))
+	_, err := setEffort(t, host, "", "c1", "medium")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -110,7 +268,7 @@ func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	host := &noBridgeDeps{storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store}}
 
-	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c-brand-new", "xhigh"))
+	_, err := setEffort(t, host, "", "c-brand-new", "xhigh")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", statusOf(err), errText(err))
@@ -136,7 +294,7 @@ func TestCmdSetEffort_ARefusedLiveSwitchIsNotPersisted(t *testing.T) {
 	b := &recordingBridge{callErr: errors.New("no such config option"), sessionID: "sess-1"}
 	host := newBridgeHost(store, b)
 
-	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "max"))
+	_, err := setEffort(t, host, "", "c1", "max")
 
 	if statusOf(err) != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", statusOf(err))
@@ -157,7 +315,7 @@ func TestCmdSetEffort_RejectsAMalformedLevel(t *testing.T) {
 			b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
 			host := newBridgeHost(store, b)
 
-			_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", level))
+			_, err := setEffort(t, host, "", "c1", level)
 
 			if statusOf(err) != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", statusOf(err))
@@ -179,7 +337,7 @@ func TestCmdSetEffort_AcceptsATierOutsideTheConstants(t *testing.T) {
 	b := &recordingBridge{result: map[string]any{}, sessionID: "s"}
 	host := newBridgeHost(store, b)
 
-	_, err := CmdSetEffort(t.Context(), host, host, effortReq(t, "c1", "none"))
+	_, err := setEffort(t, host, "", "c1", "none")
 
 	if statusOf(err) != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (err %v)", statusOf(err), err)

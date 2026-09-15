@@ -192,7 +192,7 @@ func TestFlushSteerCarry_DropsMachineryAndKeepsProse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buf := &buffer.Buffer{}
+			buf := buffer.New()
 			buf.SetSteerCarry(tt.carry, "")
 			FlushSteerCarry(buf)
 
@@ -217,7 +217,7 @@ func TestFlushSteerCarry_DropsMachineryAndKeepsProse(t *testing.T) {
 }
 
 func TestFlushSteerCarry_EmptyCarryTouchesNothing(t *testing.T) {
-	buf := &buffer.Buffer{}
+	buf := buffer.New()
 	buf.Content.WriteString("existing")
 	FlushSteerCarry(buf)
 	if got := buf.Content.String(); got != "existing" {

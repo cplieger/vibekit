@@ -11,7 +11,7 @@
 //
 //   image  ->  the `<img>` the parser already built, with its src rewritten at
 //              the file route. Already shipped (utils-url.ts
-//              `rewriteWorkspaceImageSrc`); this module returns null for it
+//              `rewriteServedImageSrc`); this module returns null for it
 //              rather than building a second path.
 //   audio  ->  `<audio controls>`.
 //   other  ->  a download affordance, which is what the file IS to a reader.
@@ -28,13 +28,9 @@
 
 import { el } from "@cplieger/reactive";
 import { isPlayableAudio, isViewableImage } from "./file-extensions.js";
-import { fileDownloadURL } from "./utils-url.js";
+import { fileDownloadURL, isServedPath } from "./utils-url.js";
 
-/** Only a workspace-rooted path is ours. A remote URL in an image position is
- *  the author's own business and stays an `<img>`, exactly as it does today. */
-const WORKSPACE_PREFIX = "/workspace/";
-
-/** The element a workspace file in an image position deserves — or null when the
+/** The element a served file in an image position deserves — or null when the
  *  `<img>` the parser already built is the right answer (a remote URL, or an
  *  image, whose src rewrite is already in place).
  *
@@ -43,7 +39,7 @@ const WORKSPACE_PREFIX = "/workspace/";
  *  already landed on the `<img>` by the time a src arrives. */
 export function mediaElementFor(src: string, alt: string): HTMLElement | null {
   const path = src.trim();
-  if (!path.startsWith(WORKSPACE_PREFIX) || isViewableImage(path)) {
+  if (!isServedPath(path) || isViewableImage(path)) {
     return null;
   }
   const url = fileDownloadURL(path);

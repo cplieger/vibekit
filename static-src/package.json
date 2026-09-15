@@ -1,12 +1,16 @@
 {
   "type": "module",
+  "sseFixture": ".",
+  "sseFixtureTags": "vibekit_test",
   "scripts": {
     "pretest": "rm -rf node_modules/.vite",
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:coverage": "vitest --run --coverage",
-    "typecheck": "tsc -project tsconfig.json",
+    "typecheck": "tsc -project tsconfig.json && tsc -project tsconfig.sw.json",
     "typecheck:tests": "tsc -project tsconfig.test.json",
+    "typecheck:build": "tsc -project tsconfig.build.json",
+    "typecheck:sw": "tsc -project tsconfig.sw.json",
     "lint:eslint": "eslint .",
     "lint:prettier": "prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
@@ -39,6 +43,7 @@
     "@cplieger/fetch": "2.2.0",
     "@cplieger/keyenc": "1.0.7",
     "@cplieger/reactive": "2.1.1",
+    "@cplieger/sse": "1.0.0",
     "@cplieger/ui-primitives": "3.1.0",
     "@cplieger/web-terminal-engine": "5.2.0",
     "@cplieger/web-terminal-ui": "7.2.2"

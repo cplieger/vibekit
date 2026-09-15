@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Message, Session } from "./types.js";
+import { _resetForTest as resetVersions, hasSubject, versionMap } from "./subject-versions.js";
 // The module's own shape, for the fresh-instance loader at the foot of this file:
 // `chatListLoaded` is module state, so its cases re-evaluate the module and need a
 // type for what the dynamic import hands back.
@@ -29,10 +30,7 @@ const {
   mockUpsertMessage,
   mockSetWatermark,
   mockNoteLiveTurn,
-  mockNoteTruncated,
-  mockClearTruncated,
-  epoch,
-  ledger,
+  mockNoteAdopted,
 } = vi.hoisted(() => ({
   sessions: new Map<string, Session>(),
   liveIDs: new Map<string, string>(),
@@ -67,37 +65,17 @@ const {
   // Params are declared so the call tuple is typed and the assertions below can
   // read `calls[n][0]` (the existing row) and `calls[n][1]` (the header).
   mockLatchFields: vi.fn((_existing: unknown, _header: unknown) => ({})),
-  // The four calls the in-flight-turn adoption makes, which are the four the
-  // `turn_state` handler makes for the same content arriving on the other channel.
-  // Spies rather than a fake store: what these cases are about is WHETHER the adoption
-  // happens and with what, and a fake that re-implemented the merge would assert itself.
+  // The four calls the in-flight-turn adoption makes, which are the four the live
+  // `message_created` door makes for the same content arriving on the stream. Spies
+  // rather than a fake store: what these cases are about is WHETHER the adoption happens
+  // and with what, and a fake that re-implemented the merge would assert itself.
   mockUpsertMessage: vi.fn(),
   mockSetWatermark: vi.fn(),
   mockNoteLiveTurn: vi.fn(),
-  mockNoteTruncated: vi.fn(),
-  mockClearTruncated: vi.fn(),
-  // The store's transport sync epoch, controllable so a case can land a "gap"
-  // at an exact point in the fetch lifecycle.
-  epoch: { n: 0 },
-  /** The freshness ledger, as `noteLoaded` writes it: subject to the epoch its
-   *  request went out under. */
-  ledger: new Map<string, number>(),
+  mockNoteAdopted: vi.fn(),
 }));
 
 vi.mock("./actions/index.js", () => ({ registerCleanup: vi.fn() }));
-// The freshness leaf, driven rather than observed: `epoch` is what a case moves to land
-// a "gap" at an exact point in the fetch lifecycle, and `ledger` is what `loadMessages`
-// writes. Spread the real surface so a new export cannot break the link.
-vi.mock("./tab-freshness.js", async () => ({
-  ...(await import("./__test-helpers__/tab-freshness-mock.js")).tabFreshnessMock,
-  syncEpoch: () => epoch.n,
-  noteLoaded: (kind: string, ref: string, e: number) => {
-    ledger.set(`${kind}:${ref}`, e);
-  },
-  forgetView: (kind: string, ref: string) => {
-    ledger.delete(`${kind}:${ref}`);
-  },
-}));
 vi.mock("./api-client.js", () => ({
   apiGetTyped: mockApiGetTyped,
   apiGetTypedOrError: mockApiGetTypedOrError,
@@ -147,8 +125,7 @@ vi.mock("./store.js", async (importOriginal) => {
     },
     setChunkWatermark: mockSetWatermark,
     noteLiveTurnMessage: mockNoteLiveTurn,
-    noteTruncatedSnapshot: mockNoteTruncated,
-    clearTruncatedSnapshot: mockClearTruncated,
+    noteAdoptedSnapshot: mockNoteAdopted,
     upsertMessage: mockUpsertMessage,
     // Present-but-inert so real-ESM linking succeeds: the tab projection widened
     // this graph and these names are imported somewhere in it. No case here calls
@@ -192,8 +169,7 @@ beforeEach(() => {
   sessions.clear();
   liveIDs.clear();
   watermarks.clear();
-  epoch.n = 0;
-  ledger.clear();
+  resetVersions();
 });
 
 describe("loadList pruning", () => {
@@ -294,8 +270,8 @@ describe("loadMessages pagination dedupe", () => {
 
   // The newest page REPLACES the persisted transcript but keeps the in-flight
   // turn: the server accumulates it in an in-memory buffer and appends it to the
-  // chat file once, at turn_ended, so it is absent from this page while
-  // `turn_state` has already put it in the store. A blind whole-array replace
+  // chat file once, at turn_ended, so it is absent from this page while the live
+  // stream has already put it in the store. A blind whole-array replace
   // therefore DELETED the reply the reader was watching, every time this ran
   // mid-turn.
   it("replaces the persisted page and keeps the in-flight turn", async () => {
@@ -758,14 +734,23 @@ describe("residency", () => {
     expect(sessions.get("c1")?.residency).toBe("partial");
   });
 
-  it("a failed newest-page load claims nothing", async () => {
+  it("a failed newest-page load marks the window load_failed", async () => {
     seedSession("c1", []);
     sessions.get("c1")!.residency = "evicted";
     mockApiGetTyped.mockResolvedValue(null);
 
     const ok = await loadMessages("c1");
     expect(ok).toBe(false);
-    expect(sessions.get("c1")?.residency).toBe("evicted");
+    expect(sessions.get("c1")?.residency).toBe("load_failed");
+  });
+
+  it("a failed older-page load leaves residency alone", async () => {
+    seedSession("c1", [msg("m2", 2)]);
+    sessions.get("c1")!.residency = "loaded";
+    mockApiGetTyped.mockResolvedValue(null);
+
+    await loadMessages("c1", "m2");
+    expect(sessions.get("c1")?.residency).toBe("loaded");
   });
 
   it("loadList carries residency across the header rebuild", async () => {
@@ -784,58 +769,99 @@ describe("residency", () => {
   });
 });
 
-describe("the freshness ledger loadMessages writes", () => {
-  // The record is stamped with the epoch captured BEFORE the request went out, so an
-  // answer that raced a gap records a claim that already reads stale. The ledger's own
-  // truth table is tab-freshness.node.test.ts's; what THIS suite owns is which loads
-  // write a record and under which number.
-  it("records the PRE-REQUEST epoch on a successful newest-page load", async () => {
+describe("the digest stamps the loaders observe", () => {
+  // A response stamp is observed AFTER the commit, never before, so the version the map
+  // holds always describes state the store holds. The map's own rules (epoch binding,
+  // the stale refusal) are the library's; what THIS suite owns is which loads observe,
+  // and that a refused stamp leaves no claim behind.
+  function held(kind: string, ref: string): string | undefined {
+    return versionMap()
+      .snapshot()
+      .held.find((h) => h.kind === kind && h.ref === ref)?.version;
+  }
+
+  it("observes the chat stamp, epoch included, on a successful newest-page load", async () => {
     seedSession("c1", []);
-    epoch.n = 3;
-    mockApiGetTyped.mockImplementation(() => {
-      // The gap arrives after the request went out, before the answer lands.
-      epoch.n = 4;
-      return Promise.resolve({
-        chat: { message_count: 1 },
-        messages: [msg("a", 1)],
-        has_more: false,
-      });
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+      subject: { kind: "chat", ref: "c1", version: "7", epoch: "e1" },
     });
 
     const ok = await loadMessages("c1");
 
     expect(ok).toBe(true);
-    expect(ledger.get("chat:c1")).toBe(3);
-    expect(ledger.get("chat:c1")).not.toBe(epoch.n);
+    expect(held("chat", "c1")).toBe("7");
+    expect(versionMap().epoch()).toBe("e1");
   });
 
-  it("leaves the record where it was on a beforeID prepend", async () => {
-    // An older page extends an already-trusted window and asserts nothing about
-    // currency, so stamping it fresh at its own epoch would absorb a gap that landed
-    // mid-paging.
+  it("observes nothing on a beforeID prepend", async () => {
+    // An older page extends an already-trusted window and asserts nothing about the
+    // newest edge the stamp describes.
     seedSession("c1", [msg("m2", 2)]);
-    ledger.set("chat:c1", 1);
-    epoch.n = 2;
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 2 },
       messages: [msg("m1", 1)],
       has_more: false,
+      subject: { kind: "chat", ref: "c1", version: "9", epoch: "e1" },
     });
 
     await loadMessages("c1", "m2");
 
-    expect(ledger.get("chat:c1")).toBe(1);
+    expect(hasSubject("chat", "c1")).toBe(false);
   });
 
-  it("writes nothing when the newest-page load fails", async () => {
+  it("observes nothing when the newest-page load fails", async () => {
     seedSession("c1", []);
-    epoch.n = 2;
     mockApiGetTyped.mockResolvedValue(null);
 
     const ok = await loadMessages("c1");
 
     expect(ok).toBe(false);
-    expect(ledger.has("chat:c1")).toBe(false);
+    expect(hasSubject("chat", "c1")).toBe(false);
+  });
+
+  it("a stamp from a foreign epoch does not refill a bound map", async () => {
+    // The stream bound the map to the hub's epoch; an answer from a process that has
+    // since restarted (or one that raced the restart) carries another and is refused, so
+    // the next digest still names the chat instead of trusting a window from the wrong
+    // process.
+    versionMap().bind("e1");
+    seedSession("c1", []);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+      subject: { kind: "chat", ref: "c1", version: "3", epoch: "e2" },
+    });
+
+    const ok = await loadMessages("c1");
+
+    expect(ok).toBe(true);
+    expect(hasSubject("chat", "c1")).toBe(false);
+    expect(versionMap().epoch()).toBe("e1");
+  });
+
+  it("loadList observes the chats stamp once the list is committed", async () => {
+    mockApiGetTyped.mockResolvedValue({
+      chats: [{ id: "c1", name: "one", message_count: 0, usage: {} }],
+      subject: { kind: "chats", ref: "", version: "4", epoch: "e1" },
+    });
+
+    const ok = await loadList();
+
+    expect(ok).toBe(true);
+    expect(held("chats", "")).toBe("4");
+  });
+
+  it("loadList observes nothing when the list does not decode", async () => {
+    mockApiGetTyped.mockResolvedValue(null);
+
+    const ok = await loadList();
+
+    expect(ok).toBe(false);
+    expect(hasSubject("chats", "")).toBe(false);
   });
 });
 
@@ -1463,6 +1489,76 @@ describe("chatListLoaded", () => {
   });
 });
 
+describe("the refetch-outcome line", () => {
+  // The counters are module state, so each case takes a fresh instance and its counts
+  // start at zero. The mocked GET performs no fetch, so every line ends in `proto=?`; the
+  // regexes stop at `proto=` so they hold for a real request too.
+  it("a failed newest-page load warns with the chat id and the outcome counts", async () => {
+    const loader = await freshLoader();
+    seedSession("c1", []);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mockApiGetTyped.mockResolvedValue(null);
+
+    await loader.loadMessages("c1");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatch(
+      /^chat_get: c1 load_failed changed=0 unchanged=0 load_failed=1 proto=/,
+    );
+  });
+
+  it("a newest-page load that changed the window reports changed", async () => {
+    const loader = await freshLoader();
+    seedSession("c1", [msg("a", 1)]);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("a", 1), msg("b", 2)],
+      has_more: false,
+    });
+
+    await loader.loadMessages("c1");
+    expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug.mock.calls[0]?.[0]).toMatch(
+      /^chat_get: c1 changed changed=1 unchanged=0 load_failed=0 proto=/,
+    );
+  });
+
+  it("a newest-page load that returned the held window reports unchanged", async () => {
+    const loader = await freshLoader();
+    seedSession("c1", [msg("a", 1)]);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 1 },
+      messages: [msg("a", 1)],
+      has_more: false,
+    });
+
+    await loader.loadMessages("c1");
+    expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug.mock.calls[0]?.[0]).toMatch(
+      /^chat_get: c1 unchanged changed=0 unchanged=1 load_failed=0 proto=/,
+    );
+  });
+
+  it("an older-page prepend reports no outcome", async () => {
+    const loader = await freshLoader();
+    seedSession("c1", [msg("m2", 2)]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    mockApiGetTyped.mockResolvedValue({
+      chat: { message_count: 2 },
+      messages: [msg("m1", 1)],
+      has_more: false,
+    });
+
+    await loader.loadMessages("c1", "m2");
+    const lines = [...warn.mock.calls, ...debug.mock.calls]
+      .map((c) => c[0])
+      .filter((a): a is string => typeof a === "string" && a.startsWith("chat_get:"));
+    expect(lines).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // `serverMayAnswer`: whether asking the server about ONE id can be answered.
 //
@@ -2044,16 +2140,19 @@ describe("the no-cursor reload keeps the older pages already resident", () => {
 
 // ---------------------------------------------------------------------------
 // The in-flight turn on the transcript GET (`live_turn`). Until the field existed the
-// response stated `turn_open` and carried nothing that described it, so a client whose
-// only other channel is the SSE connect replay — which is gated on a declaration it makes
-// before it knows which chat it will show — rendered the prompt over an empty body until
-// the turn ended. The four calls below are the four the `turn_state` handler makes, so the
-// same content lands in the same places whichever channel delivers it.
+// response stated `turn_open` and carried nothing that described it, so a client that
+// found a chat busy at connect rendered the prompt over an empty body until the turn
+// ended. It is the ONE channel for that content: the connect carries `busy_chats` and no
+// turn transcript. The four calls below are the four the live `message_created` door
+// makes, so the same content lands in the same places whichever door delivers it.
 // ---------------------------------------------------------------------------
 
-/** The `live_turn` object as the decoder hands it over. */
-function liveTurn(id: string, seq: number, truncated = false): unknown {
-  return { message: msg(id, 5), chunk_seq: seq, truncated };
+/** The `live_turn` object as the decoder hands it over. `block_base` is spelled here
+ *  because it is a REQUIRED wire field: a fixture omitting it would state a shape the
+ *  server cannot send, and the ZERO default is the ordinary answer on this channel — its
+ *  caps are wide enough that an ordinary turn is not cut. */
+function liveTurn(id: string, seq: number, truncated = false, blockBase = 0): unknown {
+  return { message: msg(id, 5), chunk_seq: seq, block_base: blockBase, truncated };
 }
 
 describe("loadMessages live turn", () => {
@@ -2080,7 +2179,12 @@ describe("loadMessages live turn", () => {
     // The unpersisted marker, or the NEXT refetch reads this message as one the server
     // deliberately omitted and deletes it.
     expect(mockNoteLiveTurn).toHaveBeenCalledWith("c1", "streaming");
-    expect(mockNoteTruncated).not.toHaveBeenCalled();
+    // The snapshot record, which on this uncut answer says the window starts at 0 and
+    // nothing was withheld. A POSITIVE statement rather than a skipped call.
+    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
+      blockBase: 0,
+      truncated: false,
+    });
   });
 
   it("notes a truncated in-flight turn as the tail of a capped payload", async () => {
@@ -2097,49 +2201,42 @@ describe("loadMessages live turn", () => {
 
     // A reader shown the tail with nothing saying so reads a bounded payload as the whole
     // reply, which is what makes the cap admissible in the first place.
-    expect(mockNoteTruncated).toHaveBeenCalledWith("c1", "streaming");
-  });
-
-  // THE TWO CHANNELS DISAGREE BY DESIGN. A connect frame's `turn_state` is capped at 52 KiB
-  // and truncates routinely; this GET carries the whole turn, so its `truncated: false` is a
-  // statement about the SAME message rather than an absent field — and the GET is the fresher
-  // answer. Without the retraction the note stays on screen telling a reader that output is
-  // still coming for a reply they are already holding whole.
-  it("clears a marker the other channel set for the same message", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4),
+    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
+      blockBase: 0,
+      truncated: true,
     });
-
-    await loadMessages("c1");
-
-    expect(mockClearTruncated).toHaveBeenCalledWith("c1", "streaming");
-    expect(mockNoteTruncated).not.toHaveBeenCalled();
   });
 
-  // The negative control, and it is an EXACT-CALLS assertion rather than a `not.toHaveBeenCalledWith`
-  // on some id nothing produces: that shape passes just as well when the retraction is absent
-  // entirely, so it could never fail. The retraction is keyed on the message this answer
-  // describes, so an earlier turn that really was capped keeps its note — anything wider (a
-  // second id, or a whole-chat clear) shows up as an extra call here.
-  it("clears the answered message and nothing else", async () => {
-    seedSession("c1", []);
-    mockApiGetTyped.mockResolvedValue({
-      chat: { message_count: 1 },
-      messages: [userRow("u1", 1)],
-      has_more: false,
-      turn_open: true,
-      live_turn: liveTurn("streaming", 4),
-    });
+  // ONE RECORD ANSWERS FOR BOTH FACTS. A later GET for the same message outranks an earlier
+  // one — a wider read is the fresher answer — so its `truncated: false` is a statement
+  // about the SAME message rather than an absent field, and its base describes the array
+  // THIS response delivered. ONE unconditional write is what makes the answer REPLACE the
+  // record held for that id: a `false` here IS the retraction of an earlier marker. Without
+  // it the note stays on screen telling a reader that output is still coming for a reply
+  // they hold whole.
+  it.each([true, false])(
+    "records the GET's answer whichever way it reads (%s)",
+    async (truncated) => {
+      seedSession("c1", []);
+      mockApiGetTyped.mockResolvedValue({
+        chat: { message_count: 1 },
+        messages: [userRow("u1", 1)],
+        has_more: false,
+        turn_open: true,
+        live_turn: liveTurn("streaming", 4, truncated, 117),
+      });
 
-    await loadMessages("c1");
+      await loadMessages("c1");
 
-    expect(mockClearTruncated.mock.calls).toEqual([["c1", "streaming"]]);
-  });
+      // EXACT calls rather than `toHaveBeenCalledWith`: what is being pinned is that there is
+      // ONE write per answer, so a re-introduced second door (a clear beside the note) shows
+      // up here as an extra call. And it is keyed on the message this answer describes, so an
+      // earlier turn that really was capped keeps its own record.
+      expect(mockNoteAdopted.mock.calls).toEqual([
+        ["c1", "streaming", { blockBase: 117, truncated }],
+      ]);
+    },
+  );
 
   // THE STALE-ANSWER GATE. The response is a point-in-time read, and `mergeMessage`
   // replaces content and blocks with the incoming's whenever they are non-empty — so
@@ -2269,6 +2366,7 @@ describe("loadMessages live turn", () => {
       live_turn: {
         message: { id: "streaming", role: "assistant", ts: 5, content: "half a reply" },
         chunk_seq: 4,
+        block_base: 117,
         truncated: true,
       },
     };
@@ -2285,6 +2383,102 @@ describe("loadMessages live turn", () => {
       expect.objectContaining({ id: "streaming", content: "half a reply" }),
     );
     expect(mockSetWatermark).toHaveBeenCalledWith("c1", "streaming", 4);
-    expect(mockNoteTruncated).toHaveBeenCalledWith("c1", "streaming");
+    // Both facts, off the wire spelling and through the GENERATED decoder: `reqNum` and
+    // `reqBool` refuse an absent or null field, so this is the one case in the file that
+    // would notice a renamed json tag or a decode that dropped either of them.
+    expect(mockNoteAdopted).toHaveBeenCalledWith("c1", "streaming", {
+      blockBase: 117,
+      truncated: true,
+    });
+  });
+
+  // THE ABSENCE GUARD IS THE CALLER'S, and this is the case that says so. The generated
+  // `decodeLiveTurn` is a `Decoder<LiveTurn>` whose `asObject` refuses undefined AND null
+  // by design, so a call site handing it a missing key fails the WHOLE load — for the
+  // majority population, since `internal/chat`'s router sets the key only while a turn is
+  // running. Driven through the real decoder, because a mocked resolve never reaches it.
+  it("loads an idle chat, whose response carries no live_turn, through the real decoder", async () => {
+    seedSession("c1", []);
+    const rawBody = {
+      chat: {
+        id: "c1",
+        name: "c1",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        created_at: 1,
+        updated_at: 1,
+        message_count: 1,
+      },
+      messages: [{ id: "u1", role: "user", ts: 1 }],
+      has_more: false,
+      turn_open: false,
+    };
+    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) =>
+      Promise.resolve(decode(rawBody)),
+    );
+
+    await loadMessages("c1");
+
+    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["u1"]);
+    expect(mockNoteAdopted).not.toHaveBeenCalled();
+  });
+
+  // A `live_turn` PRESENT and carrying no `block_base` — the shape a server older than
+  // that field sends. Every field of the payload is required, so the generated decoder
+  // refuses it, and a throw out of `decodeChatGetResponseLocal` is a DECODE failure that
+  // `apiGetTyped` collapses to null: the whole window, not the one frame, for every chat
+  // with a running turn. So the refusal reads as NOTHING TO ADOPT — which is not the same
+  // as a base of 0, and this case pins that by asserting the record is never written.
+  it("loads the window when live_turn carries no block_base, and adopts nothing", async () => {
+    seedSession("c1", []);
+    const rawBody = {
+      chat: {
+        id: "c1",
+        name: "c1",
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        created_at: 1,
+        updated_at: 1,
+        message_count: 1,
+      },
+      messages: [{ id: "u1", role: "user", ts: 1 }],
+      has_more: false,
+      turn_open: true,
+      live_turn: {
+        message: { id: "streaming", role: "assistant", ts: 5, content: "half a reply" },
+        chunk_seq: 4,
+        truncated: true,
+      },
+    };
+    // `apiGetTyped`'s own contract, mirrored: it hands a decoder throw back as null. A
+    // mock that let the throw escape would assert against a shape production never
+    // produces, and would pass for the wrong reason.
+    mockApiGetTyped.mockImplementation((_url: string, decode: (v: unknown) => unknown) => {
+      try {
+        return Promise.resolve(decode(rawBody));
+      } catch {
+        return Promise.resolve(null);
+      }
+    });
+
+    const loaded = await loadMessages("c1");
+
+    expect(loaded).toBe(true);
+    expect(sessions.get("c1")?.messages.map((m) => m.id)).toEqual(["u1"]);
+    expect(mockNoteAdopted).not.toHaveBeenCalled();
+    expect(mockSetWatermark).not.toHaveBeenCalled();
+    expect(mockUpsertMessage).not.toHaveBeenCalled();
   });
 });

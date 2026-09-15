@@ -8,13 +8,17 @@ package agent
 // unloaded and the projection is DISCARDED.
 
 import (
+	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/durable"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -37,7 +41,15 @@ type replay struct {
 	// writes the chat store, and holding the lock across that would let a store
 	// mutation and a replay frame deadlock against each other.
 	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
-	projMu       sync.Mutex
+	// broadcast publishes the replacement announcement.
+	broadcast func(context.Context, vibekit.ServerEvent)
+	// workDir is the workspace root a projected diff path is made relative to. A VALUE
+	// rather than a read through lifetime, because the barrier tests build a bare replay
+	// carrying no lifetime and still open a projection. An empty one yields absolute
+	// paths that key ChangedFiles differently from a live row's, and requireCollaborators
+	// cannot see a string, so the single production caller is the whole guard.
+	workDir string
+	projMu  sync.Mutex
 }
 
 // loadProjection is one in-flight session/load's accumulating transcript.
@@ -88,7 +100,7 @@ func (rp *replay) OpenReplayProjection(chatID vibekit.ChatID) {
 		close(prev.settled)
 	}
 	rp.projections[chatID] = &loadProjection{
-		proj:    translate.NewProjection(newMessageID),
+		proj:    translate.NewProjection(newMessageID, rp.workDir),
 		settled: make(chan struct{}),
 	}
 }
@@ -217,24 +229,36 @@ func (rp *replay) adopt(chatID vibekit.ChatID, lp *loadProjection, trigger strin
 	}
 }
 
-// swapProjectedTranscript makes a settled replay the chat's transcript, merged with
-// what a replay cannot speak for (see mergeProjection).
+// swapProjectedTranscript makes a settled replay the chat's transcript, merged with what
+// a replay cannot speak for (see mergeProjection). Runs on the Forward goroutine OR on the
+// spawn goroutine, so it must not hold projMu — the store mutation below can block and a
+// replay frame arriving meanwhile needs that lock.
 //
-// Runs on the Forward goroutine OR on the spawn goroutine, so it must not hold projMu —
-// the store mutation below can block and a replay frame arriving meanwhile needs that
-// lock. No broadcast: the swapped transcript is what the next fetch returns, the same
-// window the gap/refetch path already covers.
+// It ANNOUNCES the replacement, because it is the only site that can tell one from an
+// append and the merge is where that becomes knowable. The announcement is a
+// subject_changed for the chat: Mutate's own chat_updated carries the header and the new
+// `chat` stamp, and a client applying that frame records the version and calls its window
+// fresh while the message set underneath it was swapped — a count cannot tell a fill from
+// a swap. subject_changed is the fetch instruction the client already honours: it refetches
+// the transcript and records the stamp only on commit, so the digest names this chat again
+// if the refetch fails. Emitted only when the message set changed: a watermark-only move
+// replaces no transcript.
 func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
 	var before, after int
-	err := rp.chats.Mutate(durable.Context(rp.lifetime.shutdownCtx), chatID, func(c *vibekit.Chat, exists bool) bool {
+	var changed bool
+	var stats mergeStats
+	version, err := rp.chats.Mutate(durable.Context(rp.lifetime.shutdownCtx), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		before = len(c.Messages)
-		merged := mergeProjection(c.Messages, msgs)
-		after = len(merged)
+		merged, ch, st := mergeProjection(c.Messages, msgs)
+		after, changed, stats = len(merged), ch, st
 		sameWatermark := watermark == "" || watermark == c.CompactionWatermark
-		if after == before && sameWatermark {
+		// The merge's own answer, not a comparison performed after it: a FIELD-only
+		// difference is invisible to sameMessageIDs and is still a change to the transcript
+		// a client is rendering.
+		if !changed && sameWatermark {
 			return false
 		}
 		c.Messages = merged
@@ -249,89 +273,393 @@ func (rp *replay) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.
 	}
 	// Both counts because a SHRINK is the signal: the replay covered turns the record
 	// no longer holds.
+	// paired is the whole diagnostic for the pairing key: 0 on a chat with live assistant
+	// rows means the key did not arrive.
 	slog.Info("replay projection: transcript swapped",
-		"chat_id", chatID, "was", before, "now", after, "projected", len(msgs))
+		"chat_id", chatID, "was", before, "now", after, "projected", len(msgs),
+		"paired", stats.Paired, "added", stats.Added,
+		"dropped", stats.Dropped, "replaced", stats.Replaced)
+	// Mutate's own chat_updated is broadcast inside Mutate, so the header necessarily
+	// precedes this frame: the count first, the fetch instruction second, stamped with the
+	// version that mutation minted so the refetch commits at exactly that version.
+	if changed {
+		frame := vibekit.NewEvent(vibekit.EventSubjectChanged, chatID, vibekit.SubjectChangedPayload{})
+		frame.Subject = vibekit.NewSubjectStamp(string(subject.KindChat), string(chatID), version)
+		rp.broadcast(durable.Context(rp.lifetime.shutdownCtx), frame)
+	}
 }
 
-// mergeProjection decides the transcript to persist after a replay: the projection's
-// messages, plus the ones vibekit holds that a replay cannot speak for. Role alone is
-// not the rule — only the user half of the window has matching ids, so a merge keyed on
-// assistant ids would duplicate the whole transcript; EVENT rows are not on the replay
-// wire, so a replace drops every badge; and a plan row is RoleAssistant, also absent
-// from the wire, and regenerated by nothing, so it is kept by SHAPE. Anything newer than
-// the projection's last message survives regardless of role: KAS's log is NOT fsynced,
-// so a turn vibekit durably holds can legitimately be absent from a replay.
-func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
+// sameMessageIDs answers whether the merge left the rows and their order alone, which is
+// the STRUCTURAL half of `changed`; a count cannot answer it, since a merge can return as
+// many rows as it was given and none of the same ones.
+func sameMessageIDs(existing, merged []vibekit.Message) bool {
+	return slices.EqualFunc(existing, merged, func(a, b vibekit.Message) bool {
+		return a.ID == b.ID
+	})
+}
+
+// mergeStats is what the swap LOGS about one merge.
+//
+// Paired counts PAIRINGS, not consumed record rows. Replaced counts a projected row that
+// took over a record row's ID without pairing with it, which is neither an addition (the
+// transcript already held that id) nor a drop (the id is still there, carrying the
+// projection's copy). A record row the merge PRESERVED is in none of them, deliberately:
+// it is the emitted length minus the projected count.
+type mergeStats struct{ Paired, Added, Dropped, Replaced int }
+
+// mergeProjection decides the transcript to persist after a replay: each record row is
+// PAIRED with its replayed twin on AgentSideID and the two are unioned, and a record row
+// the replay does not cover is preserved by preserveExisting — KAS's log is not fsynced, so
+// a turn vibekit durably holds can legitimately be absent from a replay.
+func mergeProjection(existing, projected []vibekit.Message) (merged []vibekit.Message, changed bool, stats mergeStats) {
 	if len(projected) == 0 {
-		return existing
+		return existing, false, mergeStats{}
 	}
 
 	newest := int64(0)
 	projectedIDs := make(map[string]struct{}, len(projected))
+	projectedCompaction := false
 	for i := range projected {
 		projectedIDs[projected[i].ID] = struct{}{}
 		if projected[i].Ts > newest {
 			newest = projected[i].Ts
 		}
+		if projected[i].EventKind == vibekit.EventCompacted {
+			projectedCompaction = true
+		}
+	}
+
+	// firstByKey and byID answer different questions — which record row supplies the stamps,
+	// and which record row a projected id is taking over — so the ID-dup arm's comparison
+	// names the row it is really replacing. keyToIndices holds ALL of a key's rows so a
+	// pairing marks them consumed without an O(n) rescan. FIRST wins in both: nothing here
+	// produces two record rows under one key, so a duplicate is a defect elsewhere and the
+	// merge must answer the same way whichever one produced it.
+	firstByKey := make(map[string]int, len(existing))
+	keyToIndices := make(map[string][]int, len(existing))
+	byID := make(map[string]int, len(existing))
+	for i := range existing {
+		if key := existing[i].AgentSideID(); key != "" {
+			if _, seen := firstByKey[key]; !seen {
+				firstByKey[key] = i
+			}
+			keyToIndices[key] = append(keyToIndices[key], i)
+		}
+		if _, seen := byID[existing[i].ID]; !seen {
+			byID[existing[i].ID] = i
+		}
 	}
 
 	out := make([]vibekit.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
-	carrySteerFacts(out, existing)
+	claimed := make(map[string]bool, len(projected))
+	consumed := make(map[int]bool, len(existing))
+	for j := range out {
+		key := out[j].ID
+		i, byKey := firstByKey[key]
+		d, byDupID := byID[key]
+		// A SWITCH rather than an if/else-if chain: a second projected row under one key
+		// also satisfies the ID-dup test, so a chain counted it nowhere while every other
+		// account of this merge called it an addition.
+		switch {
+		case byKey && !claimed[key] && existing[i].Role == out[j].Role:
+			claimed[key] = true
+			out[j] = union(&existing[i], &projected[j])
+			for _, k := range keyToIndices[key] {
+				consumed[k] = true
+			}
+			stats.Paired++
+			changed = changed || !reflect.DeepEqual(existing[i], out[j])
+		case byKey && claimed[key]:
+			// The projected copy verbatim and NO stamps: the record holds that key once and
+			// the output now holds it twice, which sameMessageIDs reports structurally.
+			stats.Added++
+		case byDupID:
+			changed = changed || !reflect.DeepEqual(existing[d], out[j])
+			stats.Replaced++
+		default:
+			stats.Added++
+		}
+	}
+
 	// Indexed, not ranged by value: vibekit.Message is 216 bytes (gocritic rangeValCopy).
 	for i := range existing {
+		// A CONSUMED row goes regardless of preserveExisting: pairing is positive evidence
+		// the replay covers it, strictly stronger than the Ts heuristic — and a paired live
+		// row is ROUTINELY newer than its twin, its Ts being time.Now() at turn end against
+		// the twin's first frame, so preserving it here would double the turn.
+		if consumed[i] {
+			continue
+		}
 		if _, dup := projectedIDs[existing[i].ID]; dup {
 			continue
 		}
-		if existing[i].Role == vibekit.RoleEvent || existing[i].Ts > newest ||
-			isPlanRow(&existing[i]) {
+		if preserveExisting(&existing[i], newest, projectedCompaction) {
 			out = append(out, existing[i])
+			continue
 		}
+		stats.Dropped++
 	}
 
-	// Stable, so at the same instant a projected message stays ahead of a preserved
-	// one — the projected copy is the more complete of the two.
+	// Stable, so at the same instant a projected row stays ADJACENT-ahead of a preserved
+	// one. It says nothing about which copy is more complete: that is only true of a PAIRED
+	// row, whose two accounts the union has already merged.
 	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
 		return cmp.Compare(a.Ts, b.Ts)
 	})
+	return out, changed || !sameMessageIDs(existing, out), stats
+}
+
+// union merges one record row with the replayed twin the pair key matched.
+//
+// The record's row is the BASE, and the direction is the whole design: record-owned is the
+// structural default, so a field added to the message type later is preserved with no edit
+// here, where building from the projected row would make a new stamped field vanish on
+// every paired row. Exactly the fields the AGENT states are overwritten, each only when the
+// projection states one (an empty projected value is an absent statement, not a denial).
+func union(rec, proj *vibekit.Message) vibekit.Message {
+	out := *rec
+	out.ID = proj.ID
+	out.Role = proj.Role
+	out.EventKind = cmp.Or(proj.EventKind, rec.EventKind)
+	out.UserKind = cmp.Or(proj.UserKind, rec.UserKind)
+	// SteerState is RECORD-owned when the record states one: the record's state is observed
+	// (persistSteer wrote it from the live turn) where the projection's is inferred from
+	// resend evidence, so a delivered steer must never read as dropped. An ABSENT state is
+	// not a state, though — a row projected before the resend rule existed carries none, and
+	// renders under the label a delivered steer gets. cmp.Or keeps the precedence and fills
+	// only the absence.
+	out.SteerState = cmp.Or(rec.SteerState, proj.SteerState)
+	out.KASMessageID = cmp.Or(proj.KASMessageID, rec.KASMessageID)
+	out.Ts = cmp.Or(proj.Ts, rec.Ts)
+	out.TurnCredits = cmp.Or(proj.TurnCredits, rec.TurnCredits)
+	out.TurnElapsedMs = cmp.Or(proj.TurnElapsedMs, rec.TurnElapsedMs)
+	if proj.Refusal != nil {
+		out.Refusal = proj.Refusal
+	}
+	if len(proj.ChangedFiles) > 0 {
+		out.ChangedFiles = proj.ChangedFiles
+	}
+	// A USER row keeps the RECORD's content: BuildPromptBlocks augments the sent form with a
+	// path reference per attachment it could not inline, so the replay's text can hold
+	// machine-appended references the reader never typed.
+	if out.Role != vibekit.RoleUser && proj.Content != "" {
+		out.Content = proj.Content
+	}
+	if proj.Reasoning != "" {
+		out.Reasoning = proj.Reasoning
+	}
+	if len(proj.Blocks) > 0 {
+		out.Blocks = proj.Blocks
+	}
+	if len(proj.ToolCalls) > 0 {
+		out.ToolCalls = unionToolCalls(rec.ToolCalls, proj.ToolCalls)
+	}
+	unionConclusion(&out, rec, proj)
 	return out
 }
 
-// carrySteerFacts copies the two steer facts a replay cannot speak for — whether the
-// model READ the steer, and whose words it carries — onto the projected rows sharing
-// an id with a record this process already held. KAS's log says nothing about
-// consumption and the origin comes from vibekit's own ledger, so dropping them turned
-// an undelivered correction into a note claiming it landed.
-//
-// Per FIELD rather than per row, because both copies carry KAS's own `steer-` id, so
-// the projected one supersedes and there is no preserved row to keep. Fills only what
-// the projection LEFT EMPTY: the wire's own row is newer than the record.
-func carrySteerFacts(projected, existing []vibekit.Message) {
-	var held map[string]*vibekit.Message
-	for i := range existing {
-		if existing[i].UserKind != vibekit.UserKindSteer {
-			continue
-		}
-		if held == nil {
-			held = make(map[string]*vibekit.Message)
-		}
-		held[existing[i].ID] = &existing[i]
-	}
-	if held == nil {
+// unionConclusion applies the CONCLUSION UNIT: {TurnOutcome, TurnStopReasonRaw,
+// TurnTruncated, TurnFailureReason} travel together, because all four come from ONE
+// ConcludeStopReason call on each side and a per-field union yields a `completed` turn
+// carrying a "cancelled…" sentence — which both turn projections render as a green outcome
+// beside a failure line. An empty projected outcome keeps all four: the process may have
+// died with a local conclusion KAS logged no turn_end for.
+func unionConclusion(out, rec, proj *vibekit.Message) {
+	if proj.TurnOutcome == "" {
 		return
 	}
-	for i := range projected {
-		was, ok := held[projected[i].ID]
-		if !ok {
-			continue
-		}
-		if projected[i].SteerState == "" {
-			projected[i].SteerState = was.SteerState
-		}
-		if projected[i].SteerOrigin == "" {
-			projected[i].SteerOrigin = was.SteerOrigin
+	out.TurnOutcome = proj.TurnOutcome
+	out.TurnStopReasonRaw = proj.TurnStopReasonRaw
+	out.TurnTruncated = proj.TurnTruncated
+	// The record's reason is the ONLY reason that exists (turn_end.stopDetails is 0 of
+	// 1,472 measured), so it is kept wherever both sides agree the turn ended badly. A
+	// clean outcome can never carry a failure sentence; unknown counts as non-clean,
+	// because an unrecognised stop reason is not evidence the turn was fine.
+	out.TurnFailureReason = proj.TurnFailureReason
+	if out.TurnFailureReason == "" && out.TurnOutcome != vibekit.TurnOutcomeCompleted {
+		out.TurnFailureReason = rec.TurnFailureReason
+	}
+}
+
+// unionToolCalls walks the PROJECTED calls in order, unioning each with the record call of
+// the same ToolCall.ID. `var calls` plus append rather than make-with-capacity: a tool-free
+// turn must yield NIL, because DeepEqual distinguishes nil from empty-non-nil and the store
+// omits tool_calls under omitempty, so the empty form is a write plus a subject_changed
+// on every load, forever.
+//
+// claimedCall is the sub-pairing's own claim: two creates for one toolCallId yield two
+// projected calls with equal IDs, and without it both would copy one record call's stamps.
+func unionToolCalls(rec, proj []vibekit.ToolCall) []vibekit.ToolCall {
+	byID := make(map[string]int, len(rec))
+	for i := range rec {
+		if _, seen := byID[rec[i].ID]; !seen {
+			byID[rec[i].ID] = i
 		}
 	}
+	claimedCall := make(map[string]bool, len(proj))
+	var calls []vibekit.ToolCall
+	for j := range proj {
+		i, ok := byID[proj[j].ID]
+		if !ok || claimedCall[proj[j].ID] {
+			calls = append(calls, proj[j])
+			continue
+		}
+		claimedCall[proj[j].ID] = true
+		calls = append(calls, unionToolCall(&rec[i], &proj[j]))
+	}
+	return calls
+}
+
+// unionToolCall merges one record call with the projected call of the same ToolCall.ID,
+// record's as the base for union's own reason. The OUTCOME UNIT and Input are deliberately
+// absent from the overwrite set — each is one statement with one owner per row, decided by
+// which side has an outcome and by whether the store already cut the record's copy.
+func unionToolCall(rec, proj *vibekit.ToolCall) vibekit.ToolCall {
+	out := *rec
+	out.ID = proj.ID
+	out.Title = cmp.Or(proj.Title, rec.Title)
+	out.Kind = cmp.Or(proj.Kind, rec.Kind)
+	out.AgentSubtaskID = cmp.Or(proj.AgentSubtaskID, rec.AgentSubtaskID)
+	out.WorkflowID = cmp.Or(proj.WorkflowID, rec.WorkflowID)
+	out.TerminalID = cmp.Or(proj.TerminalID, rec.TerminalID)
+	out.Ts = cmp.Or(proj.Ts, rec.Ts)
+	if len(proj.Locations) > 0 {
+		out.Locations = proj.Locations
+	}
+	if proj.Checkpoint != nil {
+		out.Checkpoint = proj.Checkpoint
+	}
+	if proj.Disclosed != nil {
+		out.Disclosed = proj.Disclosed
+	}
+	if proj.Denial != nil {
+		out.Denial = proj.Denial
+	}
+	// The store re-cuts Input on every write, so a record whose input it ALREADY cut can
+	// never hold the replay's whole copy: overwriting reports a difference, writes, gets
+	// re-cut and repeats on every later load. Truncated.InputBytes is the store's own
+	// statement that this call's input is deliberately short. Cost: such a call keeps its
+	// short input forever, which is what the store produces for that input anyway. It reads
+	// the RECORD's marker, so it cannot see an over-budget input the record never held —
+	// there the overwrite runs once, the store mints the marker, and the next load declines.
+	cutByStore := rec.Truncated != nil && rec.Truncated.InputBytes != 0
+	if !cutByStore && statesInput(proj.Input) && !sameRawJSON(rec.Input, proj.Input) {
+		out.Input = proj.Input
+	}
+	// The OUTCOME UNIT, taken whole from the side that HAS an outcome. No default arm: an
+	// absent status, a non-terminal one and a spelling neither predicate knows are all
+	// statements the merge cannot act on, so the record's stand by base-copy.
+	switch {
+	case proj.Status.IsOutcome():
+		// Declined when the record has an outcome of its own: both sides read ONE
+		// tool_result, so a disagreement there is the two paths differing about one frame.
+		if !rec.Status.IsOutcome() {
+			out.Status = proj.Status
+			out.Output = proj.Output
+			// Belt-and-braces: OutputSpans' one writer is reached only from the
+			// completed/failed arm, so an outcome-less record call carries none anyway.
+			out.OutputSpans = nil
+			if len(proj.Diffs) > 0 {
+				out.Diffs = proj.Diffs
+			}
+			out.Truncated = keptCuts(rec.Truncated, len(proj.Diffs) == 0)
+			// The live writer runs AFTER its own outcome guard, so a call reaching this arm
+			// carries 0; deriveDuration is reached only where a tool_result produced an
+			// update, which is this arm's own condition. cmp.Or, so a record value the
+			// projection lacks is not destroyed.
+			out.DurationMs = cmp.Or(rec.DurationMs, proj.DurationMs)
+		}
+	case proj.Status.Terminal():
+		// `aborted`: the projection could not settle this call either, and it brings nothing
+		// else — a tool_result is what would have settled it, and 0 of 66,749 persisted
+		// tool_call records carry a content member, so handing it the unit would replace the
+		// record's own fragment with nothing.
+		if !rec.Status.Terminal() {
+			out.Status = proj.Status
+		}
+	}
+	return out
+}
+
+// statesInput reports whether a raw input says anything at all. A create frame carrying no
+// rawInput yields nil and one carrying an empty object yields two bytes that mean the same
+// thing; either way it is an absent statement, which the record answers for. Wider than a
+// length test for a measured reason: over 65,980 persisted calls none carries a null or a
+// missing input, while 85 carry an empty `args` object — 55 of them fs_write, a tool whose
+// input cannot honestly be empty.
+func statesInput(raw json.RawMessage) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "", "null", "{}", "[]":
+		return false
+	}
+	return true
+}
+
+// sameRawJSON reports whether two raw JSON values encode the same document as the ENCODER
+// would write them. Required rather than defensive: the store persists with MarshalIndent, so
+// a value read back off disk carries that indentation and `<` as `\u003c` where the replay's
+// copy is the compact wire bytes, and a byte comparison is then unequal on every load for
+// every call with an object input. json.Marshal on a RawMessage compacts AND HTML-escapes in
+// one idempotent call, which is what internal/chat's own inputWireBytes relies on; a
+// marshal error falls back to a byte comparison, which errs toward WRITING.
+func sameRawJSON(a, b json.RawMessage) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	na, err := json.Marshal(a)
+	if err != nil {
+		return bytes.Equal(a, b)
+	}
+	nb, err := json.Marshal(b)
+	if err != nil {
+		return bytes.Equal(a, b)
+	}
+	return bytes.Equal(na, nb)
+}
+
+// keptCuts keeps the store's cut record for the values the outcome unit kept, and drops it
+// for the one it replaced.
+//
+// A marker for bytes that are gone misreports the cut, and it is the only producer of the
+// card's `truncated, N bytes`. One deleted for bytes still on the row renders a truncated
+// value as complete AND makes the Input gate read false next load, so the merge re-widens an
+// input the store re-cuts, a write per load. Nil rather than a zero-valued pointer when
+// nothing survives: DeepEqual distinguishes them and omitempty hands back nil.
+func keptCuts(t *vibekit.ToolTruncation, keptDiffs bool) *vibekit.ToolTruncation {
+	if t == nil {
+		return nil
+	}
+	out := vibekit.ToolTruncation{InputBytes: t.InputBytes}
+	if keptDiffs {
+		out.DiffBytes, out.DiffCount = t.DiffBytes, t.DiffCount
+	}
+	if out == (vibekit.ToolTruncation{}) {
+		return nil
+	}
+	return &out
+}
+
+// preserveExisting reports whether a record row the replay did not re-project survives.
+//
+// A COMPACTION is the one event row a replay CAN speak for, so it leaves the unconditional
+// event preserve. The duplication has two halves: load N against N+1 is closed by the
+// projection's derived id, which makes the record's copy a duplicate here, and the LIVE
+// event against its projected twin only by this exclusion.
+func preserveExisting(m *vibekit.Message, newest int64, projectedCompaction bool) bool {
+	if m.Ts > newest || isPlanRow(m) {
+		return true
+	}
+	if m.Role != vibekit.RoleEvent {
+		return false
+	}
+	// The narrow exclusion: only a compaction, and only when the replay produced one of
+	// its own. A compaction NEWER than the replay already survived above, which is the
+	// case the un-fsynced KAS log makes real.
+	if projectedCompaction && m.EventKind == vibekit.EventCompacted {
+		return false
+	}
+	return true
 }
 
 // isPlanRow reports whether m is a turn's plan row: an assistant message whose ONLY

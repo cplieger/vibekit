@@ -106,8 +106,9 @@ vi.mock("./scroll.js", () => ({
   },
 }));
 // The session-wide index is the rail's own fetch; the lifecycle cases below decide
-// what it does with the answer, not how it asks.
-vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
+// what it does with the answer, not how it asks. `apiGetTyped` is the in-chat
+// search's fetch, linked through the rail's hit-turn reader and never asked here.
+vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
 
 // The pagination door `navigateToTurn` walks when its target is off the resident
 // window. Mocked because the real one is a network fetch, and what these cases
@@ -115,12 +116,12 @@ vi.mock("./api-client.js", () => ({ apiGet: vi.fn() }));
 vi.mock("./store-load.js", () => ({ loadMessages: vi.fn(), loadList: vi.fn() }));
 
 import {
-  railSeams,
   mountTurnRail,
   loadTurnRail,
   setResidentTurns,
   pointTurnRail,
   refreshTurnRail,
+  invalidateTurnRails,
   resetTurnRail,
   initTurnRailCallbacks,
   type TurnSummary,
@@ -129,23 +130,19 @@ import { railMetrics } from "./rail-select.js";
 import { apiGet } from "./api-client.js";
 import { loadMessages } from "./store-load.js";
 import { setSessions, setActive, get } from "./store.js";
-import { bumpSyncEpoch } from "./tab-freshness.js";
 import type { Message, Session } from "./types.js";
 import { KEY_ATTR } from "@cplieger/reactive";
 import type { TurnOutcome } from "./turns.js";
 
 const MINUTE = 60_000;
-/** The pause a seam needs, in minutes (`turn-rail.ts` GAP_THRESHOLD_MS). Hardcoded:
- *  read off the module, these cases would agree with whatever it believes. */
-const GAP_MINUTES = 20;
 
 function turn(n: number, over: Partial<TurnSummary> = {}): TurnSummary {
   return {
     id: `m${String(n)}`,
     n,
     outcome: "completed",
-    // One minute apart by default, so nothing trips the gap threshold unless a
-    // case asks for it.
+    // One minute apart by default. `ts` is still required by `TurnSummary`, so the
+    // field stays; nothing renders it now that the rail reports no pause.
     ts: n * MINUTE,
     ...over,
   };
@@ -205,45 +202,6 @@ function frames(): Promise<void> {
     });
   });
 }
-
-describe("railSeams", () => {
-  it("emits a seam between two turns further apart than the threshold", () => {
-    const all = [turn(1, { ts: 0 }), turn(2, { ts: 60 * MINUTE }), turn(3, { ts: 61 * MINUTE })];
-    const seams = railSeams(all, all);
-    expect(seams).toHaveLength(1);
-    expect(seams[0]?.fromN).toBe(1);
-    expect(seams[0]?.toN).toBe(2);
-  });
-
-  it("leaves an ordinary pause alone", () => {
-    const all = [turn(1, { ts: 0 }), turn(2, { ts: 19 * MINUTE })];
-    expect(railSeams(all, all)).toEqual([]);
-  });
-
-  it("carries the elapsed time for the seam's label", () => {
-    const all = [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE })];
-    expect(railSeams(all, all)[0]?.ms).toBe(120 * MINUTE);
-  });
-
-  it("withholds a pause whose own two turns are not both shown", () => {
-    // The turn that OPENS the new sitting has no marker, so there is no pair of
-    // positions the band belongs between. Drawing it against the nearest survivor
-    // would put the break at a turn that did not take one.
-    const all = [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE }), turn(3, { ts: 121 * MINUTE })];
-    const shown = [all[0], all[2]].filter((t) => t !== undefined);
-    expect(railSeams(all, shown)).toEqual([]);
-  });
-
-  it("reads the time between two non-adjacent markers as work, not as a pause", () => {
-    // Six turns five minutes apart: nobody stopped, and the first and last are
-    // neighbours on a downsampled axis half an hour apart. That elapsed time is five
-    // turns of continuous work, which is what the walk over SHOWN used to report.
-    const all = Array.from({ length: 6 }, (_, i) => turn(i + 1, { ts: i * 5 * MINUTE }));
-    const shown = [all[0], all[5]].filter((t) => t !== undefined);
-    expect(shown[1]?.ts).toBeGreaterThan(GAP_MINUTES * MINUTE);
-    expect(railSeams(all, shown)).toEqual([]);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Which chat the rail belongs to.
@@ -728,27 +686,13 @@ describe("the rail record gates the activation fetch", () => {
     expect(markers()).toEqual(["1", "2", "3"]);
   });
 
-  it("a transport gap invalidates the record", async () => {
+  it("a whole reconcile invalidates the record", async () => {
+    // The index's GET carries no digest stamp, so the reconcile body drops the records
+    // by hand and the next activation refetches.
     await loadTurnRail("c-a");
-    bumpSyncEpoch();
+    invalidateTurnRails();
 
     vi.mocked(apiGet).mockClear();
-    await loadTurnRail("c-a");
-    expect(apiGet).toHaveBeenCalledTimes(1);
-  });
-
-  it("a fetch that raced a gap records a claim that already reads stale", async () => {
-    // The rail's half of the fetch-races-gap rule: the epoch is captured before
-    // the request, so an answer that may predate the gap's lost turn_endeds
-    // cannot claim to have survived it, and the next activation refetches.
-    vi.mocked(apiGet).mockImplementation(async () => {
-      bumpSyncEpoch();
-      return { turns: [turn(1), turn(2)] };
-    });
-    await loadTurnRail("c-a");
-
-    vi.mocked(apiGet).mockClear();
-    vi.mocked(apiGet).mockResolvedValue({ turns: [turn(1), turn(2)] });
     await loadTurnRail("c-a");
     expect(apiGet).toHaveBeenCalledTimes(1);
   });
@@ -1604,85 +1548,6 @@ describe("what a rail row says", () => {
     expect(unknown?.getAttribute("data-tooltip")).toContain("could not be read");
   });
 
-  it("names the seam's pause and the two turns it separates, and paints no text", async () => {
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE })],
-    });
-    await loadTurnRail("c-seam");
-
-    const [seam] = rows(".rail-seam");
-    expect(seam).not.toBeUndefined();
-    expect(seam?.textContent).toBe("");
-    expect(seam?.getAttribute("role")).toBe("separator");
-    expect(seam?.getAttribute("aria-label")).toBe("2h pause between turn 1 and turn 2");
-    // A band on the axis rather than a row, so it charges nothing against the
-    // markers the track can hold.
-    expect(rows(".rail-marker")).toHaveLength(2);
-  });
-
-  it("puts the pause on the marker BELOW the seam, and on no other", async () => {
-    // The band paints no text, so a reader hovering the turn that opens the new
-    // sitting is the only one the pause reaches. Keyed by the turn below it: on the
-    // turn above, the sentence would describe a pause that has not happened yet.
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: [turn(1, { ts: 0 }), turn(2, { ts: 120 * MINUTE }), turn(3, { ts: 121 * MINUTE })],
-    });
-    await loadTurnRail("c-seam-tip");
-
-    const tips = rows(".rail-marker").map((m) => m.getAttribute("data-tooltip"));
-    expect(tips).toEqual(["Turn 1", "Turn 2 \u00b7 2h pause before this turn", "Turn 3"]);
-  });
-
-  it("bands no pause between two markers a downsample left non-adjacent", async () => {
-    // THE REGRESSION CASE, and it needs a rail past its own capacity to bite: 60
-    // turns five minutes apart on a four-row track, so every SURVIVING pair is more
-    // than the threshold apart in time while nobody ever stopped. The one real pause
-    // is between 30 and 31, which the downsample drops — so it is drawn nowhere
-    // rather than claimed between whichever markers happen to bracket it.
-    const pitchPx = railMetrics(rail).pitchPx;
-    rail.style.height = `${String(railFor(4, pitchPx))}px`;
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: Array.from({ length: 60 }, (_, i) =>
-        turn(i + 1, { ts: i * 5 * MINUTE + (i >= 30 ? 120 * MINUTE : 0) }),
-      ),
-    });
-    await loadTurnRail("c-seam-downsampled");
-
-    const shown = rows(".rail-marker").map((m) => Number(m.firstChild?.textContent));
-    expect(shown.length).toBeLessThan(60);
-    // The premise, or the case could pass for a reason that has nothing to do with
-    // adjacency: the two markers really are far enough apart in TIME to have earned a
-    // band under the old rule.
-    const [first = 0, second = 0] = shown;
-    expect((second - first) * 5).toBeGreaterThan(GAP_MINUTES);
-    expect(rows(".rail-seam")).toHaveLength(0);
-    // And the marker channel says nothing either: the sentence is keyed by the seam's
-    // own `toN`, so a withheld band withholds it too.
-    expect(
-      rows(".rail-marker")
-        .map((m) => m.getAttribute("data-tooltip") ?? "")
-        .join(" "),
-    ).not.toContain("pause");
-    rail.style.height = "600px";
-  });
-
-  it("still bands a real pause on a rail that shows every turn", async () => {
-    // The control the case above cannot pass without: a fix that emits nothing would
-    // satisfy it. Here the pause's own two turns both have markers and are neighbours
-    // on the axis, which is the whole condition.
-    vi.mocked(apiGet).mockResolvedValue({
-      turns: Array.from({ length: 12 }, (_, i) =>
-        turn(i + 1, { ts: i * MINUTE + (i >= 6 ? 120 * MINUTE : 0) }),
-      ),
-    });
-    await loadTurnRail("c-seam-whole");
-
-    expect(rows(".rail-marker")).toHaveLength(12);
-    const seams = rows(".rail-seam");
-    expect(seams).toHaveLength(1);
-    expect(seams[0]?.getAttribute("aria-label")).toBe("2h pause between turn 6 and turn 7");
-  });
-
   it("states the set it shows once the rail is downsampled", async () => {
     const pitchPx = railMetrics(rail).pitchPx;
     rail.style.height = `${String(railFor(4, pitchPx))}px`;
@@ -1702,76 +1567,6 @@ describe("what a rail row says", () => {
     await loadTurnRail("c-few");
 
     expect(rail.getAttribute("aria-label")).toBe("Turn timeline");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The reader's own POSITION is a different kind of thing from a turn marker, so on a
-// downsampled rail it gets its own element: past the track's capacity the turn the
-// reader is in may carry no marker at all, and without the caret their position
-// would be marked nowhere. It is drawn from the SET rather than from the scroll
-// offset, so nothing appears or disappears as they scroll.
-// ---------------------------------------------------------------------------
-
-describe("the reader's position on a downsampled rail", () => {
-  const host = document.createElement("div");
-  let rail: HTMLElement;
-
-  beforeAll(() => {
-    rail = mountRail(host);
-  });
-
-  beforeEach(() => {
-    scrollable.reset();
-    resetTurnRail();
-  });
-
-  /** Seat one resident card, so the reading line names a turn. */
-  async function seatAt(id: string, index: TurnSummary[], n: number): Promise<void> {
-    vi.mocked(apiGet).mockResolvedValue({ turns: index });
-    await loadTurnRail(id);
-    const e = document.createElement("div");
-    e.className = "turn";
-    e.setAttribute(KEY_ATTR, `m${String(n)}`);
-    Object.defineProperty(e, "getBoundingClientRect", {
-      configurable: true,
-      value: () => fakeRect(0, 400),
-    });
-    Object.defineProperty(e, "getClientRects", {
-      configurable: true,
-      value: () => [fakeRect(0, 400)],
-    });
-    setResidentTurns([e]);
-    await frames();
-  }
-
-  it("draws the caret at the marked turn's own fraction", async () => {
-    rail.style.height = `${String(railFor(4, railMetrics(rail).pitchPx))}px`;
-    await seatAt("c-here", turns(60), 30);
-
-    const here = rail.querySelector<HTMLElement>(".rail-here");
-    expect(here).not.toBeNull();
-    // The same `at()` the markers read, so the caret and a marker for that turn
-    // cannot claim two positions.
-    expect(here?.style.getPropertyValue("--rail-at")).toBe(String(29 / 59));
-    rail.style.height = "600px";
-  });
-
-  it("is not a hit target, so it competes for no slot", async () => {
-    rail.style.height = `${String(railFor(4, railMetrics(rail).pitchPx))}px`;
-    await seatAt("c-here-a11y", turns(60), 30);
-
-    const here = rail.querySelector<HTMLElement>(".rail-here");
-    expect(here?.tagName).toBe("DIV");
-    expect(here?.getAttribute("aria-hidden")).toBe("true");
-    rail.style.height = "600px";
-  });
-
-  it("is absent while every turn has a marker of its own", async () => {
-    await seatAt("c-here-none", turns(3), 2);
-
-    expect(rail.querySelectorAll(".rail-marker")).toHaveLength(3);
-    expect(rail.querySelector(".rail-here")).toBeNull();
   });
 });
 
@@ -1880,7 +1675,7 @@ describe("the duration a rail marker can show", () => {
     expect(time?.textContent).toBe("1m 32s");
     expect(time?.getAttribute("datetime")).toBe("PT1M32S");
     // A `<time>`, because the two spellings are the machine and human forms of one
-    // value and the turn footer's own slot already made that pairing the convention.
+    // value, and this is the app's only machine-readable DURATION.
     expect(time?.tagName).toBe("TIME");
   });
 
@@ -1950,7 +1745,7 @@ describe("the duration a rail marker can show", () => {
     // screen reader; the tooltip is republished as `aria-describedby`, which is the
     // channel the footer's own hover-revealed slot uses for the same reason. The NAME
     // is read on every focus and stays what it was, and the two channels stay
-    // different, which is the rule the seam's own labels also state.
+    // different.
     seed(
       "c-channels",
       storedTurn(1, { elapsedMs: 92_000, prompt: "do the thing", outcome: "failed" }),

@@ -23,7 +23,7 @@
 import { signal, subscribe } from "@cplieger/reactive";
 import { $ } from "./dom.js";
 import { swapViews } from "./view-swap.js";
-import type { SettingsTab } from "./router.js";
+import type { SettingsTab } from "./route-path.js";
 import { pushRoute } from "./router.js";
 import { getActiveTabRoute, setSettingsTab as setTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";

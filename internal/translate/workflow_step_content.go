@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -85,13 +86,8 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 	// The idle window's only tool-call signal for the PARENTLESS population (countStepTurn's
 	// is chat-parented), so without it node_complete is the sole signal and one long step
 	// reads as a stall. ABOVE EVERY GUARD BELOW: those are RENDERING decisions and this is
-	// ENFORCEMENT, so under them hooks.showStatus off would decide a cancellation.
+	// ENFORCEMENT, so under them a display decision would decide a cancellation.
 	t.reportRunProgress(tc.Meta.Kiro.Workflow)
-	// The chat path's hook-status suppression: turning hook status off is not meant to
-	// exempt runs.
-	if len(tc.Meta.Kiro.HookAsk) > 0 && !t.hookStatus.IsHookStatusEnabled() {
-		return
-	}
 	path := runNodePath(tc.Meta.Kiro.Workflow)
 	if path == "" {
 		return
@@ -99,7 +95,7 @@ func (t *Translator) forwardRunToolCall(ctx context.Context, workflowID string, 
 	content := t.parseToolUpdateContent(tc.ToolCallID, tc.Content)
 	// Subtask and sub-session empty on purpose: they are the chat's grouping keys, and this
 	// payload carries its own address in NodePath — a second answer could disagree.
-	call := toolCallFromWire(&tc, "", "", content)
+	call := toolCallFromWire(&tc, "", "", content, time.Now().UnixMilli())
 	t.steps.recordRunTool(workflowID, path, &call)
 	t.broadcastRunTool(ctx, workflowID, path, &call)
 }

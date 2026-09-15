@@ -7,7 +7,7 @@
 //                       unwrap `unknown`.
 //   onBus(event, fn)  — typed subscription for cross-module notifications
 //                       that don't fit the SSE surface (e.g. keys:escape,
-//                       transport:gap). Payloads inferred from BusPayloads.
+//                       transport:reconcile). Payloads inferred from BusPayloads.
 //   dispatch(evt)     — routes an incoming SSE event to every onSSE handler.
 //   emitBus(event, …) — emits a typed bus event to every onBus handler.
 // ---------------------------------------------------------------------------
@@ -26,7 +26,8 @@ import type {
   SteerInjectedPayload,
   SteerClearedPayload,
   AgentNoticePayload,
-  TurnStatePayload,
+  PendingSnapshotPayload,
+  StatusSnapshotPayload,
   TabsChangedPayload,
   PermissionNeeded,
   ErrorPayload,
@@ -89,7 +90,17 @@ export interface SSEPayloads {
   // reporting progress into the session that launched it. Its own event so no
   // consumer has to decide whose words a steer holds.
   readonly agent_notice: AgentNoticePayload;
-  readonly turn_state: TurnStatePayload;
+  // The two connect-hook aggregates, one per workspace-wide digest subject: the WHOLE
+  // pending set (every unanswered permission, run ask and steer, as raw envelopes to
+  // re-dispatch) and the WHOLE retained waiting-status set, each possibly empty. An
+  // empty one is the case that matters — a per-item replay of an empty set writes
+  // nothing, so a row resolved elsewhere would stay on screen.
+  readonly pending_snapshot: PendingSnapshotPayload;
+  readonly status_snapshot: StatusSnapshotPayload;
+  // The server could not publish a frame (over the frame cap) and names the subject
+  // it would have moved instead; the transport runs that subject's refetch and
+  // observes nothing. Empty payload: the envelope's `subject` is the message.
+  readonly subject_changed: undefined;
   // ONE aggregate frame per COMMITTED mutation of the open-tab set. One event
   // rather than a membership event beside an order event: two types can be
   // applied in either order by a client, and a close of a parent with children
@@ -226,10 +237,14 @@ export function dispatch(evt: ServerEvent): void {
 // --- Typed bus event constants ---
 
 export const BUS_TURN_IDLE = "turn:idle" as const;
-export const BUS_TRANSPORT_GAP = "transport:gap" as const;
-/** The page came back from a suspension real time passed under. Distinct from a GAP,
- *  which says frames were DROPPED: a resume undermines data with no invalidation
- *  channel, so it nudges the active view without bumping the sync epoch. */
+/** Every claim this client holds is void and the whole projection is re-read: the
+ *  stream bound to a new hub epoch (a server restart), or the digest answered
+ *  `must_refetch`. The payload names the cause and carries the revalidation's signal,
+ *  which every fetch the reconcile issues takes. */
+export const BUS_RECONCILE = "transport:reconcile" as const;
+/** The page came back from a suspension real time passed under. Distinct from a
+ *  RECONCILE, which says the held state is void: a resume undermines only the views
+ *  whose kind has no digest subject, so it nudges the active view and nothing else. */
 export const BUS_PAGE_RESUMED = "transport:resumed" as const;
 export const BUS_KEYS_ESCAPE = "keys:escape" as const;
 export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
@@ -249,16 +264,25 @@ export const BUS_RUNS_CHANGED = "runs:changed" as const;
  *  search-opened folds still open. A view becoming invisible is not the same
  *  event as a feature closing, and only the second one runs a teardown. */
 export const BUS_TAB_CHANGED = "tabs:changed" as const;
+/** An editor buffer's first read settled: its bytes arrived, or the read failed
+ *  and `FileState.error` says so. `FileState.loaded` is a plain field, so nothing
+ *  reactive can observe the arrival, and the writes around it (`current`, then
+ *  `loaded`, then the repaint) flush effects one at a time, so an effect on any
+ *  one signal would run mid-sequence. The in-file find re-runs on this instead:
+ *  it opened over a buffer that had not arrived and owes an answer once it has.
+ *  On the bus because the loader must not know what a find bar is. */
+export const BUS_EDITOR_FILE_LOADED = "editor:loaded" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
   readonly [BUS_TURN_IDLE]: string; // chatID
-  readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
+  readonly [BUS_RECONCILE]: { readonly cause: string; readonly signal: AbortSignal };
   readonly [BUS_PAGE_RESUMED]: undefined;
   readonly [BUS_KEYS_ESCAPE]: undefined;
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
   readonly [BUS_RUNS_CHANGED]: undefined;
   readonly [BUS_TAB_CHANGED]: { to: string; kind: string | null };
+  readonly [BUS_EDITOR_FILE_LOADED]: { path: string };
 }
 
 // The generic cross-module bus is backed by @cplieger/reactive's createBus
@@ -285,7 +309,8 @@ export const emitBus = bus.emit;
 // opt-in. See validators.ts for the available decoders and
 // app.ts (or a dedicated boot module) for the registration call.
 
-import type { Decoder } from "./validators.js";
+import { type Decoder, asObject, reqStr } from "./validators.js";
+import { decodeSubjectStamp } from "./wire/decoders.gen.js";
 
 const sseDecoders = new Map<keyof SSEPayloads, Decoder<unknown>>();
 
@@ -299,8 +324,32 @@ export function registerSSEDecoder<K extends keyof SSEPayloads>(
   sseDecoders.set(type, decoder);
 }
 
-/** Returns the registered decoder for `type`, or undefined if none.
- *  Used by transport.ts on each inbound event. */
+/** Returns the registered decoder for `type`, or undefined if none. */
 export function lookupSSEDecoder(type: string): Decoder<unknown> | undefined {
   return sseDecoders.get(type as keyof SSEPayloads);
+}
+
+/** Decode one parsed envelope into a `ServerEvent`, or throw. The payload goes through
+ *  its registered decoder when one exists and falls through untyped otherwise; a
+ *  `subject` stamp is decoded whenever present. ONE door for both carriers: the
+ *  transport's live frames and the `pending_snapshot` items the connect hook re-sends,
+ *  which are whole envelopes the live path would have published. A throw drops the
+ *  event, so no handler sees a partial shape. */
+export function decodeEnvelope(raw: unknown): ServerEvent {
+  const o = asObject(raw, "$.event");
+  const type = reqStr(o, "type", "$.event");
+  // The wire's type string is trusted as a member: an unknown type reaches no handler.
+  const evt: ServerEvent = { type: type as keyof SSEPayloads };
+  const chatID = o["chat_id"];
+  if (typeof chatID === "string") {
+    evt.chat_id = chatID;
+  }
+  const decoder = lookupSSEDecoder(type);
+  if (o["payload"] !== undefined) {
+    evt.payload = decoder === undefined ? o["payload"] : decoder(o["payload"]);
+  }
+  if (o["subject"] !== undefined && o["subject"] !== null) {
+    evt.subject = decodeSubjectStamp(o["subject"]);
+  }
+  return evt;
 }

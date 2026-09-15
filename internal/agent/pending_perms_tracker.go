@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -16,7 +17,10 @@ import (
 // upstream has. Growth is bounded by the Take and Clear paths instead.
 type pendingPermsTracker struct {
 	perms map[permKey]vibekit.ServerEvent
-	mu    sync.Mutex
+	// versions holds the shared `pending` counter every mutation bumps under mu;
+	// see mintPending.
+	versions *subject.Versions
+	mu       sync.Mutex
 }
 
 // permKey is a pending decision's identity: the chat that owns it, plus the ACP
@@ -37,8 +41,9 @@ func newPendingPermsTracker() *pendingPermsTracker {
 // event because that is what the answer and ClearForChat will both carry.
 func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.perms[permKey{chat: evt.ChatID, id: id}] = evt
-	t.mu.Unlock()
+	mintPending(&t.versions)
 }
 
 // TakeIfPresent claims one chat's request: it deletes the entry and returns it,
@@ -56,6 +61,7 @@ func (t *pendingPermsTracker) TakeIfPresent(chatID vibekit.ChatID, id int64) (vi
 		return vibekit.ServerEvent{}, false
 	}
 	delete(t.perms, k)
+	mintPending(&t.versions)
 	return evt, true
 }
 
@@ -76,6 +82,7 @@ func (t *pendingPermsTracker) TakePermissionOption(chatID vibekit.ChatID, id int
 		return evt, true, false
 	}
 	delete(t.perms, k)
+	mintPending(&t.versions)
 	return evt, true, true
 }
 
@@ -85,12 +92,17 @@ func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 		return
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	removed := false
 	for k := range t.perms {
 		if k.chat == chatID {
 			delete(t.perms, k)
+			removed = true
 		}
 	}
-	t.mu.Unlock()
+	if removed {
+		mintPending(&t.versions)
+	}
 }
 
 // ClearForRun drops every unresolved decision a workflow RUN raised, wherever it
@@ -104,12 +116,17 @@ func (t *pendingPermsTracker) ClearForRun(workflowID string) {
 		return
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	removed := false
 	for k, evt := range t.perms {
 		if vibekit.DecisionRunID(evt.Payload) == workflowID {
 			delete(t.perms, k)
+			removed = true
 		}
 	}
-	t.mu.Unlock()
+	if removed {
+		mintPending(&t.versions)
+	}
 }
 
 // List returns a snapshot of the unresolved decisions, optionally filtered to one
@@ -188,4 +205,5 @@ func (b *bus) announceDecisionSettled(evt vibekit.ServerEvent, requestID int64, 
 		Kind:      kind,
 		SettledBy: settledBy,
 	}))
+	b.retractPush(vibekit.ChatSubject(evt.ChatID))
 }

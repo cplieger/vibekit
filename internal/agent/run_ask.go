@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/keyenc"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -66,7 +67,10 @@ func (a *runAsk) event() vibekit.ServerEvent {
 type pendingRunAsks struct {
 	asks      map[runAskKey]*runAsk
 	answering map[string]int
-	mu        sync.Mutex
+	// versions holds the shared `pending` counter every add and settle bumps under
+	// mu; see mintPending.
+	versions *subject.Versions
+	mu       sync.Mutex
 }
 
 // ensure creates the map on first write. Callers hold the lock.
@@ -91,6 +95,7 @@ func (r *pendingRunAsks) Add(a *runAsk) bool {
 		return false
 	}
 	r.asks[k] = a
+	mintPending(&r.versions)
 	return true
 }
 
@@ -110,6 +115,7 @@ func (r *pendingRunAsks) TakeIfPresent(workflowID, askID string) (*runAsk, bool)
 		return nil, false
 	}
 	delete(r.asks, k)
+	mintPending(&r.versions)
 	return a, true
 }
 
@@ -186,6 +192,9 @@ func (r *pendingRunAsks) TakeRun(workflowID string) []*runAsk {
 			delete(r.asks, k)
 		}
 	}
+	if len(out) > 0 {
+		mintPending(&r.versions)
+	}
 	return out
 }
 
@@ -206,6 +215,9 @@ func (r *pendingRunAsks) TakeNode(workflowID, nodeID string) []*runAsk {
 			delete(r.asks, k)
 		}
 	}
+	if len(out) > 0 {
+		mintPending(&r.versions)
+	}
 	return out
 }
 
@@ -217,12 +229,17 @@ func (r *pendingRunAsks) ClearChat(chatID vibekit.ChatID) {
 		return
 	}
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := false
 	for k, a := range r.asks {
 		if a.chatID == chatID {
 			delete(r.asks, k)
+			removed = true
 		}
 	}
-	r.mu.Unlock()
+	if removed {
+		mintPending(&r.versions)
+	}
 }
 
 // SnapshotRun reports one run's unanswered asks, for the read endpoint to expose so an

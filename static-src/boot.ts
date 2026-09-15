@@ -6,7 +6,9 @@
 // row is named from the chat store (tab-materialize.ts `chatName`); retention
 // precedes it, because closing a tab has to know whether the record is kept.
 //
-// `applyRoute` is INJECTED: importing it would close a cycle.
+// `applyRoute` is INJECTED so it can be OBSERVED: boot.test.ts drives boot with a fake
+// one, and importing the real route-apply.ts would put its whole graph (chat, files,
+// editor, deep-link) into every boot test.
 // ---------------------------------------------------------------------------
 
 import { subscribeByName } from "./actions/index.js";
@@ -43,19 +45,20 @@ import { restoreLastEffort, restoreLastModel } from "./session-context.js";
 import { resolveIdentity } from "./identity.js";
 import type { IdentityVerdict } from "./identity.js";
 import { fetchCatalog } from "./session-catalog.js";
-import * as transport from "./transport.js";
+import * as sse from "./sse-adapter.js";
 import { showLoginModal } from "./modals.js";
 import { activateRestoredTab, getActiveTabRoute, hasTab } from "./tabs.js";
 import { listTabs } from "./tabs-sync.js";
+import { parseRoute } from "./route-path.js";
+import type { Route } from "./route-path.js";
 import {
   claimLocation,
   navigationOrigin,
-  parseRoute,
   releaseLocation,
   replaceRoute,
   suppressPush,
 } from "./router.js";
-import type { Route, RouteOrigin } from "./router.js";
+import type { RouteOrigin } from "./router.js";
 import { createSession } from "./chat.js";
 import { initGovernance } from "./governance.js";
 import { initRuntimeHealth } from "./runtime-health.js";
@@ -142,7 +145,7 @@ function adoptSettings(settings: EffectiveSettings | null): void {
     return;
   }
   restoreLastModel(settings.last_model);
-  restoreLastEffort(settings.last_effort, settings.last_effort_model);
+  restoreLastEffort(settings.last_effort_by_model);
   // Where the server's choice replaces the pre-paint cache, and where that cache
   // is carried across if the server has none.
   adoptThemeFromSettings(settings);
@@ -169,7 +172,7 @@ async function adoptIdentity(v: IdentityVerdict, workspace: Promise<boolean>): P
   if (v.state === "signed_out") {
     // Nothing hydrates the store behind a login modal, so release the held frames
     // rather than stalling the stream until the watchdog fires.
-    transport.markHydrated();
+    sse.markHydrated();
     // And nothing this device remembers may survive to a login screen.
     forgetDeviceState();
     showLoginModal();
@@ -242,8 +245,8 @@ async function restoreWorkspace(
   recoverFailedBootRead();
   // Release the frames held since the connection opened: they need a chat ROW and
   // nothing more, so waiting for the tabs would delay the busy dot for no gain.
-  // Idempotent. See transport.ts holdUntilHydrated.
-  transport.markHydrated();
+  // Idempotent. See sse-adapter.ts holdUntilHydrated.
+  sse.markHydrated();
 
   try {
     // Runs on every path: a chat list and a tab set are different collections, and only
@@ -404,7 +407,7 @@ function forgetDeviceState(): void {
 }
 
 async function applyInitialRoute(): Promise<void> {
-  const route = parseRoute(location.pathname);
+  const route = parseRoute(location.pathname, location.hash);
   if (route.kind !== "chat" || route.id !== "") {
     await deps?.applyRoute(route, navigationOrigin());
     return;
@@ -432,10 +435,11 @@ async function applyInitialRoute(): Promise<void> {
 let bootChatsRead: boolean | undefined;
 
 /** The same latch for the TAB set, and only the ANSWER half is consumed: a
- *  connection is not on its own a reason to re-list, because the tab set has a gap
- *  mechanism the chat list lacks (app.ts wires `transport:gap` to `listTabs`). The
- *  one hole that leaves is a BOOT read that never landed, and the boot connection
- *  raises no gap by design (transport.ts, first connection of a page load). */
+ *  connection is not on its own a reason to re-list, because the tab set is a digest
+ *  subject the wake digest names when it moved and a whole reconcile re-lists
+ *  (app.ts wires `transport:reconcile` to `listTabs`). The one hole that leaves is a
+ *  BOOT read that never landed: the boot connection's first hello holds nothing to
+ *  digest and clears nothing, so it runs no reconcile. */
 let bootTabsRead: boolean | undefined;
 
 /** Whether the EventSource is open, as last reported. */
@@ -478,14 +482,15 @@ async function readTabSet(): Promise<void> {
   }
 }
 
-/** The transport's status callback: paint the indicator, and load the chat list on
+/** The stream's status callback: paint the indicator, and load the chat list on
  *  every connection the boot's own read does not already cover.
  *
- *  `app.ts` opens the EventSource before the boot, so a cold boot's first `connected`
- *  lands while that read is in flight — fetching there is what made every cold boot
- *  read the whole list twice. Once it has settled EVERY connection fetches: a
- *  reconnect missed frames, and an offline boot that reaches the server minutes later
- *  has no list and no gap to declare, so nothing else would ever load it. */
+ *  `app.ts` opens the stream before the boot, so a cold boot's first `connected` lands
+ *  while that read is in flight — fetching there is what made every cold boot read the
+ *  whole list twice. Once it has settled EVERY connection fetches: an offline boot that
+ *  reaches the server minutes later has no list and no held version to digest, so
+ *  nothing else would ever load it. On an ordinary reconnect this read is redundant
+ *  with the digest's `chats` answer and cheap. */
 export function onTransportStatus(status: ConnectionStatus): void {
   setStatus(status);
   streamUp = status === "connected";

@@ -16,7 +16,11 @@ import (
 	"slices"
 
 	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/vibekit/internal/forges"
+	"github.com/cplieger/vibekit/internal/mcp"
+	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/wiregen/v3"
 )
@@ -44,6 +48,11 @@ var wireTypes = []wiregen.WireType{
 	// Before Message, which references it.
 	wiregen.TypeRef[vibekit.Attachment](),
 	wiregen.TypeRef[vibekit.Message](),
+	// After Message, which it carries. Registered so the single-chat GET's `live_turn`
+	// reads a GENERATED decoder rather than a hand-mirrored one — the required block_base
+	// cannot then be optional on one side only. No `Payload` suffix, so the SSE-binding
+	// test exempts it by construction, like ToolCallBulk.
+	wiregen.TypeRef[vibekit.LiveTurn](),
 	wiregen.TypeRef[vibekit.MeteringItem](),
 	wiregen.TypeRef[vibekit.Usage](),
 	wiregen.TypeRef[vibekit.SessionMode](),
@@ -58,13 +67,16 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[vibekit.ApprovalFile](),
 	wiregen.TypeRef[vibekit.FileChange](),
 	wiregen.TypeRef[vibekit.ConnectedPayload](),
+	wiregen.TypeRef[vibekit.SubjectStamp](),
+	wiregen.TypeRef[vibekit.PendingSnapshotPayload](),
+	wiregen.TypeRef[vibekit.StatusRow](),
+	wiregen.TypeRef[vibekit.StatusSnapshotPayload](),
 	wiregen.TypeRef[vibekit.MessageChunkPayload](),
 	wiregen.TypeRef[vibekit.TurnEndedPayload](),
 	wiregen.TypeRef[vibekit.SteerQueuedPayload](),
 	wiregen.TypeRef[vibekit.SteerInjectedPayload](),
 	wiregen.TypeRef[vibekit.SteerClearedPayload](),
 	wiregen.TypeRef[vibekit.AgentNoticePayload](),
-	wiregen.TypeRef[vibekit.TurnStatePayload](),
 	// Before the two types that reference it.
 	wiregen.TypeRef[vibekit.TabSubject](),
 	wiregen.TypeRef[vibekit.TabsChangedPayload](),
@@ -165,11 +177,31 @@ var wireTypes = []wiregen.WireType{
 	wiregen.TypeRef[forges.DeviceFlowResponse](),
 	wiregen.TypeRef[forges.PollResult](),
 	wiregen.TypeRef[auth.WhoamiResponse](),
+	// The search replies. Each embeds textsearch.Tally, which wiregen flattens
+	// into the reply's own fields, so `scanned`/`matched`/`truncated` are REQUIRED
+	// on every one and a client cannot read an absent count as zero.
+	wiregen.TypeRef[chat.Hit](),
+	wiregen.TypeRef[chat.SearchResult](),
+	wiregen.TypeRef[chat.Match](),
+	wiregen.TypeRef[chat.SearchAllResult](),
+	// GET /api/files/search, the third search reply on the same tally.
+	wiregen.TypeRef[filebrowse.FileMatch](),
+	wiregen.TypeRef[filebrowse.FileSearchResult](),
+	// GET /api/mcp/registry/search, the entry family before the reply that holds it.
+	wiregen.TypeRef[mcp.RegistryEnvVar](),
+	wiregen.TypeRef[mcp.RegistryHeader](),
+	wiregen.TypeRef[mcp.RegistryPackage](),
+	wiregen.TypeRef[mcp.RegistryRemote](),
+	wiregen.TypeRef[mcp.RegistryEntry](),
+	wiregen.TypeRef[mcp.RegistrySearchResult](),
+	wiregen.TypeRef[mcp.RegistrySearchFailure](),
+	// GET /api/workspace/kiro-docs.
+	wiregen.TypeRef[server.KiroDoc](),
+	wiregen.TypeRef[server.KiroDocsResponse](),
 }
 
 // wireEnums names the string enums to emit; values are auto-discovered from each
-// type's const block. Transport stays explicit: it lives in internal/mcp, which is
-// not a registered-type root package, so discovery does not scan it.
+// type's const block in the registered types' packages.
 var wireEnums = map[string]wiregen.EnumDef{
 	"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 	"PlanStatus": {},
@@ -214,7 +246,18 @@ var wireEnums = map[string]wiregen.EnumDef{
 	// The client's branch over it must be TOTAL: "vibekit could not ask" has to
 	// render a retry rather than a sign-in prompt.
 	"WhoamiState": {},
-	"Transport":   {Values: []string{"stdio", "http", "sse"}},
+	"Transport":   {},
+	// A hit names the span it landed in, and the client resolves each kind to a
+	// different rendered surface, so the decoder is strict: a kind the client has
+	// no arm for fails the reply rather than resolving to no element.
+	"SegmentKind": {},
+	// The client branches on it to say "wait" or "narrow the query".
+	"RegistryFailureReason": {},
+	// The client BRANCHES on it — a directory row navigates the browser, a name
+	// row opens the editor, a content row opens it at a line — and the decoder is
+	// strict, so a kind the client has no arm for fails the reply rather than
+	// rendering a row nothing can open.
+	"FileMatchKind": {},
 }
 
 // enumTSNames renames an enum on the TypeScript side.
@@ -244,6 +287,8 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "connected", TypeName: "ConnectedPayload"},
 	{EventType: "decision_settled", TypeName: "DecisionSettledPayload"},
 	{EventType: "draft_changed", TypeName: "DraftChangedPayload"},
+	{EventType: "pending_snapshot", TypeName: "PendingSnapshotPayload"},
+	{EventType: "status_snapshot", TypeName: "StatusSnapshotPayload"},
 	{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 	{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},
 	{EventType: "error", TypeName: "ErrorPayload"},
@@ -281,7 +326,6 @@ var sseEvents = []wiregen.SSERegEntry{
 	{EventType: "terminal_output", TypeName: "TerminalOutputPayload"},
 	{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
 	{EventType: "turn_ended", TypeName: "TurnEndedPayload"},
-	{EventType: "turn_state", TypeName: "TurnStatePayload"},
 	{EventType: "tabs_changed", TypeName: "TabsChangedPayload"},
 }
 

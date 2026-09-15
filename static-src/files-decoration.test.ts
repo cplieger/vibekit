@@ -1,11 +1,8 @@
 // ---------------------------------------------------------------------------
-// Tests for the file browser's change DECORATION — the git letter on a row and
-// the "changed by this chat" filter. Not the browser's navigation or CRUD.
+// Tests for the file browser's change DECORATION — the git letter on a row. Not
+// the browser's navigation or CRUD.
 //
 // Each case pins a decision the decoration rests on:
-//   - the filter DIMS, it never hides: a hidden row would make the listing lie
-//     about what is on disk, and a folder whose only changed child was filtered
-//     out would read as empty
 //   - a repaint is in place, so a 15s poll cannot blow away the selection or the
 //     scroll position of a listing the user is working in
 //   - a directory row carries the worst status BENEATH it, or a change three
@@ -15,9 +12,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-// Leaves that reach for DOM or state this module does not own. The store is NOT
-// mocked: attribution reads the real `activeSession` computed, and a stubbed
-// signal would test the stub instead of the wiring that ships.
+// Leaves that reach for DOM or state this module does not own.
 vi.mock("./scroll.js", () => ({
   setUserScrolledUp: vi.fn(),
   scrollToBottom: vi.fn(),
@@ -27,19 +22,20 @@ vi.mock("./editor-openers.js", () => ({
   openFile: vi.fn(),
   openFileDiff: undefined,
   openFileGitDiff: vi.fn(),
+  // files.ts imports this for the middle-click background open. Browser Mode links
+  // the module for real, so a name absent from the factory fails COLLECTION rather
+  // than a test.
+  openFileInBackground: vi.fn(),
 }));
 // chat.ts transitively mounts the transcript view at import time (#messages).
 vi.mock("./chat.js", () => ({ attachPathsToActiveChat: vi.fn() }));
 
-import { toggleChatFilter, _repaintRowsForTest } from "./files.js";
+import { _repaintRowsForTest } from "./files.js";
 import { FB_ROOT, joinPath } from "./files-shared.js";
 import { openFileGitDiff } from "./editor-openers.js";
 import { _setReposForTest } from "./git-status-store.js";
 import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
-import { setSessions, setActive } from "./store.js";
 import type { GitRepoStatus, GitFileEntry } from "./git-types.js";
-import type { Session } from "./types.js";
-import type { Message, FileChange } from "./wire/types.gen.js";
 
 function repo(name: string, files: { path: string; status: string }[]): GitRepoStatus {
   return {
@@ -57,40 +53,6 @@ function repo(name: string, files: { path: string; status: string }[]): GitRepoS
       staged: false,
       display: f.path,
     })),
-  };
-}
-
-function session(paths: string[]): Session {
-  const changed: Record<string, FileChange> = {};
-  for (const p of paths) {
-    changed[p] = { lines_added: 3, lines_removed: 1 };
-  }
-  const msg: Message = {
-    id: "m1",
-    role: "assistant",
-    content: "done",
-    ts: 0,
-    changed_files: changed,
-  };
-  return {
-    id: "c1",
-    name: "c1",
-    model: "",
-    acp_session_id: "",
-    current_mode_id: "",
-    usage: {
-      context_pct: 0,
-      context_size: 0,
-      credits: 0,
-      turn_count: 0,
-      last_turn_ms: 0,
-      has_real_data: false,
-    },
-    message_count: 1,
-    messages: [msg],
-    has_more: false,
-    thinking: false,
-    working_label: "Thinking",
   };
 }
 
@@ -128,19 +90,6 @@ function letters(): string[] {
   return [...list().querySelectorAll(".fb-git-letter")].map((n) => n.textContent ?? "");
 }
 
-function dimmed(): string[] {
-  return [...list().querySelectorAll<HTMLElement>(".fb-row-unattributed")].map(
-    (n) => n.dataset["path"] ?? "",
-  );
-}
-
-/** The filter is module state; each case starts with it off. */
-function filterOff(): void {
-  while (toggleChatFilter()) {
-    // toggling returns the new state — stop once it reads false
-  }
-}
-
 beforeEach(() => {
   document.body.replaceChildren();
   const l = document.createElement("div");
@@ -151,9 +100,6 @@ beforeEach(() => {
   // so the absolute keys only exist once the handshake has stated the root.
   setWorkspaceRoot("/w");
   _setReposForTest([]);
-  setSessions([session([])]);
-  setActive("c1");
-  filterOff();
   vi.mocked(openFileGitDiff).mockClear();
 });
 
@@ -245,63 +191,5 @@ describe("git letter decoration", () => {
     _setReposForTest([repo("r", [])]);
     _repaintRowsForTest();
     expect(letters()).toEqual([]);
-  });
-});
-
-describe("changed-by-this-chat filter", () => {
-  beforeEach(() => {
-    setSessions([session(["a/mine.go"])]);
-    setActive("c1");
-    list().append(
-      row(["w", "r", "a", "mine.go"]),
-      row(["w", "r", "a", "theirs.go"]),
-      row(["w", "r", "a"], true),
-    );
-  });
-
-  it("decorates nothing while off", () => {
-    _repaintRowsForTest();
-    expect(dimmed()).toEqual([]);
-  });
-
-  it("DIMS the unattributed rows and hides none of them", () => {
-    expect(toggleChatFilter()).toBe(true);
-    expect(list().children.length).toBe(3);
-    expect(dimmed()).toEqual(["/w/r/a/theirs.go"]);
-  });
-
-  it("keeps the ancestor folder of a changed file attributed", () => {
-    toggleChatFilter();
-    expect(dimmed()).not.toContain("/w/r/a");
-  });
-
-  it("clears every dim when toggled back off", () => {
-    toggleChatFilter();
-    expect(dimmed().length).toBe(1);
-    expect(toggleChatFilter()).toBe(false);
-    expect(dimmed()).toEqual([]);
-  });
-
-  it("re-derives attribution against the chat that is active NOW", () => {
-    toggleChatFilter();
-    expect(dimmed()).toEqual(["/w/r/a/theirs.go"]);
-    setSessions([session(["a/theirs.go"])]);
-    setActive("c1");
-    _repaintRowsForTest();
-    expect(dimmed()).toEqual(["/w/r/a/mine.go"]);
-  });
-
-  it("dims everything when the active chat changed nothing", () => {
-    setSessions([session([])]);
-    setActive("c1");
-    toggleChatFilter();
-    expect(dimmed().length).toBe(3);
-  });
-
-  it("still shows the git letter on a dimmed row — the filter is not a mask", () => {
-    _setReposForTest([repo("r", [{ path: "a/theirs.go", status: "M" }])]);
-    toggleChatFilter();
-    expect(dimmed()).toEqual(["/w/r/a/theirs.go"]);
-    expect(letters()).toEqual(["M", "M"]);
   });
 });

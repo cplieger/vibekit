@@ -82,10 +82,11 @@
  * font with gaps at random positions, and switching chats "fixed" it because
  * park/unpark rebuilds the body and the settled render emits no spans.
  *
- * `backwards` rather than no fill at all, because two rules pair one of these
- * with a `--stagger-index` delay (19-files.css, 29-turns.css) and the backwards
- * half is what holds a delayed row invisible instead of letting it paint, pop,
- * then fade.
+ * `backwards` rather than no fill at all, because one rule pairs one of these with
+ * a staggered `animation-delay` (19-files.css, off `sibling-index()`) and the
+ * backwards half is what holds a delayed row invisible instead of letting it paint,
+ * pop, then fade. 29-turns.css was named here as a second such rule and never was
+ * one.
  *
  * An EXIT animation is the opposite case and keeps its forwards fill: its last
  * keyframe is a state the element does not otherwise have, so dropping the fill

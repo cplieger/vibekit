@@ -127,9 +127,20 @@
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
-  box-shadow:
-    var(--shadow-ambient),
-    0 0.25rem 0.75rem color-mix(in srgb, #000 25%, transparent);
+
+  /* NO SHADOW (user ruling, 2026-09-14, from a phone report). vibekit-ui.md's
+     shadow population is "overlays", which this is — and the ruling narrows that
+     to the surfaces a reader meets as a LIFTED card. A toast shares one band with
+     `.banner`, which paints its edge with a 1px border and no shadow, so the two
+     rows of one band were drawn as two different kinds of object; the skin's own
+     severity rules already exist to make them read as one component.
+
+     It also DOUBLE-PAINTED the edge, which is the defect the transcript's resume
+     control already recorded: `--shadow-ambient` is `0 0 0 1px var(--c-border)`,
+     the same token and the same colour as the `border` above it, so the two
+     hairlines stacked and the toast carried a 2px rim. Deleting the declaration
+     removes the drop shadow AND that duplicate in one edit — the border below is
+     the whole edge now, so do not restore either layer without moving the border. */
   overflow-wrap: break-word;
 
   /* Enter from ABOVE (slide down), which is the edge a top-anchored stack is
@@ -261,17 +272,23 @@
   padding: 4px 8px;
   border-radius: var(--r-sm);
 
-  /* WRAPS. `nowrap` and `max-width` contradicted each other: nowrap forbids the
+  /* ONE SIZE CLASS FOR EVERY TOOLTIP IN THE APP (user ruling, 2026-09-12): the
+   * only admissible difference is between VIEWS, which is the viewport term
+   * inside --tooltip-max-w. Both numbers are tokens in 01-tokens.css, where the
+   * reasoning and the measurement live, because a per-site override is exactly
+   * the divergence this rule exists to forbid.
+   *
+   * WRAPS. `nowrap` and `max-width` contradicted each other: nowrap forbids the
    * break the max-width needs, so a long tooltip ignored the cap and ran off
-   * the viewport instead — which is exactly what a mode description does, since
-   * a custom agent's front-matter description is a paragraph. The clamp bounds
-   * the pathological case (some agent descriptions are many lines) so a tooltip
-   * can never become a wall of text. */
+   * the viewport instead. The clamp is what bounds the height, and it was 6 —
+   * a mode description then rendered 352x98 against the theme button's 87x23,
+   * 17x the area for one hover idiom. */
   white-space: normal;
   overflow-wrap: anywhere;
-  max-width: 22rem;
+  max-width: var(--tooltip-max-w);
   display: -webkit-box;
-  -webkit-line-clamp: 6;
+  -webkit-line-clamp: var(--tooltip-lines);
+  line-clamp: var(--tooltip-lines);
   -webkit-box-orient: vertical;
   overflow: hidden;
   box-shadow:

@@ -49,7 +49,6 @@ vi.mock("./session-context.js", () => ({
   getLastModel: () => "",
   setLastModel: vi.fn(),
   restoreLastModel: vi.fn(),
-  setLastEffort: vi.fn(),
   restoreLastEffort: vi.fn(),
 }));
 // Not part of the chain: `contextFull` is the composer's advisory, and

@@ -59,7 +59,7 @@ const {
   clearAllBlockSigs,
 } = await import("./store-signals.js");
 const { forgetHeights, spacerHeight } = await import("./block-heights.js");
-const { setActive, noteTruncatedSnapshot, clearTruncatedSnapshot, clearTruncatedSnapshots } =
+const { setActive, noteAdoptedSnapshot, clearAdoptedSnapshot, clearAdoptedSnapshots } =
   await import("./store.js");
 const { outcomeIcon } = await import("./icons.js");
 const { iconEl } = await import("./icon-el.js");
@@ -2989,7 +2989,8 @@ describe("a body mounts a block RANGE, and the grouping is derived", () => {
       outcome: "completed" as const,
       rewindTo: undefined,
     };
-    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(79);
+    // The fine-tier `runCard` estimate (block-heights.ts).
+    expect(spacerHeight(t, { from: 0, to: 1 }, "tail")).toBe(71);
     wrap.remove();
   });
 
@@ -3129,10 +3130,9 @@ describe("blockElement resolves a block's own element", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The withheld-output note: the CONSUMER that makes a capped connect snapshot
-// admissible.
+// The withheld-output note: the CONSUMER that makes a capped `live_turn` admissible.
 //
-// A connect-time turn_state carries only the TAIL of a big in-flight turn, so
+// A capped transcript GET carries only the TAIL of a big in-flight turn, so
 // without a note the reader takes that tail for the whole reply. It is a STATIC
 // line and never a show-more: the withheld
 // bytes are not on the wire, and `#vibekit-ui` forbids a control that does
@@ -3143,7 +3143,7 @@ describe("truncated-snapshot note", () => {
 
   beforeEach(() => {
     resetBlockRenders();
-    clearTruncatedSnapshots(CHAT_ID);
+    clearAdoptedSnapshots(CHAT_ID);
   });
 
   function bodyFor(id: string): HTMLElement {
@@ -3167,38 +3167,53 @@ describe("truncated-snapshot note", () => {
   });
 
   it("mounts FIRST in the body of a truncated message", () => {
-    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
     const wrap = bodyFor("m-cut");
     const note = wrap.querySelector(NOTE);
     expect(note).not.toBeNull();
     // First child: a preface to the body, not a footnote to whatever mounted last.
     expect(wrap.firstElementChild).toBe(note);
-    // It says WHERE the reader is (the end of the reply) and that the rest is coming —
-    // a position plus a promise, not a claim about the turn's own lifecycle. The GET now
-    // carries the whole turn, so "it arrives when the turn ends" is no longer what happens.
-    expect(note?.textContent ?? "").toMatch(/end of this reply/i);
-    expect(note?.textContent ?? "").toMatch(/still loading/i);
+    // WHAT the sentence says has its own case in this describe, pinned whole; this one
+    // owns the position, and the one rule below is about the sentence's SHAPE rather than
+    // its wording, so a reword cannot silently take it with it.
     // No byte counts: the doc comment above TRUNCATION_NOTE_TEXT states the rule, and a
     // matcher is what keeps it from drifting back in as a "helpful" diagnostic.
     expect(note?.textContent ?? "").not.toMatch(/\d+\s*(bytes|B|KiB|MiB)/);
   });
 
+  // THE SENTENCE, pinned whole rather than by fragment, because every word of it is a
+  // claim an end user reads. "the end of this reply" says where the reader is; "arrives
+  // when the turn finishes" names the CONDITION under which the rest shows up, and that
+  // condition is the one thing the channel setting the marker can promise: a GET carrying
+  // `truncated` issues no retraction of its own. What does clear the marker is the turn's
+  // own end, whose `message_appended` carries the whole message.
+  //
+  // Rendered SETTLED (`bodyFor` passes `live: false`), which is the state the reader of a
+  // capped snapshot is in: the note describes a transfer that already happened.
+  it("says the earlier part arrives when the turn finishes", () => {
+    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
+    const note = bodyFor("m-cut").querySelector(NOTE);
+    expect(note?.textContent).toBe(
+      "You are seeing the end of this reply; the earlier part arrives when the turn finishes.",
+    );
+  });
+
   it("carries no control: the withheld bytes are not on the wire", () => {
-    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
     const note = bodyFor("m-cut").querySelector(NOTE);
     expect(note?.querySelectorAll("button, a, [role='button'], [tabindex]")).toHaveLength(0);
   });
 
-  // The two lifetimes do not line up: the marker is set on the connect frame and
-  // cleared by `message_appended` at turn end, and neither moment rebuilds the
-  // body. So the update path has to ask again — a note left standing claims
+  // The two lifetimes do not line up: the marker is set when a capped `live_turn` is
+  // adopted and cleared by `message_appended` at turn end, and neither moment
+  // rebuilds the body. So the update path has to ask again — a note left standing claims
   // output is still coming for a turn that is over.
   it("drops on the next update once the marker is cleared", () => {
-    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
     const wrap = bodyFor("m-cut");
     expect(wrap.querySelector(NOTE)).not.toBeNull();
 
-    clearTruncatedSnapshot(CHAT_ID, "m-cut");
+    clearAdoptedSnapshot(CHAT_ID, "m-cut");
     updateAssistantBody(
       wrap,
       {
@@ -3214,12 +3229,12 @@ describe("truncated-snapshot note", () => {
   });
 
   // The other direction: a marker that arrives after the body was built (the
-  // connect frame lands on a chat already rendered) still reaches the reader.
+  // refetch lands on a chat already rendered) still reaches the reader.
   it("appears on the next update when the marker arrives late", () => {
     const wrap = bodyFor("m-late");
     expect(wrap.querySelector(NOTE)).toBeNull();
 
-    noteTruncatedSnapshot(CHAT_ID, "m-late");
+    noteAdoptedSnapshot(CHAT_ID, "m-late", { blockBase: 0, truncated: true });
     updateAssistantBody(
       wrap,
       {
@@ -3240,7 +3255,7 @@ describe("truncated-snapshot note", () => {
   // uses, not a guard, so this pins that mechanism: route the real id and the note
   // appears on a delegate's page.
   it("is withheld from a detached render", () => {
-    noteTruncatedSnapshot(CHAT_ID, "m-cut");
+    noteAdoptedSnapshot(CHAT_ID, "m-cut", { blockBase: 0, truncated: true });
     const wrap = document.createElement("div");
     buildDetachedBody(
       wrap,
@@ -3666,5 +3681,74 @@ describe("a delegate card's status follows its invocation CALL", () => {
 
     expect(box()).not.toBeNull();
     expect(blockElement("m-remount-pipe", 0)).toBe(box());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A pass that renders a superseded run PAINTS the fold; it does not replay it.
+//
+// The transcript's own case, one level above `tool-group.test.ts`'s: the real
+// `buildAssistantBody` over `[tool, tool, text]` into an ATTACHED host, with the
+// real stylesheet mounted so the height transition is in force. Every rebuild the
+// reader sees is this shape — a cold-build slice extending a body, a head-side
+// window move, a message rebuilt after its view was parked — and each one used to
+// cost a 0.2s collapse per group, staggered across the slices, which is what a tab
+// switch read as one long animation.
+// ---------------------------------------------------------------------------
+
+describe("rendering a superseded run animates nothing", () => {
+  let style: HTMLStyleElement;
+  let host: HTMLElement;
+
+  beforeEach(async () => {
+    const { mountAppCSS } = await import("./__test-helpers__/css-rules.js");
+    style = mountAppCSS();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    style.remove();
+    host.remove();
+    resetBlockRenders();
+  });
+
+  it("mounts the folded group with zero animations and a committed 0px height", () => {
+    const m = {
+      id: "m-anim",
+      role: "assistant",
+      content: "",
+      blocks: [toolUse("a1"), toolUse("a2"), text("and then some prose")],
+      tool_calls: [call("a1", "Run Command"), call("a2", "Run Command")],
+    } as unknown as Message;
+    buildAssistantBody(host, m, CHAT_ID, false, []);
+
+    const group = host.querySelector<HTMLElement>(".assistant-blocks > .tool-group");
+    expect(group).not.toBeNull();
+    // The run is followed by the text block, so the verdict is COLLAPSED.
+    expect(group?.classList.contains("tool-group-auto-collapsed")).toBe(true);
+
+    const body = group?.querySelector<HTMLElement>(":scope > .tool-group-body");
+    expect(body?.style.height).toBe("0px");
+    // The killing assertion, over the group's whole subtree rather than the region
+    // alone so a tween on any descendant counts. Scoped to the group and NOT to
+    // `document`: this file leaves earlier renders in the page, and mounting the
+    // stylesheet over them starts real transitions that have nothing to do with the
+    // group under test (measured: 4 of them).
+    expect(group?.getAnimations({ subtree: true })).toHaveLength(0);
+
+    // The CONTROL, in the same case rather than a sibling: a zero-animation
+    // assertion passes just as well when the stylesheet did not load, when the
+    // transition was never authored, or when this engine tweens nothing — so
+    // unless a tween can be made to fire here, the zero above proves nothing. A
+    // reader's own toggle is the live path the fix deliberately leaves animated.
+    //
+    // TWO clicks, because the first one on an AUTO-collapsed group converts it to a
+    // USER collapse and it stays closed (`onHeaderClick`), so only the second is the
+    // animated open. One click asserts nothing and reads like a typo.
+    const header = group?.querySelector<HTMLElement>(":scope > .tool-group-header");
+    header?.click();
+    header?.click();
+    expect(group?.getAnimations({ subtree: true }).length).toBeGreaterThan(0);
   });
 });

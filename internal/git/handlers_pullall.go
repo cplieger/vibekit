@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/logsafe"
-	"github.com/cplieger/webhttp/v2"
+	"github.com/cplieger/webhttp/v3"
 	"golang.org/x/sync/errgroup"
 )
 

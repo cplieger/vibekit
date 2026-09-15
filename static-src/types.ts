@@ -133,7 +133,10 @@ export type {
   TerminalOutputPayload,
   TerminalExitedPayload,
   TurnEndedPayload,
-  TurnStatePayload,
+  SubjectStamp,
+  PendingSnapshotPayload,
+  StatusSnapshotPayload,
+  StatusRow,
 } from "./wire/types.gen.js";
 
 // PermissionNeeded is the legacy alias used at call sites that predate
@@ -144,6 +147,7 @@ import type {
   Message,
   SessionEffortLevel,
   SteerOrigin,
+  SubjectStamp,
   TurnOutcome,
   Usage,
 } from "./wire/types.gen.js";
@@ -155,12 +159,15 @@ import type {
 export type BannerLevel = "error" | "warning" | "info";
 
 /** SSE event envelope sent by the server. The payload is decoded by
- *  registered SSE decoders before reaching handlers; see ./bus.ts. */
+ *  registered SSE decoders before reaching handlers; see ./bus.ts. `subject` is
+ *  the digest stamp of the projection this frame completes, observed by the
+ *  transport AFTER the handlers applied it. */
 import type { SSEPayloads } from "./bus.js";
 export interface ServerEvent {
   type: keyof SSEPayloads;
   chat_id?: string;
   payload?: unknown;
+  subject?: SubjectStamp;
 }
 
 /** Prelaunch model-picker entry, mapped from GET /api/config-template's
@@ -289,18 +296,15 @@ export interface SteerMark {
 
 // --- Local session state (client-only projection of server chat) ---
 
-/** How much of a chat's transcript is resident client-side.
- *
- *  - `loaded`: a successful newest-page fetch put the paginated window here —
- *    the ONLY writer of this value, so nothing weaker can claim it.
- *  - `evicted`: the idle sweep dropped the window; the session ROW survives
- *    with its header data, and activation must refetch.
- *  - `partial`: background ingest (SSE) landed on an evicted chat, so SOME
- *    messages are resident but the window around them is not.
- *
- *  Absent means the window was never loaded at all (a fresh or boot-listed
- *  chat), which every consumer treats exactly like not-`loaded`. */
-export type MessagesResidency = "loaded" | "evicted" | "partial";
+/** How much of a chat's transcript is resident client-side. Absent means the window
+ *  was never loaded, which every consumer treats exactly like not-`loaded`.
+ *  - `loaded`: a successful newest-page fetch put the window here; the ONLY writer.
+ *  - `evicted`: the idle sweep dropped the window; the row survives, activation refetches.
+ *  - `partial`: SSE ingest landed on an evicted chat; some messages resident, the window not.
+ *  - `load_failed`: the newest-page GET answered nothing (non-2xx, network, decode); the
+ *    window is whatever the last load or live ingest left, activation refetches, and only
+ *    a successful newest-page load reclaims `loaded`. */
+export type MessagesResidency = "loaded" | "evicted" | "partial" | "load_failed";
 
 export interface Session {
   id: string;

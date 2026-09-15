@@ -16,8 +16,8 @@ import (
 // refuses a write to an id deleted inside the tombstone window.
 type tombstonedChats struct{ ChatStore }
 
-func (tombstonedChats) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
-	return chat.ErrTombstoned
+func (tombstonedChats) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) (string, error) {
+	return "", chat.ErrTombstoned
 }
 
 // promptSpy answers every role and records the two things a refused prompt must

@@ -392,6 +392,7 @@ describe("add modal", () => {
         { name: "jq", source: "apt:jq", version: "1.7.1-3", apt: true, description: "distro json" },
       ],
       apt_available: true,
+      truncated: false,
     });
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
@@ -480,6 +481,7 @@ describe("add modal", () => {
     mocks.searchDispatch.mockResolvedValue({
       results: [{ name: "sl", source: "apt:sl", version: "5.02-1", apt: true }],
       apt_available: true,
+      truncated: false,
     });
     mocks.createDispatch.mockResolvedValue({ job: { id: "tj-9" } });
     byId<HTMLButtonElement>("tool-add-btn").click();
@@ -500,7 +502,7 @@ describe("add modal", () => {
   // from exactly the empty result that needed them.
   it("says why Debian packages are missing when apt is unavailable", async () => {
     initWith(listWith([]));
-    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false });
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false, truncated: false });
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
 
@@ -517,17 +519,99 @@ describe("add modal", () => {
   // claim standing over a search that contradicts it.
   it("drops the apt caveat again once apt is available", async () => {
     initWith(listWith([]));
-    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false });
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false, truncated: false });
     byId<HTMLButtonElement>("tool-add-btn").click();
     await flush();
     expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(false);
 
-    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true });
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true, truncated: false });
     const input = byId<HTMLInputElement>("tool-search");
     input.value = "sl";
     byId<HTMLButtonElement>("tool-search-btn").click();
     await flush();
     expect(byId("tool-shell-note-apt").classList.contains("hidden")).toBe(true);
+  });
+
+  // The reply says whether a block was cut to its cap and nothing about how many
+  // rows matched, so the readout can state the cut but not a denominator. An
+  // uncut reply keeps the bare count.
+  it("keeps the bare count when no block was cut", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "go", source: "aqua:golang/go", version: "1.27.1" }],
+      apt_available: true,
+      truncated: false,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-results-count").textContent).toBe("1 shown");
+  });
+
+  it("states the cut in the readout when a block was cut to its cap", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({
+      results: [{ name: "go", source: "aqua:golang/go", version: "1.27.1" }],
+      apt_available: true,
+      truncated: true,
+    });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-results-count").textContent).toBe(
+      "1 shown; more matched than shown, narrow the query to see the rest",
+    );
+  });
+
+  // A failed fetch is a different answer from an empty one: "no matches" tells
+  // the reader the tool does not exist, when the engine was never asked.
+  it("reports a failed search as a failure rather than as no matches", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue(null);
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-search-results").querySelector(".list-empty")?.textContent).toBe(
+      "Could not search",
+    );
+    expect(byId("tool-results-count").textContent).toBe("");
+  });
+
+  it("reports no matches as a complete answer when every source was read", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true, truncated: false });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    byId<HTMLInputElement>("tool-search").value = "zzqq";
+    byId<HTMLButtonElement>("tool-search-btn").click();
+    await flush();
+    expect(byId("tool-search-results").querySelector(".list-empty")?.textContent).toBe(
+      "No matches",
+    );
+  });
+
+  // With apt unavailable the engine never consulted the host's package index,
+  // so an empty answer covers one corpus of two and must say so.
+  it("says the search was incomplete when the package index could not be read", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: false, truncated: false });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    byId<HTMLInputElement>("tool-search").value = "zzqq";
+    byId<HTMLButtonElement>("tool-search-btn").click();
+    await flush();
+    expect(byId("tool-search-results").querySelector(".list-empty")?.textContent).toBe(
+      "No matches; not everything was searched",
+    );
+  });
+
+  // An empty query is a browse of the featured set, not a search, so its
+  // no-rows sentence is not a search answer and keeps its own words.
+  it("keeps the browse sentence for an empty query with nothing left to feature", async () => {
+    initWith(listWith([]));
+    mocks.searchDispatch.mockResolvedValue({ results: [], apt_available: true, truncated: false });
+    byId<HTMLButtonElement>("tool-add-btn").click();
+    await flush();
+    expect(byId("tool-search-results").querySelector(".list-empty")?.textContent).toBe(
+      "Everything featured is already installed. Search by name.",
+    );
   });
 
   // The bar was a debounced input alone: no button, no Enter, and nothing to

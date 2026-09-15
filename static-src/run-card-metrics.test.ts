@@ -18,16 +18,23 @@
 // the file browser's:
 //
 //   tier              real card   a skipped card was   drift was   now
-//   fine, collapsed   79px        66px                 -2,327px    0px
-//   coarse, collapsed 107px       66px                 -3,696px    0px
+//   fine, collapsed   71px        66px                 -2,327px    0px
+//   coarse, collapsed 91px        66px                 -3,696px    0px
 //   fine, one step    129px       66px                -11,277px   -9,100px
-//   coarse, one step  165px       66px                -13,904px  -10,498px
+//   coarse, one step  157px       66px                -13,904px  -10,498px
 //
-// THE TWO COARSE HEIGHTS MOVED, and the drift columns beside them did not. They read
-// 87px and 145px until `.run-open` stopped declaring its own `1.5rem` and took the
-// app-wide hit floor (2026-09-11, item 6): a coarse foot went 33px to 53px, so the
+// A COLLAPSED CARD IS HEAD + FOOT AND NOTHING BETWEEN THEM: `.run-head` drops its
+// `margin-block-end` on a folded card, so neither the height nor the reserve counts
+// it, and only the OPEN column carries one.
+//
+// THE TWO COARSE HEIGHTS MOVED TWICE, and the drift columns beside them did not. They
+// read 87px and 145px until `.run-open` stopped declaring its own `1.5rem` and took
+// the app-wide hit floor (2026-09-11, item 6): a coarse foot went 33px to 53px, so the
 // reserve under-stated a coarse card by 20px until `--run-card-content`'s foot term
-// read `var(--hit-floor)` too. That is what these two cases caught, and it is why
+// read `var(--hit-floor)` too. Then 107/165 became 99/157 when the foot stopped
+// padding that band at all and the link declared it instead — a coarse foot of 45px,
+// the collapsed figure RE-MEASURED and the one-step figure derived from it, since the
+// change is isolated to the foot and the body it opens is untouched. That is what these two cases caught, and it is why
 // the estimate is an expression over the same tokens the card's own rules read. The
 // drift and residual figures are the ORIGINAL measurement against `auto 4rem`, taken
 // when a coarse collapsed card was 87px; the assertions are derived from the rendered

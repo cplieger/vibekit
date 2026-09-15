@@ -29,6 +29,7 @@
 import { effect, signal, touch } from "@cplieger/reactive";
 import { chatSettled } from "./chat-settled.js";
 import { isAgentFinishedEnabled, notifyIfHidden, NOTIFY_TITLE } from "./notify.js";
+import { chatTarget } from "./push-subject.js";
 
 /** Per-chat dedup window. An SSE reconnect replays `turn_ended`, and the duplicates
  *  arrive within milliseconds of each other. */
@@ -98,7 +99,7 @@ function raiseAgentFinished(chatID: string, body: string): boolean {
     return false;
   }
   lastNotifyMs.set(chatID, now);
-  return notifyIfHidden(NOTIFY_TITLE, body);
+  return notifyIfHidden(NOTIFY_TITLE, body, chatTarget(chatID));
 }
 
 /** A turn ended on `chatID` and `body` is what a cue for it would say ("" for a turn

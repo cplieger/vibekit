@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
+import { chatTarget } from "./push-subject.js";
 import { settingsPayload } from "./__test-helpers__/settings.js";
 import indexHtml from "../static/index.html?raw";
 import notifySrc from "./notify.ts?raw";
@@ -49,6 +50,27 @@ describe("the permission notification has no off switch", () => {
   // instead of hiding the notice about them.
   it("offers the security profile as the control that replaced it", () => {
     expect(html).toContain("security-profile-list");
+  });
+});
+
+// The authored markup is the FIRST FRAME of the settings panel: syncRowInputs writes
+// each input from state on every load, so a `checked` attribute that disagrees with
+// the server's default is a visible flicker from on to off on every settings open.
+// Read here because this file already reads index.html, and because no type can
+// express an agreement between hand-authored HTML and a Go constant.
+describe("each keyed toggle's authored default matches the server's", () => {
+  /** The `<input>` tag for one toggle id, from the authored markup. */
+  function inputTag(id: string): string {
+    const at = indexHtml.indexOf(`id="${id}"`);
+    expect(at, `${id} is not in static/index.html`).toBeGreaterThan(-1);
+    const open = indexHtml.lastIndexOf("<input", at);
+    return indexHtml.slice(open, indexHtml.indexOf(">", at) + 1);
+  }
+
+  it("leaves pull-request checks unchecked, and its two siblings checked", () => {
+    expect(inputTag("notify-pr-status-toggle")).not.toContain("checked");
+    expect(inputTag("notify-finished-toggle")).toContain("checked");
+    expect(inputTag("notify-run-outcome-toggle")).toContain("checked");
   });
 });
 
@@ -97,7 +119,7 @@ describe("the master switch still governs everything", () => {
     // Nothing has enabled notifications, so the ask notification is suppressed
     // by the master gate — the one switch that is still a preference.
     expect(notify.areNotificationsEnabled()).toBe(false);
-    expect(notify.notifyIfHidden("Vibekit", "Permission needed")).toBe(false);
+    expect(notify.notifyIfHidden("Vibekit", "Permission needed", chatTarget(""))).toBe(false);
 
     // And a settings payload still carrying the removed key changes nothing
     // about the permission channel: there is no field left to land in.

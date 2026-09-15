@@ -52,7 +52,7 @@ func endTurn(t *testing.T, h *Runtime, chatID vibekit.ChatID, epoch vibekit.Turn
 
 func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -82,7 +82,7 @@ func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {
 
 func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A" // no Model: the session took the backend default
 		return true
 	}); err != nil {
@@ -110,7 +110,7 @@ func TestTurnModel_AbsentWhenTheChatNamesNoModel(t *testing.T) {
 // relabelling the persisted field exists to prevent — one level down.
 func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -121,7 +121,7 @@ func TestTurnModel_LatchedAtTurnStartNotAtTurnEnd(t *testing.T) {
 	epoch := h.coord.StartTurn(t.Context(), "c1", vibekit.TurnSourcePrompt)
 	h.translateACPEvent("c1", newChunkMsg("half an answer"))
 	// A switch lands mid-turn (the fast in-session path does exactly this).
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Model = "opus-4"
 		return true
 	}); err != nil {
@@ -158,7 +158,7 @@ func TestTurnModel_SwitchBeforeTheFirstFrameKeepsTheDispatchedModel(t *testing.T
 	// back onto the chat — so the fixture has to agree with itself or the chat's
 	// model at dispatch is the fake's placeholder rather than the seeded one.
 	br.modelID = "sonnet-4"
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true
@@ -247,7 +247,7 @@ func waitForCall(t *testing.T, br *fakeBridge, method string) {
 // needs a case on both paths or the extraction stops earning its keep.
 func TestTurnModel_AbandonedTurnCarriesItToo(t *testing.T) {
 	h, cs, _ := newTestHub()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "sonnet-4"
 		return true

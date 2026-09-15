@@ -87,7 +87,7 @@ func agentLaunchedRun(t *testing.T, results map[string]json.RawMessage, errs map
 	h := New(t.Context(), "/tmp/work", rec.factory, cs)
 	cs.Bus = h
 	h.mcpRegistry.SignalReady()
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -185,7 +185,7 @@ func TestCancelForSessions_ReadsTheRunInventoryOnce(t *testing.T) {
 		// the leases stay put — nothing here turns on them.
 		methodKiroWorkflowInspect: inspectReply(t, "wf_other", "running", ""),
 	}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -572,7 +572,7 @@ func TestResumeIfInterrupted_ArmsTheDeadline(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 		methodKiroWorkflowResume:  json.RawMessage(`{}`),
 	}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true
@@ -609,7 +609,7 @@ func TestResumeIfInterrupted_DoesNotArmARefusedResume(t *testing.T) {
 		methodKiroWorkflowInspect: inspectReply(t, "wf_1", "paused", stalePauseReason),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowResume: errors.New("registry.require threw")}
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.RecordSession("sess_owner")
 		return true

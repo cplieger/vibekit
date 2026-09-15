@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
 )
@@ -104,7 +105,7 @@ func stepSessionAt(raw json.RawMessage, nodePath string) (string, error) {
 // adoptLoadedSession, which REBINDS the bridge's sessionID, so a step's id would be
 // reported as the utility session's own and take it out of the orphan reaper's keep-list.
 func (rs *Runs) replayStepSession(ctx context.Context, sessionID string) ([]vibekit.Message, vibekit.RunStepTranscriptState) {
-	if !rs.stepReplays.open(sessionID) {
+	if !rs.stepReplays.open(sessionID, translate.NewProjection(newMessageID, rs.workDir)) {
 		// Refused rather than joined: two readers of one barrier is a lifecycle this
 		// registry does not carry, and the retry meets a settled registry a moment later.
 		slog.Debug("step transcript: a read of this session is already in flight", "session_id", sessionID)

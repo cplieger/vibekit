@@ -45,9 +45,11 @@ export function tabsMock(): Record<string, unknown> {
     openRunTab: vi.fn(async () => {}),
     openSubagentTab: vi.fn(async () => {}),
     toggleSettingsView: vi.fn(async () => {}),
+    openSettingsView: vi.fn(async () => {}),
     toggleGitView: vi.fn(async () => {}),
+    openGitView: vi.fn(async () => {}),
     toggleFilesView: vi.fn(async () => {}),
-    showFilesView: vi.fn(async () => {}),
+    openFilesView: vi.fn(async () => {}),
     toggleHistoryView: vi.fn(async () => {}),
     toggleDocsView: vi.fn(async () => {}),
 
@@ -67,12 +69,17 @@ export function tabsMock(): Record<string, unknown> {
     setSettingsTab: vi.fn(),
     setGitTab: vi.fn(),
     setDocsTab: vi.fn(),
+    setFilesRoute: vi.fn(),
 
     // Readers, each answering "nothing".
     hasTab: vi.fn(() => false),
     tabIdFor: vi.fn(() => ""),
+    filesTabIdFor: vi.fn(() => ""),
     tabSetVersion: vi.fn(() => 0),
     tabIdForRoute: vi.fn(() => ""),
+    // The empty answer for its type, per this file's own rule: a reader must not
+    // claim a tab is open.
+    filesTabForRoute: vi.fn(() => ({ id: "", ref: "" })),
     getActiveTabId: vi.fn(() => ""),
     getActiveTabRoute: vi.fn(() => null),
     getActiveTabKind: vi.fn(() => null),

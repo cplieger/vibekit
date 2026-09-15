@@ -149,8 +149,8 @@ describe("the × is inset equally on all four sides", () => {
   // `min-height: var(--btn-h)` with `padding-block: var(--sp-2)` plus a reserved 1px
   // border, a 44px child STACKED on that chrome and every row rendered 62px against
   // `#new-chat`'s 44px. The × takes the documented expander instead — an absolutely
-  // positioned `::after` sized off `--hit-floor`, the escape `.status-dot`,
-  // `.shell-resize` and `.tool-file-link` also use — because `.tab-close` is a SPAN
+  // positioned `::after` sized off `--hit-floor`, the escape `.shell-resize` and
+  // `.tool-file-link` also use — because `.tab-close` is a SPAN
   // (`role="tab"` is Children Presentational, so it cannot be a <button>) and the
   // zero-specificity floor in `61-mcp-tools.css` therefore does not reach it.
   //

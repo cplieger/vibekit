@@ -131,7 +131,7 @@ func TestConnectProjections_ReadConcurrentlyWithTheirOwnMutation(t *testing.T) {
 	// The connect region, on the test's own goroutine so its assertions may Fatal, and
 	// TWICE so the second one lands with every writer above still running.
 	for range 2 {
-		if p := connectPayload(t, rt, "?snapshot="+snapshotNone); !p.BusyStated {
+		if p := connectPayload(t, rt, ""); !p.BusyStated {
 			t.Error("a connect taken while the lifecycle set is mutating withholds its busy " +
 				"list, so the client retracts nothing and a stale `thinking` survives")
 		}

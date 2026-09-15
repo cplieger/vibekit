@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/sse"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2/sse"
 )
 
 // settledEvents decodes the decision_settled payloads emitted after sinceID.
@@ -68,7 +68,7 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			_, head := h.bus.fanout.Bounds()
+			head := h.bus.fanout.Position().Head
 			h.bus.pendingPerms.Add(9, vibekit.NewEvent(tc.event, "c1", vibekit.PermissionNeededPayload{RequestID: 9}))
 
 			if !h.bus.TakePendingPerm("c1", 9, tc.settledBy) {
@@ -98,7 +98,7 @@ func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 		t.Fatal("first claim refused")
 	}
 
-	_, head := h.bus.fanout.Bounds()
+	head := h.bus.fanout.Position().Head
 	if h.bus.TakePendingPerm("c1", 9, vibekit.SettledByUser) {
 		t.Error("second claim on one request id succeeded, want refused")
 	}

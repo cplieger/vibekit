@@ -274,6 +274,70 @@ describe("what it does NOT offer", () => {
   });
 });
 
+describe("the trim rule lives here, once", () => {
+  // The shell's own contract is that its value is "trimmed of nothing", so the
+  // popup owns the one trim rule, per kind: a filter folds against rows already on
+  // screen, where a stray space matches nothing a reader meant; a search hands the
+  // text to a server whose parser splits on whitespace anyway.
+  it("hands a filter the trimmed query", () => {
+    const { popup, seen } = build({ kind: "filter" });
+    popup.open();
+    typeInto("  redis ");
+    expect(seen).toEqual(["redis"]);
+  });
+
+  it("hands a search the query as typed, trailing space included", () => {
+    const { popup, seen } = build({ kind: "search" });
+    popup.open();
+    typeInto("redis ");
+    expect(seen).toEqual(["redis "]);
+  });
+
+  it("treats a box holding only whitespace as empty, for either kind", () => {
+    const filter = build({ kind: "filter" });
+    filter.popup.open();
+    typeInto("   ");
+    expect(filter.seen).toEqual([""]);
+
+    fixture();
+    const search = build({ kind: "search" });
+    search.popup.open();
+    typeInto(" \t ");
+    expect(search.seen).toEqual([""]);
+  });
+
+  it("paints for the same string it queried", () => {
+    // `render` receives the query too; a page filtering on one string and
+    // painting for another is the drift this rule exists to remove.
+    const painted: string[] = [];
+    createSearchPopup<string>({
+      id: "probe",
+      kind: "filter",
+      label: "Probe things",
+      placeholder: "Probe\u2026",
+      host: () => document.getElementById("host"),
+      query: (q) => q,
+      render: (_r, q) => {
+        painted.push(q);
+      },
+    }).open();
+    typeInto(" redis ");
+    expect(painted).toEqual(["redis"]);
+  });
+
+  it("closes a whitespace-only box without a repaint", () => {
+    // The page already saw "" for it, so the close has nothing to undo — and on
+    // History a repaint is a refetch of every session.
+    const { popup, seen } = build({ kind: "search" });
+    popup.open();
+    typeInto("   ");
+    const before = seen.length;
+    popup.close();
+    expect((document.getElementById("probe-input") as HTMLInputElement).value).toBe("");
+    expect(seen.length).toBe(before);
+  });
+});
+
 describe("the query lifecycle is the shell's, not a second copy", () => {
   it("renders what the query returned, for the query that returned it", () => {
     const { popup, rendered } = build();

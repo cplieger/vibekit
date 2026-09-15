@@ -25,19 +25,36 @@
     --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
     --c-bg-elevated: oklch(42.5% 0.044 283.6deg);
 
-    /* ---- SEEDS: ink -------------------------------------------------------- */
+    /* ---- SEEDS: ink -------------------------------------------------------- *
+     * EVERY TEXT INK IS AUTHORED AGAINST THE HOVERED BOX, the strongest surface
+     * text sits on: --c-bg-secondary under --c-hover, or under --c-hover-select
+     * where that is the stricter of the two. An ink that clears 4.5:1 there clears
+     * it on the page, the card, the box, the band at rest and every hover wash over
+     * the first three, so no consumer has to know which rung it is on. Three
+     * surfaces are OUTSIDE that set and host --c-text-primary and
+     * --c-text-secondary ONLY: --c-bg-elevated (a press/hover fill),
+     * the HOVERED band (the turn header, the exec group head) and the selected
+     * fill, which carries its own muted ink. `css-contrast.py` prints the whole
+     * ink x surface table under INK RAMP and `ink-ramp.node.test.ts` fails a FAIL.
+     *
+     * The three levels sit at EQUAL contrast steps between the hint floor and
+     * primary (1.43:1 each here, 1.51 / 1.53 in light), which replaced a ramp cut
+     * against the PAGE (66 / 80.5 / 100) whose hint level had 6% of headroom on
+     * the box and none on anything stronger: 3.60:1 on the band and 2.98:1 on any
+     * hovered row, measured on 35 of 35 hint texts inside hoverable rows in the
+     * chat view and 57 of 57 in Settings > Tools. The "valid on rungs 1 and 2 only,
+     * step up to secondary there" contract that used to sit on the hint token was
+     * a per-consumer rule the cascade could not enforce, and it leaked. */
     --c-text-primary: oklch(100% 0 none);
 
     /* --c-text-control aliases this, so a control's own label is what fails if it
-     * drops: every rung and every hover wash must clear 4.5:1. */
-    --c-text-secondary: oklch(80.5% 0.04 273.9deg);
+     * drops. The contrast midpoint between the hint level and primary. */
+    --c-text-secondary: oklch(88.2% 0.04 273.9deg);
 
-    /* Hint ink only — a clickable label takes --c-text-control, subordinate
-     * running text --c-text-aside. VALID ON RUNGS 1 AND 2 ONLY: on
-     * --c-bg-tertiary and --c-bg-elevated it reads 3.601:1 / 2.699:1 and no lift
-     * fixes that, so a hint steps up to --c-text-secondary there. An `opacity`
-     * above is a third mover no measurement here can see. */
-    --c-text-tertiary: oklch(66% 0.034 277.1deg);
+    /* Hint ink — a clickable label takes --c-text-control, subordinate running
+     * text --c-text-aside. An `opacity` above is a third mover no measurement here
+     * can see. */
+    --c-text-tertiary: oklch(77.4% 0.034 277.1deg);
 
     /* THEME-SPLIT, so the ink ON an accent fill inverts: anything on one uses
      * --c-on-accent, never a hardcoded #fff. The --img-*-on-accent tokens bake it
@@ -49,13 +66,16 @@
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
 
     /* A select's indicator can only arrive as a background image, which cannot
-     * reach the icon library, so it carries a literal hue and is theme-split.
-     * Geometry is ICON_CHEVRON_DOWN's. */
-    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d91a7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+     * reach the icon library, so it carries a literal hue and is theme-split. The
+     * literal IS --c-text-tertiary's sRGB (`css-contrast.py` prints it under INK
+     * RAMP), so a hint retune moves it too. Geometry is ICON_CHEVRON_DOWN's. */
+    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b0b4cc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 
-    /* ---- SEEDS: status hues ----------------------------------------------- */
+    /* ---- SEEDS: status hues ----------------------------------------------- *
+     * Text inks, so the hovered-box rule above sizes them: hue held, L moved the
+     * least that clears it, chroma reduced only where the hue's gamut runs out. */
     --c-green: oklch(85.8% 0.109 142.7deg);
-    --c-red: oklch(75.6% 0.13 2.8deg);
+    --c-red: oklch(79% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
     /* The context indicator's compaction band: a NEUTRAL at the surface family's
@@ -69,10 +89,12 @@
      * against the --c-border track and against the page (WCAG 1.4.11 for a
      * graphical object) puts a floor under it here at L 58%; staying QUIETER than
      * every hue the fill can take — a band as loud as the fill reads as
-     * already-filled — puts a ceiling at L 72%, because --c-red is the quietest
-     * fill at 5.561:1 against that track. Mid-window: 4.11:1 vs the track, 6.29:1
-     * vs the page, 0.1603 in OKLab from the nearest stroke the fill can emit
-     * (`css-contrast.py pair`, and context-wedge-contrast.node.test.ts). */
+     * already-filled — puts the ceiling where the quietest fill sits, --c-red at
+     * 6.294:1 against that track (5.561 before the ink ramp was authored against
+     * the hovered box, which moved every status ink AWAY from the surfaces and so
+     * only widened this window). Sitting well inside it: 4.11:1 vs the track,
+     * 6.29:1 vs the page, 0.1603 in OKLab from the nearest stroke the fill can
+     * emit (`css-contrast.py pair`, and context-wedge-contrast.node.test.ts). */
     --c-context-wedge: oklch(66% 0.01 284.1deg);
 
     /* Seeds rather than alpha washes of the status hues: alpha moves LIGHTNESS,
@@ -80,9 +102,12 @@
      * pane's lightness and spend CHROMA instead. */
     --c-diff-add-bg: oklch(22% 0.05 142.7deg);
     --c-diff-del-bg: oklch(22% 0.09 2.8deg);
-    --c-blue: oklch(76.6% 0.111 259.9deg);
+    --c-blue: oklch(77.5% 0.111 259.9deg);
     --c-teal: oklch(84.1% 0.13 168.3deg);
-    --c-danger: oklch(66.8% 0.16 22.4deg);
+
+    /* Hue 22.4deg cannot hold 0.16 of chroma at the L the hovered box needs, so
+     * this is the one dark ink whose chroma the gamut clipped (0.16 -> 0.123). */
+    --c-danger: oklch(78.7% 0.123 22.4deg);
     --c-warning: oklch(82.5% 0.104 83.6deg);
     --c-link: oklch(81.7% 0.091 277.3deg);
 
@@ -92,6 +117,15 @@
     --c-forge-gitlab: #fc6d26;
     --c-forge-codeberg: #2185d0;
     --c-forge-gitea: #609926;
+
+    /* ---- SEEDS: the theme toggle's swap wash ------------------------------ *
+     * One value serves both themes: an inset wash at L 80-82% lifts the dark
+     * button and warms the light one. --c-glow-system is the accent's hue
+     * glow-tuned, NOT var(--c-accent), which is lightness-flipped per theme
+     * (75.8% / 50%) and would land a heavy violet over the light button. */
+    --c-glow-sun: oklch(82% 0.16 85deg / 50%);
+    --c-glow-moon: oklch(80% 0.05 260deg / 30%);
+    --c-glow-system: oklch(80% 0.11 300deg / 40%);
 
     /* ---- SEEDS: syntax + bubbles ------------------------------------------ */
     /* Split because a pastel that reads on the dark inset wash vanishes on the
@@ -168,8 +202,8 @@
     --c-dot-input: oklch(78% 0.15 95deg);
     --c-dot-done: oklch(78% 0.15 150deg);
 
-    /* Not the source's literal value: #dc2626 reads 1.920:1 on this theme's
-     * hovered sidebar row. The HUE is kept exactly and L raised to 3.297:1. */
+    /* Not the source's literal value: #dc2626 reads 1.939:1 on this theme's
+     * hovered sidebar row. The HUE is kept exactly and L raised to 3.329:1. */
     --c-dot-failed: oklch(70% 0.125 27.3deg);
 
     /* The IDLE ring, a wash off the ink so one declaration covers the resting and
@@ -195,12 +229,13 @@
     --layer-press: linear-gradient(var(--c-press) 0 100%);
     --opacity-disabled: 0.4;
 
-    /* ---- Selection: ONE treatment, three channels ------------------------ *
-     * Fill is accent over the surface, edge is that fill lifted toward the ink,
-     * ink is the ink. All three travel together, ALWAYS —
-     * css-tokens.node.test.ts fails on a rule that sets one without the others. */
+    /* ---- Selection: ONE treatment, TWO channels -------------------------- *
+     * Fill is accent over the surface, ink is the ink, and both travel together
+     * ALWAYS — css-tokens.node.test.ts fails a rule that sets one without the
+     * other. There is no selected EDGE: `--c-selected-border` was measured
+     * painting on 16 of the treatment's 25 selectors and paints on none of them
+     * now (70-selection.css records the census). */
     --c-selected-bg: color-mix(in oklch, var(--c-accent) 30%, var(--c-bg-secondary));
-    --c-selected-border: color-mix(in oklch, var(--c-selected-bg), var(--c-text-primary) 25%);
 
     /* The text colour and NOT the accent, which is illegible on an accent fill. */
     --c-selected-fg: var(--c-text-primary);
@@ -210,6 +245,46 @@
      * SELECTED row changes nothing, so a touchscreen's sticky :hover latches. */
     --c-selected-bg-hover: color-mix(in oklch, var(--c-selected-bg), var(--c-selected-fg) 12%);
     --c-selected-bg-press: color-mix(in oklch, var(--c-selected-bg), var(--c-selected-fg) 22%);
+
+    /* ---- The ladder, TINTED, for a TAB-shaped control --------------------- *
+     * The interaction ladder above mixes toward `--c-text-primary`, whose
+     * chroma is 0 in BOTH themes, so its wash contributes no hue at all. On a
+     * tab strip that reads as a grey film: measured over `--c-bg-secondary` in
+     * dark, hovering DROPS the row's chroma below the surface it sits on
+     * (0.0294 resting to 0.0217 hovered) while rest, selected and dragging are
+     * all tinted at hue ~284-289, so the hovered row is the one untinted fill
+     * in the strip. Reported as a grey that fits nothing else in the interface.
+     *
+     * So the ink is tinted and the ALPHA pays for it. The accent is darker than
+     * white in dark and lighter than the ink in light, so a tinted ink at 15%
+     * lands short of the ladder's step in both themes; 18% and 30% (the ladder's
+     * 15% and 25% times 1.2) restore it. Measured composites over the strip,
+     * against the ladder's own values:
+     *
+     *   dark   hover 1.589:1 (ladder 1.626)   press 2.200:1 (ladder 2.255)
+     *   light  hover 1.371:1 (ladder 1.358)   press 1.749:1 (ladder 1.688)
+     *
+     * and the chroma this exists for goes 0.0217 to 0.0385 in dark (the ramp's
+     * own third rung is 0.0380) and 0.0084 to 0.0267 in light. Separation from
+     * the SELECTED fill is unchanged, 1.084:1 against the old 1.059:1 in dark,
+     * so a hovered row is no closer to reading as selected than it was.
+     *
+     * A wash, like the ladder's, so it stays relative to whatever surface the
+     * bar sits on. Read by the three tab-shaped controls (`.tab`,
+     * `.settings-tab`, `.mcp-modal-tab`) and deliberately by nothing else: a
+     * row whose selected state is not this accent fill has no hue of its own to
+     * echo, so it takes `--c-hover`.
+     *
+     * REJECTED, measured rather than reasoned: a diluted step of
+     * `--c-selected-bg` itself, which is the obvious way to make hover preview
+     * selection. It cannot hold both ends — at 55% it reads 1.330:1 in dark,
+     * quieter than the rung jump this app migrated away from, and the 85% that
+     * restores the step lands at chroma 0.0618 against the selected fill's
+     * 0.0643 and hue 289.5 against 289.2, so a hovered row and a selected one
+     * differ only in lightness. */
+    --c-select-tint: color-mix(in oklch, var(--c-text-primary) 50%, var(--c-accent));
+    --c-hover-select: color-mix(in oklch, var(--c-select-tint) 18%, transparent);
+    --c-press-select: color-mix(in oklch, var(--c-select-tint) 30%, transparent);
 
     /* ---- The inks that sit ON a selected fill ----------------------------- *
      * --c-selected-fg only reaches descendants that INHERIT it, and a row's quiet
@@ -224,7 +299,7 @@
     --c-selected-blue-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-blue));
 
     /* The label of something clickable is text, so WCAG 1.4.3 wants 4.5:1, which
-     * hint ink misses on the base surface. */
+     * is the control level's own floor rather than the hint level's. */
     --c-text-control: var(--c-text-secondary);
 
     /* Subordinate running TEXT — a reasoning trace, a system-trigger line — which
@@ -232,9 +307,35 @@
      * a collapsed disclosure and the block's accent bar. */
     --c-text-aside: var(--c-text-secondary);
 
-    /* Derived off the ink for --c-border's reason: as a fixed black wash it
-     * depended on the surface being light enough to darken. */
-    --c-code-bg: color-mix(in oklch, var(--c-text-primary) 9%, transparent);
+    /* The well: machine text sinks toward SHADOW in both themes, the one surface
+     * that steps against the ramp. A wash so it is relative to its container; a
+     * shade per theme because no single alpha darkens a near-white and a
+     * near-black card alike. Floored in oklch-L, not WCAG (`css-contrast.py all`):
+     * below the L19 body no shadow can reach 1.15:1. vibekit-ui.md "The well". */
+    --c-well: color-mix(in oklch, oklch(0% 0 none) 55%, transparent);
+
+    /* ---- The band, TINTED by an outcome --------------------------------- *
+     * A stopped or broken turn's footer says so in hue. It used to be a
+     * `color-mix()` of the status ink at 12% into the band, and a mix moves
+     * LIGHTNESS as well as hue: 12% of a pastel lifts dark's band from L 35.5 to
+     * L 42 (the elevated fill's depth), 12% of light's deep hue sinks its band
+     * the same way, and hint ink landed under AA on both (3.97:1 / 4.36:1 — the
+     * turn info panel sits inside that footer). The diff backgrounds recorded the
+     * same trap and answered it with per-theme seeds; relative colour syntax
+     * answers it ONCE: take the band's own lightness, replace its hue with the
+     * outcome's and spend a fixed chroma. So this tint is a hue change at the
+     * band's exact depth, hint ink reads 5.4 / 5.1 on it, and it re-resolves per
+     * theme through the one `--c-bg-tertiary` it is derived from. The hues are
+     * --c-yellow's and --c-red's, which are theme-invariant (only L and C move
+     * between the blocks). `css-contrast.py` resolves `oklch(from …)`. */
+    --c-band-stopped: oklch(from var(--c-bg-tertiary) l 0.04 86.5deg);
+    --c-band-broken: oklch(from var(--c-bg-tertiary) l 0.04 2.8deg);
+
+    /* The `new` file badge's fill, on the same principle: it was an 18% wash of
+     * --c-green over the band, so its own green text read 3.98:1 on it in light —
+     * a wash of the INK under the ink can only cost that ink contrast. Chroma at
+     * the band's lightness instead; the badge is a hue, not a step. */
+    --c-band-added: oklch(from var(--c-bg-tertiary) l 0.05 142.7deg);
     --c-hl-keyword: var(--c-accent);
 
     /* ---- Type, space, size ----------------------------------------------- */
@@ -258,6 +359,27 @@
     --sp-4: 1rem;
     --sp-5: 1.25rem;
     --sidebar-w: 16.25rem;
+    /* THE SHELL'S HEIGHT, and the unit differs by DISPLAY MODE because only one
+       of the two viewport-percentage families is stable. CSS Values 4 section
+       6.1.2 defines the large units (`lvh`, and plain `vh`) against the viewport
+       sized with every dynamically retracted UA interface assumed retracted, and
+       states their sizes are fixed unless the viewport itself is resized; `dvh`
+       is explicitly not stable even while the viewport is unchanged. An installed
+       standalone PWA has no retractable chrome, so the large unit is both correct
+       there and the only one immune to a transiently short layout viewport —
+       which is what iOS hands the web view on a cold launch from the home screen.
+       A browser TAB does have retractable chrome, where `lvh` is the classic bug
+       that hides bottom-anchored UI under the address bar, so it gets `dvh`.
+       `(display-mode: standalone)` is the Web App Manifest spec's own way to tell
+       the two apart. Read by `[id="app"]` (02-reset.css), `[id="sidebar"]`
+       (10-shell-app.css) and the fullscreen shell (61-mcp-tools.css) — the three
+       boxes that would otherwise take their height from whatever rectangle the OS
+       gives the fixed-positioning containing block. It lives in THIS layer rather
+       than beside its first reader: `tokens` is declared after `reset`
+       (00-header.css), so a same-named declaration added here would silently
+       outrank one in the reset layer, and one owner in the winning layer is what
+       makes that unrepresentable. */
+    --app-h: 100dvh;
     /* THE measure, for every full-page surface. The transcript, the composer, the
        dock, the run page and a delegate's page all end on this column, so a reader
        crossing between them learns one pair of edges (user ruling, 2026-09-10).
@@ -275,6 +397,15 @@
     --ctl-h-sm: 1.5rem;
     --hit-floor: 1.5rem;
     --btn-h: var(--ctl-h);
+  }
+
+  /* The standalone branch of --app-h, reasoned about at its base declaration
+   * above. Same specificity as that `:root`, so SOURCE ORDER is the whole
+   * override and this block may not move above it. */
+  @media (display-mode: standalone) {
+    :root {
+      --app-h: 100lvh;
+    }
   }
 
   /* A finger or a pen: 44px is Apple's HIG figure and WCAG 2.5.5 (AAA), against
@@ -333,12 +464,24 @@
     /* ---- Status dots ------------------------------------------------------ *
      * ONE size, ONE period and ONE square radius, so up to 48 dots on one strip
      * beat in phase and the two marks that report a workflow run cannot drift
-     * apart in silhouette. Slow on purpose: a dot is ambient and stays on screen
-     * for as long as the work runs. */
+     * apart in silhouette.
+     *
+     * THE PERIOD IS SHARED WITH web-terminal-kiro, which is the same reason the
+     * --c-dot-* family is: a reader moving between the two apps should learn one
+     * signal, and a beat is as much a part of that signal as a hue. It matches
+     * `--dot-beat-dur` in @cplieger/web-terminal-ui's 00-tokens.css, where the
+     * tab dot's own glow, its ripple and the workflow mark's breath all read it.
+     * Do not retune one side alone.
+     *
+     * It was 2.4s until 2026-09 — chosen as ambient, on the reasoning that a dot
+     * stays on screen for as long as the work runs — and the sibling app had been
+     * on 1.2s the whole time, so the two strips beat at different rates for one
+     * state. 1.2s is still comfortably slower than --spin-dur below, which is the
+     * relation that carries the meaning; what changed is the ratio, 4:1 to 2:1. */
     --dot-size: 0.5rem;
     --dot-size-sm: 0.375rem;
     --dot-radius-square: calc(var(--dot-size) / 4);
-    --dot-beat-dur: 2.4s;
+    --dot-beat-dur: 1.2s;
     /* ---- Spinners -------------------------------------------------------- *
      * ONE period for every rotating ring — a literal here let two rings of one
      * size sit side by side visibly drifting. Faster than a dot's ambient period:
@@ -373,6 +516,29 @@
      * collapse the two wherever they pair, at 179 and 30 reads. */
     --fs-popup: var(--fs-base);
     --fs-popup-meta: var(--fs-xs);
+  }
+
+  :root {
+    /* ---- Tooltip size ----------------------------------------------------- *
+     * ONE SIZE CLASS for every hover in the app, and the ONLY difference between
+     * tooltips may be the VIEW (user ruling, 2026-09-12). Read by the single
+     * `.uip-tooltip` rule in 04-uip-skin.css; a per-site override is the
+     * divergence being forbidden, so there is no second writer.
+     *
+     * TWO LINES because the widest content a tooltip legitimately carries is a
+     * file PATH, and two lines at this width hold ~114 characters against a
+     * measured p99 of 85 (28,841 real file-path tool inputs on the live volume,
+     * p50 49, p90 62, max 121). Nothing else needs a third line: what used to
+     * fill six was an agent's front-matter description, which is a paragraph and
+     * belongs in a row rather than under a pointer.
+     *
+     * THE VIEWPORT TERM IS THE PER-VIEW DIFFERENCE, and it is a real fix rather
+     * than symmetry: the library positions a tooltip with `placeAnchored`, which
+     * clamps its POSITION and not its width, so a flat 22rem box overflows a
+     * 320px phone. `100vw` rather than a breakpoint, so there is no threshold to
+     * keep in step with the pointer tiers above. */
+    --tooltip-max-w: min(22rem, calc(100vw - 2 * var(--sp-4)));
+    --tooltip-lines: 2;
   }
 
   /* A caption stays one step under its row, so it cannot outsize the control it
@@ -467,37 +633,39 @@
     --c-bg-tertiary: oklch(86% 0.014 283.7deg);
     --c-bg-elevated: oklch(80% 0.018 283.6deg);
     --c-text-primary: oklch(20% 0 none);
-    --c-text-secondary: oklch(40% 0.02 273.9deg);
 
-    /* Deepened as light's surfaces moved down; the two-rung contract on dark's
-     * token holds here unchanged. Light's ramp is 20 / 40 / 50, so a further step
-     * would stop the hint being a distinct level. */
-    --c-text-tertiary: oklch(50% 0.015 277.1deg);
+    /* The dark block's rule, mirrored: every text ink clears 4.5:1 on light's
+     * hovered box, and the three levels sit at equal contrast steps (20 / 33.7 /
+     * 43.8). Light keeps more hierarchy than dark for the same floor because
+     * (Y + 0.05) favours a dark ink: 1.51 / 1.53 against 1.43 / 1.43. */
+    --c-text-secondary: oklch(33.7% 0.02 273.9deg);
+    --c-text-tertiary: oklch(43.8% 0.015 277.1deg);
+    --c-well: color-mix(in oklch, oklch(0% 0 none) 12%, transparent);
     --c-accent: oklch(50% 0.254 295.8deg);
     --c-accent-hover: oklch(45% 0.247 293deg);
     --c-on-accent: oklch(100% 0 none);
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
-    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2361636c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-    --c-green: oklch(48% 0.12 142.7deg);
-    --c-red: oklch(52% 0.15 2.8deg);
+    --img-chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2350515a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    --c-green: oklch(42.6% 0.12 142.7deg);
+    --c-red: oklch(45.7% 0.15 2.8deg);
 
     /* Dark's reasoning inverted: step AWAY from the ink, so lighter than the pane.
      * Red is capped by GAMUT rather than contrast — hue 2.8deg wants R past 1.0
      * above L 94%, where a lighter pink is silently gamut-mapped. */
     --c-diff-add-bg: oklch(98% 0.035 142.7deg);
     --c-diff-del-bg: oklch(94% 0.03 2.8deg);
-
-    /* Yellow needs lower L than its siblings to read as text on white. */
-    --c-yellow: oklch(47% 0.09 86.5deg);
+    --c-yellow: oklch(43.7% 0.09 86.5deg);
 
     /* Sized against light's own track, which the band has to read DARKER than —
      * see the dark declaration for the two sides the window is boxed in by. It is
-     * NARROWER here: light's fills are all mid-dark, so --c-red is the quietest at
-     * 4.086:1 against a near-white track and the whole window is L 52-56%. The two
-     * themes' windows are adjacent and do NOT overlap, which is why this cannot
-     * collapse into one value. 3.46:1 vs that track, 4.85:1 vs the page, 0.1217 in
-     * OKLab from the nearest fill stroke. */
+     * NARROWER here: light's fills are all mid-dark, so the quietest of them,
+     * --c-green at 5.372:1 against a near-white track, is the ceiling (it was
+     * --c-red at 4.086:1 and a window of L 52-56% before the ink ramp moved every
+     * light status ink down, which only widened it). The two themes' windows are
+     * adjacent and do NOT overlap, which is why this cannot collapse into one
+     * value. 3.46:1 vs that track, 4.85:1 vs the page, 0.1217 in OKLab from the
+     * nearest fill stroke. */
     --c-context-wedge: oklch(54% 0.01 284.1deg);
 
     /* At the dark block's hues exactly — only L and C move, because dark's four
@@ -507,11 +675,14 @@
     --c-dot-input: oklch(52% 0.105 95deg);
     --c-dot-done: oklch(50% 0.12 150deg);
     --c-dot-failed: oklch(55% 0.215 27.3deg);
-    --c-blue: oklch(48% 0.13 259.9deg);
-    --c-teal: oklch(47% 0.09 168.3deg);
-    --c-danger: oklch(50% 0.14 25deg);
-    --c-warning: oklch(52% 0.1 80deg);
-    --c-link: oklch(45% 0.12 277.3deg);
+    --c-blue: oklch(44% 0.13 259.9deg);
+
+    /* Teal and warning are the two light inks whose chroma the gamut clipped on
+     * the way down (0.09 -> 0.086, 0.1 -> 0.091). */
+    --c-teal: oklch(42.6% 0.086 168.3deg);
+    --c-danger: oklch(45.4% 0.14 25deg);
+    --c-warning: oklch(43.9% 0.091 80deg);
+    --c-link: oklch(44.5% 0.12 277.3deg);
     --c-hl-string: oklch(42% 0.12 145deg);
     --c-hl-number: oklch(44% 0.1 60deg);
     --c-term-bg: oklch(98% 0.005 283deg);

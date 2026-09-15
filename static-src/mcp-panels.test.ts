@@ -64,6 +64,7 @@ vi.mock("./actions/mcp.js", () => ({
   // these, so no path under test changes behavior.
   MCP_API: undefined,
   validationFieldsOf: undefined,
+  registryFailureOf: undefined,
   saveServer: { dispatch: async () => ({}) },
   importServers: { dispatch: async () => ({}) },
   searchRegistry: { cancel: () => undefined },

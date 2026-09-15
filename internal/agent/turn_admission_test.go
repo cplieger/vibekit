@@ -41,7 +41,7 @@ func setCancelGrace(t *testing.T, d time.Duration) {
 
 func seedChat(t *testing.T, cs *fakeChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := cs.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if _, err := cs.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 }
@@ -308,7 +308,7 @@ func TestPromptTurn_MeteringAndModelStampAtStartTurn(t *testing.T) {
 	<-entered
 	// Spend lands while the spawn is still in flight — BEFORE StartTurn. A
 	// baseline stamped at admission would charge it to this turn.
-	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
+	if _, err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Usage.Credits = 5
 		c.Usage.HasRealData = true
 		return true

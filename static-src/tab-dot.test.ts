@@ -45,6 +45,7 @@ import {
   applyLatch,
   outcomeLatch,
   relatchTurnVerdict,
+  runStatusFor,
   get,
 } from "./store.js";
 import type {
@@ -56,6 +57,7 @@ import type {
 } from "./types.js";
 import type { TurnOutcome } from "./wire/types.gen.js";
 import type { TabDotStatus } from "./tab-view.js";
+import type { ClassifiedRunStatus } from "./run-status.js";
 
 function session(over: Partial<Session> = {}): Session {
   return {
@@ -200,6 +202,8 @@ vi.mock("./api-client.js", () =>
       // confirmation reads it, and that module is in this graph. No case here
       // resolves an unknown chat id.
       apiGetTypedOrError: vi.fn(),
+      // Reached through tabs.ts -> files-shared.ts; no case here lists a directory.
+      apiGet: vi.fn(),
     };
   }),
 );
@@ -700,24 +704,33 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   const tabs = loadCSS("12-tabs.css");
   const dot = '.tab-status-dot[data-status="working"]';
 
-  it("carries the beat on its overlay and not on the disc", () => {
-    // The beat is the overlay's OWN animation, created only while `data-status` is
-    // working, so an idle strip runs none — the shared `:root` clock it replaced
-    // cost a whole-document style invalidation every frame forever. Phase still
-    // agrees across dots because the delay comes off one origin (`beat-phase.ts`).
-    expect(/animation:/.test(ruleContaining(tabs, dot, "top").body)).toBe(false);
-    const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(glow.body).toContain("vk-dot-beat");
-    expect(glow.body).toContain("var(--beat-phase, 0ms)");
+  it("carries the beat on the disc itself, with no overlay to carry it", () => {
+    // The disc animates its OWN opacity, created only while `data-status` is working,
+    // so an idle strip runs none — the shared `:root` clock this replaced cost a
+    // whole-document style invalidation every frame forever. Phase still agrees
+    // across dots because the delay comes off one origin (`beat-phase.ts`).
+    const disc = ruleContaining(tabs, dot, "top");
+    expect(disc.body).toContain("vk-dot-beat");
+    expect(disc.body).toContain("var(--beat-phase, 0ms)");
+    // And the overlay is GONE rather than merely unanimated. Anchored at the start of
+    // a line so it cannot match the run row's own `::before`, whose selector carries
+    // this one as a descendant — the substring is present there and means the
+    // opposite thing.
+    expect(tabs).not.toMatch(/^\.tab-status-dot\[data-status="working"\]::before/mu);
   });
 
-  it("removes the beat overlay entirely under reduced motion", () => {
-    // `content: none` rather than a reset of its opacity. Stopping the clock
-    // leaves `--vk-beat` at its registered initial 0, so the overlay would be
-    // invisible — but that is a property of the initial value, and a future
-    // non-zero resting amplitude would paint a permanent bright ring over the
-    // donut. Deleting the pseudo makes it independent of the clock's rest state.
-    const reduced = ruleContaining(tabs, `${dot}::before`, "prefers-reduced-motion");
+  it("needs no reduced-motion arm for the disc, because the beat rests visible", () => {
+    // 40-a11y.css runs the animation once for 0.01ms and `vk-dot-beat` leaves
+    // `from`/`to` implicit, so the disc rests at its own opacity — 1 — and the donut
+    // below is the whole degradation. What DOES need removing there is the run row's
+    // overlay, and it is removed with the other two square marks rather than by a
+    // disc-scoped arm, because it is one of them.
+    expect(tabs).not.toMatch(/^ {2}\.tab-status-dot\[data-status="working"\]::before/mu);
+    const reduced = ruleContaining(
+      tabs,
+      '.tab[data-kind="run"] .tab-status-dot[data-status="working"]::before',
+      "prefers-reduced-motion",
+    );
     expect(/content:\s*none/.test(reduced.body)).toBe(true);
   });
 
@@ -862,6 +875,10 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     // exempt this pair from the non-colour-channel check is gone, so hue alone
     // would be a WCAG 1.4.1 failure. `input` is solid (a turn frozen mid-flight),
     // `waiting` is hollow (its turn is over).
+    //
+    // These rules serve a CHAT row, which is the population that reasoning is about.
+    // On a RUN row the same two states are both rings and BAND carries them instead,
+    // because fill is spent there on whether the run has ended (4e).
     const waiting = ruleContaining(tabs, '.tab-status-dot[data-status="waiting"]', "top");
     const input = ruleContaining(tabs, '.tab-status-dot[data-status="input"]', "top");
     expect(waiting.body).toContain("background: transparent");
@@ -882,15 +899,17 @@ describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
     // from the reader; the workflow mark's own `waiting`/`input` pair joined instead,
     // which is agreement with the grammar rather than a loan against it — the marker
     // still means exactly one thing, now across two marks.
-    // The prelude is capture group 1 and the pattern makes it mandatory, so the
-    // `= ""` default never applies; it is there so a later edit to the pattern
-    // shows up as an empty selector in the assertion below rather than a throw.
-    const ringed = [...tabs.matchAll(/([^{}]*)\{([^{}]*box-shadow: 0 0 0 2px[^{}]*)\}/g)].map(
-      ([, prelude = ""]) => prelude.trim().split("\n").pop()?.trim(),
-    );
-    expect(ringed.sort()).toEqual([
-      '.tab-run-dot[data-status="input"]',
-      '.tab-run-dot[data-status="waiting"]',
+    // Read through `allRules` rather than a prelude regex, so each rule is named by
+    // its WHOLE selector list: the mark's two wants-you rules are shared with the
+    // composer band's glyph now, and a rule that gains a consumer has to show it
+    // here rather than hiding behind whichever member happens to be written last.
+    const ringed = allRules(tabs)
+      .filter((r) => /box-shadow: 0 0 0 2px/.test(r.body))
+      .map((r) => r.selector.replace(/\s+/gu, " "))
+      .sort();
+    expect(ringed).toEqual([
+      '.tab-run-dot[data-status="input"], .run-bar-glyph[data-status="input"]',
+      '.tab-run-dot[data-status="waiting"], .run-bar-glyph[data-status="waiting"]',
       '.tab-status-dot[data-status="input"]',
       '.tab-status-dot[data-status="waiting"]',
     ]);
@@ -933,14 +952,26 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
    *  wherever two states differ on it alone. */
   const BAND_RATIO_FLOOR = 2;
 
-  /** The band a state's own rule paints, in px. `working` writes it through
-   *  --run-band because the beat's mask has to read the same number; every other
-   *  state writes it inline, so both spellings resolve here. */
+  /** The mark's shared LOOK rule: the box, the silhouette, the band's style and the
+   *  default ink. Keyed on the BAR's class rather than the tab's, because
+   *  `.tab-run-dot` is a member of two top-level rules now — this one, which the
+   *  composer band's live-run glyph shares, and the tab row's own tuck-and-spawn,
+   *  which is layout the bar has no use for. */
+  function lookRule(): string {
+    return ruleContaining(tabs, ".run-bar-glyph", "top").body;
+  }
+
+  /** The band a state's own rule paints, in px, in whichever of the three spellings
+   *  that rule uses: --run-band when the beat's mask has to read the same number,
+   *  `border-width` when a base rule already supplies the style, and the `border`
+   *  shorthand when it does not. Both marks answer, so a run row's own ring is
+   *  measurable against the mark's with one reader. */
   function bandOf(selector: string, scope = "top"): number {
     const body = ruleContaining(tabs, selector, scope).body;
-    const hit = /border-width:\s*var\(--run-band\)/.test(body)
-      ? /--run-band:\s*([\d.]+)(px|rem)/.exec(body)
-      : /border-width:\s*([\d.]+)(px|rem)/.exec(body);
+    const hit =
+      /--run-band:\s*([\d.]+)(px|rem)/.exec(body) ??
+      /border-width:\s*([\d.]+)(px|rem)/.exec(body) ??
+      /border:\s*([\d.]+)(px|rem)/.exec(body);
     expect(hit, `${selector} must declare a band width; got: ${body.trim()}`).not.toBeNull();
     const n = Number(hit?.[1]);
     return hit?.[2] === "rem" ? n * 16 : n;
@@ -974,9 +1005,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     }
     // Every state's edge reads the one property, which is what lets
     // 70-selection.css keep saying nothing about either mark.
-    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
-      "border: 0 solid var(--dot-color)",
-    );
+    expect(lookRule()).toContain("border: 0 solid var(--dot-color)");
   });
 
   it("defaults its ink to the quiet one, not to the state that means work", () => {
@@ -984,19 +1013,20 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     // it forgets its own ink. Defaulting to --c-dot-working makes that omission
     // claim a run is executing; the dot's own base defaults to idle, which is the
     // quieter failure and the one to match.
-    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
-      "--dot-color: var(--c-dot-idle)",
-    );
+    expect(lookRule()).toContain("--dot-color: var(--c-dot-idle)");
   });
 
   it("declares every band in one unit, so the relation survives a root font size", () => {
     // A --run-band in rem beside 1.5px/2px literals reads as the same ladder at
     // 16px and inverts at 20px, where 0.125rem is 2.5px. px throughout, like the
     // activity dot's own bands above.
-    // File-wide, which is safe because the mark is the only thing in it that
-    // declares `border-width` at all — the dot writes its band through the `border`
-    // shorthand. Four: the three states plus the reduced-motion arm.
-    const bands = [...tabs.matchAll(/(?:border-width|--run-band):\s*([\d.]+)(px|rem|em)/g)];
+    // File-wide and over every SPELLING of a band, because there are three: the
+    // `border` shorthand (a state whose base rule has no border-style to inherit),
+    // `border-width` (one that does), and --run-band (one whose beat mask has to read
+    // the same number). The mark's own four are the three states plus its
+    // reduced-motion arm; the run row's rings are in here too, and a rem among any of
+    // them is what this rejects.
+    const bands = [...tabs.matchAll(/(?:border|border-width|--run-band):\s*([\d.]+)(px|rem|em)/g)];
     expect(bands.length).toBeGreaterThanOrEqual(RUN_STATES.length + 1);
     expect([...new Set(bands.map(([, , unit]) => unit))]).toEqual(["px"]);
   });
@@ -1107,6 +1137,46 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     expect(heavy * 2).toBeLessThan(size);
   });
 
+  it("hands a run's own row the whole band ladder, number for number", () => {
+    // The parity claim on the one axis a render cannot check, and that is why it is
+    // here rather than in 4e: MEASURED in this suite's own browser, Chromium reports
+    // `border-width: 1.5px` as "1px" at dpr 1, 2 and 3 alike, so the dot's declared
+    // hairline and the mark's 1px paint identically and a computed-style comparison
+    // passes whichever number the source holds. What taking the mark's numbers buys
+    // for certain is that the DECLARED ladder is the painted one, so the 2:1 floor
+    // below holds by construction instead of by an engine's snapping.
+    for (const state of RUN_STATES) {
+      expect(
+        bandOf(`.tab[data-kind="run"] .tab-status-dot[data-status="${state}"]`),
+        `${state} band`,
+      ).toBe(bandOf(`.tab-run-dot[data-status="${state}"]`));
+    }
+  });
+
+  it("hands a run's own row the same still band, not a lighter one", () => {
+    // The two rings report ONE run, so a reader on this preference may not get a 2px
+    // ring under a 3px one. Source rather than render, because the test page cannot
+    // emulate the query; 4e measures the pair with motion available.
+    const heavy = bandOf('.tab-run-dot[data-status="working"]', "prefers-reduced-motion");
+    const onRunRow = bandOf(
+      '.tab[data-kind="run"] .tab-status-dot[data-status="working"]',
+      "prefers-reduced-motion",
+    );
+    expect(onRunRow).toBe(heavy);
+    // Its two siblings need no arm at all, and that is the claim worth pinning here:
+    // both are STILL with motion available, so stopping the clock takes nothing from
+    // them, and the 1px/2px ladder they separate on is the one below.
+    for (const state of ["waiting", "input"] as const) {
+      expect(() =>
+        ruleContaining(
+          tabs,
+          `.tab[data-kind="run"] .tab-status-dot[data-status="${state}"]`,
+          "prefers-reduced-motion",
+        ),
+      ).toThrow();
+    }
+  });
+
   it("keeps the two marks separable by SILHOUETTE, in every state", () => {
     // THE CROSS-MARK QUESTION, and the silhouette is what answers it once rather
     // than per state. The pair that forces it is the reduced-motion one: the dot's
@@ -1115,9 +1185,7 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     // apart at 2:1 — under 1.1px, which collides with `waiting`, or over 4.4px,
     // which closes the hole at this diameter. Neither exists, so the shape does the
     // work and the bands are free to separate the mark's own three states.
-    expect(ruleContaining(tabs, ".tab-run-dot", "top").body).toContain(
-      "border-radius: var(--dot-radius-square)",
-    );
+    expect(lookRule()).toContain("border-radius: var(--dot-radius-square)");
     // The dot is the circle, in every state it paints one — which is what the
     // square is being told apart FROM.
     expect(ruleContaining(tabs, ".tab-status-dot", "top").body).toContain("border-radius: 50%");
@@ -1125,10 +1193,8 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     // two marks report one workflow run, so two spellings of the divisor would be
     // two things that can drift — at render time (4e measures that) and in source.
     expect(
-      ruleContaining(
-        tabs,
-        '.tab-child[data-kind="run"] .tab-status-dot:not([data-status="failed"])',
-      ).body,
+      ruleContaining(tabs, '.tab[data-kind="run"] .tab-status-dot:not([data-status="failed"])')
+        .body,
     ).toContain("border-radius: var(--dot-radius-square)");
     // A quarter of the diameter, so the flat sides are half of it: enough silhouette
     // to read at 8px, and bounded well under the half that would make it a circle
@@ -1176,6 +1242,51 @@ describe("the workflow mark is a ring, and never the dot's disc", () => {
     // And the mark's own reduced-motion substitution, which is NOT the dot's: it is
     // hollow already, so it has no fill left to trade for the lost motion.
     expect(cssContrastScript).toContain("RUN_REDUCED_MOTION_SUBSTITUTION = {");
+  });
+
+  it("gates a run row's WHOLE vocabulary, transcribed from the producer", () => {
+    // `RUN_ROW_MEMBERS` is the run row's 1.4.1 population, and it is a hand-written
+    // list in another language — so the one thing it can be wrong about is MEMBERSHIP.
+    // A state the producer can paint and this list omits is a state no pair is ever
+    // checked against, and the sweep reports PASS over a population that is not the
+    // row. This is the transcription check for it.
+    //
+    // The producer is `store.ts runStatusFor`, driven over its whole input space
+    // rather than trusted to a second list here: `ALL_STATUSES` is a Record keyed by
+    // `ClassifiedRunStatus`, so a member added to the wire enum fails THIS type check
+    // rather than quietly shrinking the sweep. `""` is excluded because it means "no
+    // state to show" — a reserved empty slot paints no mark, so it has nothing to be
+    // confusable with.
+    const ALL_STATUSES: Record<ClassifiedRunStatus, true> = {
+      running: true,
+      paused: true,
+      completed: true,
+      failed: true,
+      aborted: true,
+      cancelled: true,
+      unknown: true,
+    };
+    const painted = new Set<string>();
+    for (const status of [undefined, ...(Object.keys(ALL_STATUSES) as ClassifiedRunStatus[])]) {
+      for (const ask of [false, true]) {
+        for (const pause of ["", "need_input"] as const) {
+          const s = runStatusFor(status, ask, pause);
+          if (s !== "") {
+            painted.add(s);
+          }
+        }
+      }
+    }
+
+    const members = /RUN_ROW_MEMBERS = \[([^\]]*)\]/.exec(cssContrastScript)?.[1];
+    expect(members, "RUN_ROW_MEMBERS is not declared").toBeDefined();
+    // Each entry is `<element>:<state>` — the element half says which table the
+    // channel tuple comes from and is deliberately not part of this comparison, which
+    // is about the STATE vocabulary.
+    const gated = new Set(
+      [...(members ?? "").matchAll(/"(?:dot|run):(\w+)"/g)].map((m) => m[1] ?? ""),
+    );
+    expect([...gated].sort()).toEqual([...painted].sort());
   });
 });
 
@@ -1278,7 +1389,7 @@ describe("the ring is painted at the size of the disc beside it", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4e. The same silhouette on a RUN SUB-TAB's own activity dot.
+// 4e. The same MARK on a RUN SUB-TAB's own activity dot.
 //
 // A run's row carries NO `.tab-run-dot` — `createTabEl` appends one for the chat
 // kind only — so the square that means "a workflow run" had to reach the one mark
@@ -1287,6 +1398,12 @@ describe("the ring is painted at the size of the disc beside it", () => {
 // contests the base `border-radius: 50%` AND outranks the `failed` diamond's own
 // corner, and both silhouettes resolve one shared token. So it is measured off
 // real boxes with the bundle mounted, the way 4d measures the mark's.
+//
+// The SILHOUETTE was the first half and the TREATMENT is the second: all three
+// states the mark has are the mark's here, fill and band and beat included, because
+// the two elements report one run and the strip may not answer with two looks. The
+// two OUTCOMES stay the dot's, which is what re-spends the channels on this row
+// rather than losing one — see the two cases at the end of this section.
 // ---------------------------------------------------------------------------
 
 describe("a run sub-tab's dot takes the workflow mark's square", () => {
@@ -1379,6 +1496,143 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
     expect(Math.abs(cornerPx(dotOf(rowOf(id))) - cornerPx(mark as HTMLElement))).toBeLessThan(0.5);
   });
 
+  it("paints every live state exactly as the mark on its parent's row does", async () => {
+    // THE WHOLE CONVERGENCE, state by state, and the reported defect is one of its
+    // three rows: the square was there and `working` was FILLED, so a solid violet
+    // square meaning "a conversation is mid-turn" sat one row under a hollow violet
+    // ring meaning the run was going. `input` was the same defect one state over,
+    // and `waiting` differed on band (the dot's 1.5px hairline against the mark's
+    // 1px). Fill, band, halo and ink are all channels in this file, so a mark that
+    // answers any of them differently is the strip contradicting itself about ONE run.
+    //
+    // Property by property rather than "is it hollow", because hollow alone passes on
+    // a ring of the wrong weight, the wrong hue or the wrong corner. `transition` is
+    // deliberately not compared: the mark SPAWNS into its row when a run starts and
+    // the dot does not, which is a lifecycle difference rather than a look.
+    const { setTabStatus, setTabRunStatus } = await import("./tabs.js");
+    const { id, parent } = await runSubTab();
+
+    for (const state of ["working", "waiting", "input"] as const) {
+      setTabStatus(id, state);
+      // The mark takes no box without a state of its own, and its tally is what the
+      // announced phrase reads — one run in the state under test.
+      setTabRunStatus(parent, state, {
+        total: 1,
+        working: state === "working" ? 1 : 0,
+        waiting: state === "waiting" ? 1 : 0,
+        input: state === "input" ? 1 : 0,
+      });
+      const dot = dotOf(rowOf(id));
+      const mark = rowOf(parent).querySelector<HTMLElement>(".tab-run-dot");
+      expect(mark, "a chat row carries the workflow mark").not.toBeNull();
+
+      const ring = getComputedStyle(dot);
+      const twin = getComputedStyle(mark as HTMLElement);
+      // A RING in all three: the ink is in the band, and no fill is left to read as
+      // the dot's disc.
+      expect(ring.backgroundColor, `${state} fill`).toBe("rgba(0, 0, 0, 0)");
+      expect(ring.backgroundImage, `${state} fill`).toBe("none");
+      expect(Number.parseFloat(ring.borderTopWidth), `${state} band`).toBeGreaterThan(0);
+
+      for (const prop of [
+        "backgroundColor",
+        "backgroundImage",
+        "borderTopWidth",
+        "borderTopStyle",
+        "borderTopColor",
+        "borderTopLeftRadius",
+        "boxShadow",
+      ] as const) {
+        expect(ring[prop], `${state} ${prop}`).toBe(twin[prop]);
+      }
+      // The BOX too, so the band paints inside the disc's own footprint.
+      expect(dot.getBoundingClientRect().width, `${state} size`).toBeCloseTo(
+        (mark as HTMLElement).getBoundingClientRect().width,
+        2,
+      );
+    }
+  });
+
+  it("keeps the two wants-you states apart on band, at the exec column's ratio", async () => {
+    // The cost of converging `input`: it was the one state fill separated from
+    // `waiting` on this row, and both are hollow now, so BAND is the whole separator
+    // and the RATIO is the assertion rather than the inequality. Taking the mark's
+    // 1px/2px is what buys 2:1; keeping the dot's 1.5px hairline under a 2px ring
+    // would have been 1.33:1, a third of a pixel of ink at 8px.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id } = await runSubTab();
+    const dot = dotOf(rowOf(id));
+
+    setTabStatus(id, "waiting");
+    const hairline = Number.parseFloat(getComputedStyle(dot).borderTopWidth);
+    setTabStatus(id, "input");
+    const heavy = Number.parseFloat(getComputedStyle(dot).borderTopWidth);
+    expect(hairline).toBeGreaterThan(0);
+    expect(heavy / hairline).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the beat, and masks it off the ring's hole", async () => {
+    // The motion is the SQUARE MARKS' shared overlay rule, which this row's selector
+    // joins — a chat row's disc animates itself and carries no pseudo at all, so
+    // there is nothing left here to inherit. The MASK is what a ring needs and a disc
+    // does not: over a transparent hole the beat's bright core has all the headroom it
+    // lacks over a disc, so at the peak an unmasked core would fill the hole and
+    // paint the very disc this replaced.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id, parent } = await runSubTab();
+    setTabStatus(id, "working");
+    setTabStatus(parent, "working");
+
+    const glow = getComputedStyle(dotOf(rowOf(id)), "::before");
+    expect(glow.content).toBe('""');
+    expect(glow.animationName).toBe("vk-dot-beat");
+    expect(glow.maskImage).toContain("radial-gradient");
+
+    // The launching chat's own dot is the control, in the same state: a solid disc
+    // that beats on ITSELF and builds no overlay, because it has no hole to protect
+    // and nothing about it should vary with pixel density.
+    const chatDot = dotOf(rowOf(parent));
+    expect(getComputedStyle(chatDot).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(getComputedStyle(chatDot).animationName).toBe("vk-dot-beat");
+    expect(getComputedStyle(chatDot, "::before").content).toBe("none");
+  });
+
+  it("spends fill on finished-or-not, which is where the convergence stops", async () => {
+    // The channels are RE-SPENT on this row rather than reduced, and this is the
+    // trade: `done` and `failed` are states the mark has no vocabulary for at all
+    // (it withdraws when a run ends), so they keep the dot's disc and fill separates
+    // the three live states from the two settled ones. A chat row spends fill on the
+    // wants-you pair instead, because it has no outcome to tell them from; each row
+    // is internally consistent, which is the population WCAG 1.4.1 is judged over.
+    const { setTabStatus } = await import("./tabs.js");
+    const { id } = await runSubTab();
+    const dot = dotOf(rowOf(id));
+
+    for (const state of ["done", "failed"] as const) {
+      setTabStatus(id, state);
+      expect(getComputedStyle(dot).backgroundColor, `${state} lost its fill`).not.toBe(
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+
+    for (const state of ["working", "waiting", "input"] as const) {
+      setTabStatus(id, state);
+      expect(getComputedStyle(dot).backgroundColor, `${state} is not a ring`).toBe(
+        "rgba(0, 0, 0, 0)",
+      );
+    }
+
+    // And the halo goes on meaning exactly one thing across both rows: a person is
+    // owed something. `working` is the live state that needs nothing, so it carries
+    // none, which is what separates it from the two that do.
+    for (const state of ["waiting", "input"] as const) {
+      setTabStatus(id, state);
+      expect(getComputedStyle(dot).boxShadow, `${state} lost its halo`).not.toBe("none");
+    }
+    setTabStatus(id, "working");
+    expect(getComputedStyle(dot).boxShadow).toBe("none");
+  });
+
   it("leaves a subagent sub-tab's dot a full disc", async () => {
     // The untouched-kind control. Both kinds nest under a chat and both write
     // through the same reserved slot, so the KIND is the whole of what separates
@@ -1458,11 +1712,16 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
     expect(cornerPx(dot)).toBeLessThan(square);
   });
 
-  it("leaves a TOP-LEVEL run tab's dot a circle", async () => {
-    // The scope decision, pinned so widening it later is a deliberate edit: a
-    // parentless run (manual or scheduled) opens a top-level row, and the rule is
-    // keyed on `.tab-child`, so that row keeps the circle. By subject it should be a
-    // square too — Q1 in the plan, raised rather than taken here.
+  it("gives a PARENTLESS run's row the same mark", async () => {
+    // The scope, and it is the KIND rather than the nesting: a manual or scheduled
+    // run opens a top-level row, and it reports the same subject through the same
+    // element, so the silhouette may not depend on whether the run happens to have a
+    // launching chat. Its SLOT differs (that row leads with its kind glyph and
+    // carries the dot in the trailing one) and its treatment does not.
+    //
+    // This reverses what the rule used to do — it was keyed on `.tab-child`, so such
+    // a row kept the dot's circle — and the earlier note said the square was right by
+    // subject and raised it rather than taking it.
     const { setTabStatus } = await import("./tabs.js");
     const id = await openSubject("run", "wf_2");
     await paint();
@@ -1471,7 +1730,55 @@ describe("a run sub-tab's dot takes the workflow mark's square", () => {
     const dot = dotOf(rowOf(id));
     const size = dot.getBoundingClientRect().width;
     expect(size).toBeGreaterThan(0);
-    expect(cornerPx(dot)).toBeCloseTo(size / 2, 1);
+    // A square, not the disc's half-box circle.
+    expect(cornerPx(dot)).toBeGreaterThan(0);
+    expect(cornerPx(dot)).toBeLessThan(size / 2);
+    // And a RING, so the whole treatment travels rather than just the corner.
+    expect(getComputedStyle(dot).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(Number.parseFloat(getComputedStyle(dot).borderTopWidth)).toBeGreaterThan(0);
+  });
+
+  it("holds a PARENTLESS row's trailing slot when the run fails", async () => {
+    // The sub-tab case's twin, one position over, and the neighbours are SWAPPED:
+    // there the dot leads and the name is what would move, here the dot is trailing
+    // and `.tab-name` is the flex grower — so the name absorbs the 2px the smaller
+    // diamond frees and the MARK is what steps sideways. Measured before the fix:
+    // the mark's centre moved 1px right while the × stayed put, at the one moment a
+    // reader is watching the row.
+    //
+    // `done` is the departure state rather than `working`, because both are settled
+    // outcomes at --dot-size and the flip between them is the one this row makes on
+    // its own; `failed` is the only state in the whole vocabulary with a different
+    // box.
+    const { setTabStatus } = await import("./tabs.js");
+    const id = await openSubject("run", "wf_slot");
+    await paint();
+    const row = rowOf(id);
+    const dot = dotOf(row);
+    const name = row.querySelector<HTMLElement>(".tab-name");
+    if (name === null) {
+      throw new Error("no name element");
+    }
+    const centre = (): number => {
+      const r = dot.getBoundingClientRect();
+      return r.left + r.width / 2 - row.getBoundingClientRect().left;
+    };
+
+    setTabStatus(id, "done");
+    const disc = centre();
+    const nameWidth = name.getBoundingClientRect().width;
+    // The LAYOUT box is what the correction is derived from and what changes: a
+    // rotated square's client rect is its diagonal, so the rect would read as the
+    // mark having GROWN when its box shrank.
+    const discBox = dot.offsetWidth;
+
+    setTabStatus(id, "failed");
+    expect(
+      dot.offsetWidth,
+      "failed must be the smaller box, or there is nothing to correct",
+    ).toBeLessThan(discBox);
+    expect(Math.abs(centre() - disc), "failed moved the mark").toBeLessThan(0.5);
+    expect(name.getBoundingClientRect().width, "failed resized the name").toBeCloseTo(nameWidth, 1);
   });
 });
 
@@ -1904,8 +2211,8 @@ describe("a reconnect does not erase what only the client knows", () => {
   });
 
   // A mid-turn reconnect races two independent doors: `loadList`'s header fetch
-  // (which seeds from the header) and the SSE connect replay's one `turn_state`
-  // per busy chat (which sets `thinking`). Nothing orders them, so BOTH orders
+  // (which seeds from the header) and the connect handshake's `busy_chats`
+  // (which sets `thinking`). Nothing orders them, so BOTH orders
   // have to converge on `working` — otherwise a chat whose turn is still running
   // paints a settled dot until the turn ends.
   //
@@ -1916,7 +2223,7 @@ describe("a reconnect does not erase what only the client knows", () => {
   it("converges on working when the replay sets thinking BEFORE the header seed", async () => {
     const { loadList } = await import("./store-load.js");
     setSessions([session({ id: "c1" })]);
-    setThinking("c1", true); // the replay's turn_state, first
+    setThinking("c1", true); // the handshake's busy_chats, first
     mockApiGetTyped.mockResolvedValue({ chats: [outcomeHeader("c1", "completed")] });
 
     await loadList();
@@ -1934,7 +2241,7 @@ describe("a reconnect does not erase what only the client knows", () => {
     // The seed legitimately landed: nothing had said this chat was busy yet.
     expect(get("c1")?.turn_done).toBe(true);
 
-    setThinking("c1", true); // the replay's turn_state, second
+    setThinking("c1", true); // the handshake's busy_chats, second
     expect(tabStatusFor(get("c1"))).toBe("working");
     // And the stale verdict is GONE rather than merely outranked, so the dot
     // cannot snap back to `done` when this turn ends on some other outcome.
@@ -2858,16 +3165,17 @@ describe("the dot's motion uses the app's own easing vocabulary", () => {
     const base = loadCSS("03-base.css");
     expect(base).toContain("@keyframes vk-dot-beat");
     expect(base).not.toMatch(/animation:\s*vk-beat/u);
-    const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(glow.body).toContain("var(--dot-beat-dur) var(--ease-standard)");
-    expect(glow.body).not.toContain("ease-in-out");
+    const disc = ruleContaining(tabs, dot, "top");
+    expect(disc.body).toContain("var(--dot-beat-dur) var(--ease-standard)");
+    expect(disc.body).not.toContain("ease-in-out");
   });
 
   it("scales the beat down rather than flashing to full opacity", () => {
     // Every dot beating in unison at full amplitude trades a noisy strip for a
-    // throbbing one, which is not what "less visually present" asked for.
-    const glow = ruleContaining(tabs, `${dot}::before`, "top");
-    expect(glow.body).toContain("--beat-peak: 0.55");
+    // throbbing one, which is not what "less visually present" asked for. 0.45 is
+    // the sidebar transport dot's peak (10-shell-app.css) rather than a new number.
+    const disc = ruleContaining(tabs, dot, "top");
+    expect(disc.body).toContain("--beat-peak: 0.45");
   });
 
   it("resolves the token it names", () => {

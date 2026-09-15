@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/ssrf/v4"
@@ -114,10 +115,21 @@ type Service struct {
 	prefs         map[vibekit.PushKind]bool
 	keys          vapidKeys
 	vapidPriv     *ecdsa.PrivateKey
-	subject       string
-	dir           string
-	mu            sync.Mutex
-	healthy       bool
+	// presence is the send filter's input: a subscription whose profile reads
+	// present is receiving the event on its stream and is not pushed. nil sends
+	// to every subscription, which is the fail-open direction.
+	presence *Presence
+	// suppressed counts the subscriptions the filter skipped, per kind, for the
+	// test-only probe: a count that stays at zero while presence shows attended
+	// profiles means the tags are not matching.
+	suppressed map[vibekit.PushKind]*atomic.Uint64
+	subject    string
+	dir        string
+	// deferred is the held set of the deferred-send variant (deferred.go); empty
+	// for the life of the process while that switch is off.
+	deferred deferred
+	mu       sync.Mutex
+	healthy  bool
 	// keysGenerated records that loadKeys minted a replacement keypair, which is
 	// what makes every stored subscription undeliverable. loadSubs reads it to
 	// report that cost off the read it already performs. Unguarded on purpose: New
@@ -133,21 +145,33 @@ type saveRequest struct {
 	subs []vibekit.PushSubscription
 }
 
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithPresence wires the presence table the send filter reads. Absent, nothing is
+// filtered and every subscription is pushed.
+func WithPresence(p *Presence) Option {
+	return func(s *Service) { s.presence = p }
+}
+
 // New creates a Service, loads persisted subscriptions and preferences, and starts the write loop.
 // subject is the VAPID subject (mailto: or https: URI identifying the sender).
 //
 // ctx is the service's lifetime and is required — it is passed straight to
 // context.WithCancel, so a nil one is refused there, at the single construction
 // site, rather than defaulted into a service nothing can stop.
-func New(ctx context.Context, configDir, subject string) *Service {
+func New(ctx context.Context, configDir, subject string, opts ...Option) *Service {
 	ctx, cancel := context.WithCancel(ctx)
 	prefs := make(map[vibekit.PushKind]bool, len(kindRegistry))
+	suppressed := make(map[vibekit.PushKind]*atomic.Uint64, len(kindRegistry))
 	for _, kr := range kindRegistry {
 		prefs[kr.Kind] = kr.DefaultOn
+		suppressed[kr.Kind] = new(atomic.Uint64)
 	}
 	s := &Service{
 		subs:          make(map[string]vibekit.PushSubscription),
 		lastPush:      make(map[pushDebounceKey]time.Time),
+		suppressed:    suppressed,
 		subject:       subject,
 		dir:           configDir,
 		lifetime:      ctx,
@@ -156,6 +180,9 @@ func New(ctx context.Context, configDir, subject string) *Service {
 		saveCh:        make(chan saveRequest, 1),
 		writeLoopDone: make(chan struct{}),
 		healthy:       true,
+	}
+	for _, o := range opts {
+		o(s)
 	}
 	// isAllowedPushEndpoint is the primary gate (name-based vendor allowlist,
 	// https-only, no explicit ports); ssrf.SafeTransport is the IP-layer
@@ -200,6 +227,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 // loop went quiet.
 func (s *Service) Close() {
 	s.cancel()
+	s.deferred.stop()
 	<-s.writeLoopDone
 }
 
@@ -250,11 +278,13 @@ func (s *Service) HasSubscribers() bool {
 //
 // An EMPTY SettingsKey means the kind has no writable preference: it is a
 // floor, always DefaultOn. PushKindPermission is the one such kind — see the
-// "no notify_permission key" note in internal/settings/defaults.go.
+// "no notify_permission key" note in internal/settings/defaults.go. Every KEYED
+// entry takes its default from settings.Default*, so this table is a registry
+// rather than a second declaration of those values.
 var kindRegistry = []KindPref{
-	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
-	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
-	{vibekit.PushKindRunOutcome, settings.KeyNotifyRunOutcome, true},
+	{vibekit.PushKindAgentFinished, settings.KeyNotifyAgentFinished, settings.DefaultNotifyAgentFinished},
+	{vibekit.PushKindPRStatus, settings.KeyNotifyPRStatus, settings.DefaultNotifyPRStatus},
+	{vibekit.PushKindRunOutcome, settings.KeyNotifyRunOutcome, settings.DefaultNotifyRunOutcome},
 	{vibekit.PushKindPermission, "", true},
 }
 

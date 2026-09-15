@@ -75,7 +75,7 @@ func TestSettingsWrite_PUTCarriesOverAManagedKeyItOmits(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte(tc.body)))
 			rec := httptest.NewRecorder()
-			s.handleSettingsWrite(rec, req, path)
+			s.handleSettingsWrite(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("PUT /api/settings = %d, want %d", rec.Code, http.StatusOK)
@@ -102,5 +102,53 @@ func TestSettingsWrite_PUTCarriesOverAManagedKeyItOmits(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSettingsWrite_PUTCarriesOverTheEffortSeedMap is the same carry-over claim for
+// the one managed key whose value is an OBJECT, so it cannot ride the string table
+// above.
+//
+// The seed became server-written when CmdSetEffort took over the write, which is
+// what makes it managed: no PUT body carries it, so a replace would drop every
+// model's remembered tier at once and each chat would fall back to its model's
+// catalog default.
+func TestSettingsWrite_PUTCarriesOverTheEffortSeedMap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, settings.Filename)
+	persisted := `{"last_effort_by_model":{"claude-opus-5":"xhigh","claude-fable-5.1":"max"},"last_model":"old"}`
+	if err := os.WriteFile(path, []byte(persisted), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	s := &Server{agent: &fakeEngine{}, push: &testPush{}, configDir: dir}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte(`{"last_model":"new"}`)))
+	rec := httptest.NewRecorder()
+	s.handleSettingsWrite(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /api/settings = %d, want %d", rec.Code, http.StatusOK)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back %s: %v", path, err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	// last_model is not managed, so the PUT replaces it. Both directions in one
+	// test, or a handler carrying everything over would pass.
+	if got["last_model"] != "new" {
+		t.Errorf("after PUT, last_model = %v, want %q", got["last_model"], "new")
+	}
+	seed, ok := got[settings.KeyLastEffortByModel].(map[string]any)
+	if !ok {
+		t.Fatalf("after PUT, %s = %v, want the persisted map", settings.KeyLastEffortByModel, got[settings.KeyLastEffortByModel])
+	}
+	for model, want := range map[string]string{"claude-opus-5": "xhigh", "claude-fable-5.1": "max"} {
+		if seed[model] != want {
+			t.Errorf("after PUT, %s[%s] = %v, want %q", settings.KeyLastEffortByModel, model, seed[model], want)
+		}
 	}
 }

@@ -1,26 +1,11 @@
 // The site audit as an assertion, and the guard that keeps its list CLOSED.
 //
-// THE RULE CHANGED, and this file is what re-states it. It used to read "duration text
-// on the turn axis is NEVER painted at rest, and every reader reaches the same value
-// through the turn footer's ledger disclosure" — a rule the footer redesign overturned
-// (`.turn-elapsed`, 29-turns.css; user ruling, 2026-09-10). The rule now:
-//
-//   The TURN CARD's duration is painted unconditionally. The RAIL's copy is the one
-//   gesture-gated duration left, deliberately, because it answers a different read —
-//   every turn's time in one column, which no footer can, since a reader cannot see
-//   every footer at once — and because the card carries the value for every reader.
-//
-// So the sweep at the bottom is the durable half of this file: what keeps a NEW
-// duration-shaped slot from being hover-gated without a ruling is an enumeration plus
-// a scan that fails on a class nobody added to it. The rest-state cases the old rule
-// needed for sites 2 and 3 are GONE rather than inverted — `turn-elapsed-css.test.ts`
-// owns the footer's unconditional paint and its reserved box, and asserting the same
-// thing from both files is one fact with two owners.
-//
-// The rail's own cases are still measured TWICE: against the bundle as shipped, and
-// against one with the hover query stripped, which is what a device answering
-// `any-hover: none` computes. A test page cannot answer a query it does not match and
-// this provider exports no CDP seam, so dropping the blocks is the emulation.
+// The rule: a TURN CARD's duration is reachable with no gesture — always in WORDS in
+// its info panel, and in the footer's fact slot when the clock is the turn's LEAD
+// fact. The RAIL's copy is the one gesture-gated duration, because it answers a
+// different read: every turn's time in one column, which no footer can. So the sweep
+// at the bottom is this file's durable half — an enumeration plus a scan that fails on
+// a duration-shaped class nobody ruled on.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 import { manifestSheets, mountAppCSS } from "./__test-helpers__/css-rules.js";
@@ -34,11 +19,9 @@ vi.mock("./editor-openers.js", () => ({
   openFileGitDiff: undefined,
 }));
 
-const { buildTurnFooter, earnsTurnFooter } = await import("./fundamentals/turn-footer.js");
+const { buildTurnFooter } = await import("./fundamentals/turn-footer.js");
 
 const REVEAL_QUERY = "any-hover: hover";
-/** Four hours, the gap the clean-turn case discloses. */
-const GAP_MS = 14_400_000;
 
 let style: HTMLStyleElement;
 let host: HTMLElement;
@@ -107,15 +90,6 @@ function mountChatArea(px: number): HTMLElement {
   return area;
 }
 
-function mountSeam(): HTMLElement {
-  const seam = document.createElement("div");
-  seam.className = "rail-seam";
-  seam.setAttribute("role", "separator");
-  seam.setAttribute("aria-label", "2h pause between turn 1 and turn 2");
-  host.replaceChildren(seam);
-  return seam;
-}
-
 function mountMarkerTime(areaPx: number): HTMLElement {
   const area = mountChatArea(areaPx);
   const marker = document.createElement("button");
@@ -127,10 +101,6 @@ function mountMarkerTime(areaPx: number): HTMLElement {
   marker.appendChild(time);
   area.appendChild(marker);
   return time;
-}
-
-function pseudoContent(el: HTMLElement): string[] {
-  return ["::before", "::after"].map((p) => getComputedStyle(el, p).content);
 }
 
 describe("the reveal gate is live in this browser", () => {
@@ -151,23 +121,6 @@ describe("the reveal gate is live in this browser", () => {
   });
 });
 
-describe("site 1 — the rail's seam", () => {
-  it("paints no text, and none through a pseudo-element either", () => {
-    // The band's channel is its accessible name (`rail-labels.ts` seamLabel); the
-    // builder's side is pinned in turn-rail.test.ts, and this is the stylesheet's.
-    const seam = mountSeam();
-    expect(seam.textContent).toBe("");
-    expect(pseudoContent(seam).every((c) => c === "none" || c === "normal")).toBe(true);
-  });
-
-  it("paints none on a device with no hover either", async () => {
-    await withNoHoverCSS(() => {
-      const seam = mountSeam();
-      expect(pseudoContent(seam).every((c) => c === "none" || c === "normal")).toBe(true);
-    });
-  });
-});
-
 describe("site 4 — the marker's duration pill", () => {
   it("is invisible at rest where the gutter can hold it", () => {
     const time = mountMarkerTime(1200);
@@ -182,8 +135,9 @@ describe("site 4 — the marker's duration pill", () => {
 
   it("is not rendered at all on a device with no hover", async () => {
     // WITHHELD rather than shown, unlike the footer's copy: there is no gesture to
-    // reveal it with, and the turn card's own footer carries the value
-    // unconditionally on every device.
+    // reveal it with, and the turn card's own info panel carries the value on every
+    // device — the PANEL rather than the row, because the row paints one fact and a
+    // turn that did anything leads with that instead of its clock.
     await withNoHoverCSS(() => {
       expect(getComputedStyle(mountMarkerTime(1200)).display).toBe("none");
     });
@@ -192,34 +146,10 @@ describe("site 4 — the marker's duration pill", () => {
 
 describe("the durable channel", () => {
   // What makes site 4's withholding acceptable: the value it hides is reachable by
-  // pointer, keyboard, touch and assistive technology on the turn card. Two halves —
-  // the ROW paints the duration with no gesture at all (`turn-elapsed-css.test.ts`
-  // measures that), and the info panel states the timings in words, which is the only
-  // path to the GAP.
-  it("gives a CLEAN turn with a gap a footer at all", () => {
-    // `earnsTurnFooter` is what decides the footer is BUILT, so dropping `sinceMs`
-    // from its disjunction leaves this turn with no panel — hence no keyboard or
-    // touch path to the gap, and `.rail-seam`'s aria-label as the only channel,
-    // which is AT-only.
-    expect(earnsTurnFooter({ sinceMs: GAP_MS })).toBe(true);
-  });
-
-  it("and that footer's info panel names the gap", () => {
-    const footer = buildTurnFooter({ sinceMs: GAP_MS });
-    const summary = footer.querySelector<HTMLButtonElement>(".turn-ledger-summary");
-    expect(summary?.disabled).toBe(false);
-    const labels = [...footer.querySelectorAll(".turn-info-row")].map((r) => r.textContent);
-    expect(labels).toContain("Gap before4h 0m");
-  });
-
-  it("omits the gap row when there is no predecessor in the window", () => {
-    // Absent is a different fact from a gap of zero, so the panel states nothing
-    // rather than claiming the turn followed its predecessor immediately.
-    const footer = buildTurnFooter({ elapsedMs: 12_000 });
-    const labels = [...footer.querySelectorAll(".turn-info-label")].map((r) => r.textContent);
-    expect(labels).not.toContain("Gap before");
-  });
-
+  // pointer, keyboard, touch and assistive technology on the turn card. The INFO
+  // PANEL is that channel and it is unconditional — the row's fact slot is not, since
+  // it paints one fact and only leads with the clock on a turn that did nothing else
+  // (`turn-fact-css.test.ts` measures the slot's own layout).
   it("carries a delegate's own duration in the delegate footer's panel", () => {
     // One shared builder, so the delegate footer gains the rows with no second
     // mechanism — which matters because a leaf delegate's head is a link, so a
@@ -238,14 +168,20 @@ const DURATION_SHAPED = /elapsed|duration|timings|dur|time|gap/iu;
 /** The audited list, CLOSED. Every member carries the row that rules on it, so adding a
  *  class here without a ruling is visibly the wrong move. */
 const RULED = new Map<string, string>([
-  // Sites 2 and 3 are one class in two footers, and both paint it UNCONDITIONALLY
-  // now. `turn-elapsed-css.test.ts` owns the rest-state and reserved-box assertions.
-  ["turn-elapsed", "sites 2 and 3 — painted at rest, no gesture"],
+  // Site 1 was the rail's dashed pause BAND, `.rail-seam`. The band went in 2026-09 and
+  // the pause REPORTING went with it — no rail clause, no footer row, no computation —
+  // so there is no selector and no duration left to rule on.
+  // Sites 2 and 3 are the footer's fact slot, `.turn-fact`, in two footers: painted at
+  // rest with no gesture, and not duration-shaped by name, so it needs no entry.
   // Site 4, the one gesture-gated duration left, and the reason is at the rule.
   ["rail-marker-time", "site 4 — hover or focus only, and only above 70rem"],
-  // Named OUT of scope: each is a property of a tool call, a run or a workflow step,
-  // and the reader opened that card to read exactly it.
-  ["tool-duration", "out of scope — a tool call's own duration"],
+  // A tool call's own duration was site 5 and is GONE: the label measured ACP
+  // create-frame to terminal-frame wall clock, printed only past a 1000ms floor so
+  // siblings disagreed about having one at all, and vanished on reload because
+  // nothing persisted the client's own clock. `duration_ms` still travels — the turn
+  // ledger and the delegate footer sum it — and no surface paints it per call.
+  // Named OUT of scope: each is a property of a run or a workflow step, and the
+  // reader opened that card to read exactly it.
   ["run-step-dur", "out of scope — the run card"],
   ["ev-dur", "out of scope — the exec view"],
   ["ev-d-dur", "out of scope — the exec view"],

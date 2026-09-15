@@ -15,8 +15,6 @@ import {
   get,
   liveTurnMessage,
   tabStatusFor,
-  isTruncatedSnapshot,
-  clearTruncatedSnapshots,
   setThinking,
   relatchTurnVerdict,
 } from "../store.js";
@@ -104,7 +102,7 @@ describe("message_appended", () => {
 // The persisted PROMPT row is the one frame that means "the server accepted a
 // prompt", and it is the only liveness signal a client that did NOT send it gets
 // for the gap before the first chunk. `thinking` is written by the sender's own
-// dispatch, and `turn_state` is connect-time synthesis, so a second tab, a phone
+// dispatch, and a reconnect carries no turn snapshot, so a second tab, a phone
 // or a background chat had nothing between this row landing and the reply
 // starting — and derived a terminal outcome for the whole window.
 // ---------------------------------------------------------------------------
@@ -165,7 +163,7 @@ describe("message_chunk", () => {
 // ---------------------------------------------------------------------------
 // Streaming evidence latches `thinking`. Before these doors existed the flag
 // was only set by this client's OWN sends (sendPromptTo, switchModel) and the
-// connect replay's turn_state — so an agent-initiated turn, a wire turn, or a
+// client's own sends — so an agent-initiated turn, a wire turn, or a
 // prompt sent from another device streamed into a chat whose tab dot sat idle
 // the whole time.
 // ---------------------------------------------------------------------------
@@ -277,28 +275,6 @@ describe("streaming evidence marks the turn live", () => {
     expect(liveTurnMessage("chat-1")).toBe("m1");
   });
 
-  // The connect replay. A step-driven turn's snapshot is the ONLY copy of that
-  // step's in-flight transcript (nothing persists it), so the event is emitted and
-  // marked rather than skipped: apply the message, do not claim the chat is working.
-  it("a workflow_step turn_state applies its message without latching thinking", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "step output" },
-      chunk_seq: 3,
-      workflow_step: true,
-    });
-    expect(get("chat-1")?.thinking).toBe(false);
-    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["m1"]);
-    expect(liveTurnMessage("chat-1")).toBe("m1");
-  });
-
-  it("an ordinary turn_state still latches thinking", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "the agent is working" },
-      chunk_seq: 3,
-    });
-    expect(get("chat-1")?.thinking).toBe(true);
-  });
-
   // The reported symptom, end to end: the launching chat's TAB DOT. Driven through
   // the real handlers rather than by handing `tabStatusFor` a built session, which
   // would pass with the attribution gates deleted. `tab-dot.test.ts` owns the
@@ -310,11 +286,6 @@ describe("streaming evidence marks the turn live", () => {
       delta: "the step wrote this",
       block_index: 0,
       agent_subtask_id: "wf:wf-1:root/step",
-    });
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "the step wrote this" },
-      chunk_seq: 1,
-      workflow_step: true,
     });
     expect(tabStatusFor(get("chat-1"))).not.toBe("working");
   });
@@ -374,7 +345,7 @@ describe("code_references", () => {
 describe("tool_call_update", () => {
   // The frame is a DELTA addressed by id, so every case here has to establish the
   // call with a `tool_call` create first: a delta has nothing to apply to, and
-  // the channel for a client that missed the beginning is `turn_state`.
+  // the channel for a client that missed the beginning is the transcript GET.
   function createCall(kind: string): void {
     fireSSE("tool_call", "chat-1", {
       message_id: "m1",
@@ -543,79 +514,5 @@ describe("tool_call_update", () => {
       status: "in_progress",
     });
     expect(mockMarkGitDirty).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The capped-snapshot marker's two SSE moments.
-//
-// The connect-time cap sends only the TAIL of a big in-flight turn, so a reader
-// shown that tail with nothing saying so reads a bounded payload as the whole
-// reply. `truncated` is a REQUIRED wire field for exactly that reason, and this
-// is its consumer.
-// ---------------------------------------------------------------------------
-describe("turn_state truncation marker", () => {
-  beforeEach(() => {
-    setSessions([makeSession("chat-1")]);
-    clearTruncatedSnapshots("chat-1");
-  });
-
-  it("a truncated turn_state records the marker for its message", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "…the tail of a big turn" },
-      chunk_seq: 400,
-      truncated: true,
-    });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
-    // The snapshot is still APPLIED: a bounded transcript is the point, not none.
-    expect(get("chat-1")?.messages.map((m) => m.id)).toEqual(["m1"]);
-  });
-
-  it("an untruncated turn_state records nothing", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "a short reply" },
-      chunk_seq: 2,
-      truncated: false,
-    });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-  });
-
-  // The HEAL. message_appended is the persist echo, so it carries the whole
-  // message and the note has nothing left to claim.
-  it("a later message_appended for the same id clears it", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "…the tail" },
-      chunk_seq: 400,
-      truncated: true,
-    });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
-
-    fireSSE("message_appended", "chat-1", {
-      id: "m1",
-      role: "assistant",
-      ts: 1,
-      content: "the whole reply, from the chat file",
-    });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(false);
-  });
-
-  // A workflow step's snapshot is capped like any other, and the two marks are
-  // orthogonal: `workflow_step` says whose turn it is, `truncated` says whether
-  // the payload is complete.
-  it("marks a truncated workflow-step snapshot too, without latching thinking", () => {
-    fireSSE("turn_state", "chat-1", {
-      message: { id: "m1", role: "assistant", ts: 0, content: "…the step's tail" },
-      chunk_seq: 400,
-      workflow_step: true,
-      truncated: true,
-    });
-    expect(isTruncatedSnapshot("chat-1", "m1")).toBe(true);
-    expect(get("chat-1")?.thinking).toBe(false);
-  });
-
-  // A bare busy signal withholds nothing, so there is no id to mark.
-  it("a turn_state with no message records nothing", () => {
-    fireSSE("turn_state", "chat-1", { chunk_seq: 0, truncated: false });
-    expect(get("chat-1")?.messages).toEqual([]);
   });
 });

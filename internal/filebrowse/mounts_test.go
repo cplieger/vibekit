@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestParseBrowseRoots(t *testing.T) {
@@ -190,10 +192,12 @@ func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 	}
 }
 
-// The upload default dir (defaultUploadDir, "/workspace/uploads") only works
-// when the workspace is granted; on a handler without it the upload is
-// refused, never silently redirected to whatever mount does exist.
-func TestHandleUpload_DefaultDirRequiresWorkspaceGrant(t *testing.T) {
+// The upload default dir (vibekit.DefaultUploadDir) only works when the uploads
+// directory is granted as a mount; on a handler without it the upload is
+// refused, never silently redirected to whatever mount does exist. This is why
+// composition grants it as a third standard mount rather than relying on the
+// per-upload MkdirAll, which runs INSIDE an already-matched mount.
+func TestHandleUpload_DefaultDirRequiresUploadsGrant(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -201,6 +205,6 @@ func TestHandleUpload_DefaultDirRequiresWorkspaceGrant(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != 403 {
-		t.Errorf("status = %d, want 403 (no /workspace grant)", rec.Code)
+		t.Errorf("status = %d, want 403 (no %s grant)", rec.Code, vibekit.DefaultUploadDir)
 	}
 }

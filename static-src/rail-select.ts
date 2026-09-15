@@ -15,24 +15,18 @@ const MARKER_CLEAR_PX = 4;
  *  third number, so the next render re-reads it. */
 export const MARKER_FALLBACK_PX = 24;
 
-/** The reader-position caret's height: the app's status-mark diameter (`--dot-size`),
- *  so it reads as a tab dot's class of mark rather than as a second marker. A
- *  constant rather than a tier field because the caret is `aria-hidden` and is not a
- *  hit target, so WCAG 2.5.8 does not reach it — what follows the tier is the marker
- *  box it is centred inside, which `railMetrics` reads. */
-export const HERE_PX = 8;
-
 /** The two pixel numbers the layout needs, both off the tier's own hit floor. */
 export interface RailMetrics {
-  /** One marker's box: 24px on a fine pointer, 44px on a coarse one. */
+  /** One marker's hit TARGET: 24px on a fine pointer, 44px on a coarse one. */
   markerPx: number;
   /** The minimum separation between two markers' tops. */
   pitchPx: number;
 }
 
 /** Read the tier's marker box off the track's computed style. `--hit-floor` rather
- *  than a constant because `.rail-marker` is sized from that same token, so a
- *  hard-coded pitch would place 44px targets 28px apart on a coarse pointer. */
+ *  than a constant because a marker's TARGET is sized from that same token, so a
+ *  hard-coded pitch would place 44px targets 28px apart on a coarse pointer. The target
+ *  and not the painted box, which is `--rail-mark` and 20px smaller under a finger. */
 export function railMetrics(track: HTMLElement): RailMetrics {
   const markerPx = floorPx(track) ?? MARKER_FALLBACK_PX;
   return { markerPx, pitchPx: markerPx + MARKER_CLEAR_PX };
@@ -63,9 +57,10 @@ function floorPx(track: HTMLElement): number | null {
  *  turns accumulate and reach the floor as the track fills, so the compression is
  *  continuous and the downsample below takes over from it rather than from a jump.
  *
- *  Two marker boxes is also the smallest pitch that leaves a SEAM a whole box tall:
- *  `.rail-seam` spans the gap between the markers it separates minus one box, so at
- *  the 4px floor a band is 4px and at this pitch it is a marker. */
+ *  That is the whole justification now. It used to carry a second one — two boxes is
+ *  the smallest pitch leaving a dashed pause BAND a whole box tall — and both that band
+ *  and the pause reporting behind it are deleted (2026-09), so the pitch answers to the
+ *  spread alone and nothing on the axis measures against it. */
 export function relaxedPitch(markerPx: number): number {
   return markerPx * 2;
 }

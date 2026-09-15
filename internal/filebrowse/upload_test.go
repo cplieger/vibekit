@@ -10,12 +10,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// uploadsHandler grants one mount CLAIMING the parent of defaultUploadDir,
+// uploadsHandler grants one mount CLAIMING vibekit.DefaultUploadDir ITSELF,
 // backed by a throwaway directory, so the default upload target resolves
-// without the test machine needing a real /workspace. Returns the backing
-// directory so a test can assert where the bytes actually landed.
+// without the test machine needing a real one. Returns the backing directory so
+// a test can assert where the bytes actually landed.
+//
+// The uploads directory rather than its PARENT: composition grants it as a mount
+// of its own, and filepath.Dir("/uploads") is "/", which mount.dir is documented
+// never to be and which would leave mount.name empty.
 func uploadsHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	backingDir := t.TempDir()
@@ -23,7 +29,7 @@ func uploadsHandler(t *testing.T) (*Handler, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim := filepath.Dir(filepath.Clean("/" + defaultUploadDir))
+	claim := filepath.Clean("/" + vibekit.DefaultUploadDir)
 	return &Handler{mounts: []mount{{
 		root: backing,
 		dir:  claim,
@@ -82,27 +88,27 @@ func uploadBody(t *testing.T, rec *httptest.ResponseRecorder) (errMsg string, up
 
 // --- the default target directory (D3a) ---
 
-// An upload with no "dir" lands in the uploads folder, and that folder does
-// not have to exist first: handleUpload's MkdirAll creates it inside the
-// mount's own os.Root, which is why nothing else in the app pre-creates it.
-func TestHandleUpload_DefaultDirIsUploadsCreatedOnDemand(t *testing.T) {
+// An upload with no "dir" lands in the uploads directory, and that directory IS
+// the granted mount rather than a path inside one — so the bytes land at the
+// mount root itself.
+//
+// On-demand creation moved to boot with that change: handleUpload's MkdirAll runs
+// inside the matched mount's own os.Root, where the default target's relative path
+// is "." and the call is a no-op, and openMounts SKIPS a root it cannot open. So
+// nothing on this path can create the directory any more, and composition's
+// ensureUploadDir plus the image's build-time mkdir are what do.
+func TestHandleUpload_DefaultDirIsTheUploadsMount(t *testing.T) {
 	h, backing := uploadsHandler(t)
-	rel := strings.TrimPrefix(filepath.Clean("/"+defaultUploadDir), filepath.Dir(filepath.Clean("/"+defaultUploadDir)))
-	uploadsDir := filepath.Join(backing, filepath.Clean(rel))
-
-	if _, err := os.Stat(uploadsDir); !os.IsNotExist(err) {
-		t.Fatalf("precondition: %s should not exist yet, stat err = %v", uploadsDir, err)
-	}
 
 	rec := serveUpload(t, h, uploadOrdered(t, "", []string{"note.txt"}, [][]byte{[]byte("hi")}))
 	if rec.Code != http.StatusOK {
 		// A 403 here most likely means the claimed mount could not be
-		// resolved on this machine (a symlinked /workspace), not that the
-		// default changed. Say so rather than leaving a bare status mismatch.
+		// resolved on this machine (a symlinked path), not that the default
+		// changed. Say so rather than leaving a bare status mismatch.
 		t.Fatalf("status = %d, want 200; body %q (a 403 points at path resolution for %q, not at the default)",
-			rec.Code, rec.Body.String(), defaultUploadDir)
+			rec.Code, rec.Body.String(), vibekit.DefaultUploadDir)
 	}
-	got, err := os.ReadFile(filepath.Join(uploadsDir, "note.txt"))
+	got, err := os.ReadFile(filepath.Join(backing, "note.txt"))
 	if err != nil {
 		t.Fatalf("read uploaded file: %v", err)
 	}

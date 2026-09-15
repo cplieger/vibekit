@@ -10,11 +10,13 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	mrand "math/rand/v2"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -62,8 +64,43 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType vibek
 		slog.Error("push: marshal payload", "error", err)
 		return
 	}
+	s.fanOut(ctx, s.absent(subs, notifyType, subject, payload), payload, notifyType)
+}
 
-	// Bounded-concurrency fan-out: up to pushFanOutLimit concurrent sends.
+// absent is the send filter: the subscriptions whose profile is not receiving the
+// event on a stream. After preflight and before the encrypt, and here rather than in
+// the coordinator so the one caller that bypasses it (the PR status poller) is
+// filtered too. A present subscription is skipped for good: nothing re-runs Send
+// when the profile later flips to gone (deferred.go is the switched-off exception).
+// A subscription with no presence row is sent, so a tag mismatch costs one
+// notification too many, never one too few.
+func (s *Service) absent(
+	subs []vibekit.PushSubscription, kind vibekit.PushKind, subject vibekit.PushSubject, payload []byte,
+) []vibekit.PushSubscription {
+	if s.presence == nil {
+		return subs
+	}
+	out := make([]vibekit.PushSubscription, 0, len(subs))
+	for _, sub := range subs {
+		tag := TagOf(sub.Endpoint)
+		if s.presence.Gone(tag) {
+			out = append(out, sub)
+			continue
+		}
+		if counter, ok := s.suppressed[kind]; ok {
+			counter.Add(1)
+		}
+		slog.Debug("push: suppressed, profile present", "kind", string(kind), "tag", tag)
+		s.holdForLater(sub, kind, subject, payload)
+	}
+	return out
+}
+
+// fanOut delivers payload to every subscription, pushFanOutLimit at a time, and
+// prunes the ones the service said are gone.
+func (s *Service) fanOut(
+	ctx context.Context, subs []vibekit.PushSubscription, payload []byte, kind vibekit.PushKind,
+) {
 	var (
 		mu      sync.Mutex
 		outcome fanOut
@@ -72,7 +109,7 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType vibek
 	g.SetLimit(pushFanOutLimit)
 	for _, sub := range subs {
 		g.Go(func() error {
-			d := s.deliver(ctx, sub, payload, notifyType)
+			d := s.deliver(ctx, sub, payload, kind)
 			mu.Lock()
 			outcome.record(d, sub.Endpoint)
 			mu.Unlock()
@@ -83,6 +120,33 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType vibek
 		slog.Error("push: fan-out wait", "error", err)
 	}
 	s.pruneStale(outcome.prunable())
+}
+
+// Suppressed reports how many subscriptions the send filter skipped for kind
+// since the service started. The test-only probe reads it.
+func (s *Service) Suppressed(kind vibekit.PushKind) uint64 {
+	if counter, ok := s.suppressed[kind]; ok {
+		return counter.Load()
+	}
+	return 0
+}
+
+// PresenceRows is the presence table as the test-only probe reports it; empty
+// when no table is wired.
+func (s *Service) PresenceRows() []PresenceRow {
+	if s.presence == nil {
+		return []PresenceRow{}
+	}
+	return s.presence.Rows()
+}
+
+// PresenceTransitions is the table's alive and expired counts; zero when no
+// table is wired.
+func (s *Service) PresenceTransitions() (alive, expired uint64) {
+	if s.presence == nil {
+		return 0, 0
+	}
+	return s.presence.Transitions()
 }
 
 // fanOut is what one notification's deliveries came to. It exists because
@@ -175,19 +239,19 @@ func classify(code int) disposition {
 }
 
 // deliver sends one payload to one subscriber, retrying the retryable, and reports the
-// disposition it ended on (a give-up reports dispRetry: keep).
-//
-// No queue and no dead-letter store, deliberately: nothing here is durable work, since an
-// unanswered permission is replayed on reconnect and a finished turn is already in the
-// transcript. An undelivered notification costs a nudge rather than state, so the retry
-// budget is wall-time — how long the notification stays meaningful — not an attempt count.
+// disposition it ended on (a give-up reports dispRetry: keep). No queue and no
+// dead-letter store, deliberately: an unanswered permission is replayed on reconnect
+// and a finished turn is already in the transcript, so an undelivered notification
+// costs a nudge rather than state and the retry budget is wall-time, not an attempt
+// count. Log lines carry the subscription's tag, never its endpoint, which is a
+// capability URL.
 func (s *Service) deliver(
 	ctx context.Context,
 	sub vibekit.PushSubscription,
 	payload []byte,
 	kind vibekit.PushKind,
 ) disposition {
-	ep := runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60)
+	tag := TagOf(sub.Endpoint)
 	deadline := time.Now().Add(pushRetryBudget)
 	backoff := pushRetryBase
 
@@ -197,9 +261,9 @@ func (s *Service) deliver(
 			// A transport failure has no status to classify. Treat it as
 			// transient (a dropped connection is the commonest cause) and let
 			// the budget decide whether it is worth another try.
-			slog.Warn("push: send failed", "endpoint", ep, "code", code,
-				"attempt", attempt, "error", err)
-			if !s.waitRetry(ctx, attempt, deadline, 0, &backoff, ep) {
+			slog.Warn("push: send failed", "tag", tag, "code", code,
+				"attempt", attempt, "error", withoutEndpoint(err))
+			if !s.waitRetry(ctx, attempt, deadline, 0, &backoff, tag) {
 				return dispRetry
 			}
 			continue
@@ -207,30 +271,39 @@ func (s *Service) deliver(
 
 		switch classify(code) {
 		case dispDelivered:
-			if attempt > 1 {
-				slog.Info("push: delivered after retry", "endpoint", ep,
-					"code", code, "attempts", attempt)
-			}
+			slog.Info("push: delivered", "kind", string(kind), "tag", tag,
+				"code", code, "attempts", attempt)
 			return dispDelivered
 		case dispPrune:
-			slog.Info("push: subscription invalidated", "endpoint", ep, "code", code)
+			slog.Info("push: subscription invalidated", "tag", tag, "code", code)
 			return dispPrune
 		case dispAuthReject:
-			slog.Warn("push: subscription refused as unauthorized", "endpoint", ep,
+			slog.Warn("push: subscription refused as unauthorized", "tag", tag,
 				"code", code)
 			return dispAuthReject
 		case dispPermanent:
-			slog.Error("push: permanent delivery failure", "endpoint", ep,
+			slog.Error("push: permanent delivery failure", "tag", tag,
 				"code", code, "hint", permanentHint(code))
 			return dispPermanent
 		case dispRetry:
-			slog.Warn("push: retryable status", "endpoint", ep, "code", code,
+			slog.Warn("push: retryable status", "tag", tag, "code", code,
 				"attempt", attempt, "retry_after", retryAfter)
-			if !s.waitRetry(ctx, attempt, deadline, retryAfter, &backoff, ep) {
+			if !s.waitRetry(ctx, attempt, deadline, retryAfter, &backoff, tag) {
 				return dispRetry
 			}
 		}
 	}
+}
+
+// withoutEndpoint strips the request URL a *url.Error carries, so a transport
+// failure's log line names the failure and not the capability URL it was
+// addressed to. Any other error is returned as is.
+func withoutEndpoint(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
 }
 
 // waitRetry sleeps before the next attempt and reports whether to make one.
@@ -245,11 +318,11 @@ func (s *Service) waitRetry(
 	deadline time.Time,
 	retryAfter time.Duration,
 	backoff *time.Duration,
-	endpoint string,
+	tag string,
 ) bool {
 	if attempt >= pushMaxAttempts {
 		slog.Warn("push: giving up, attempts exhausted",
-			"endpoint", endpoint, "attempts", attempt)
+			"tag", tag, "attempts", attempt)
 		return false
 	}
 	//nolint:gosec // G404: retry jitter, not a secret — an attacker who could
@@ -261,7 +334,7 @@ func (s *Service) waitRetry(
 	*backoff *= 2
 	if time.Now().Add(wait).After(deadline) {
 		slog.Warn("push: giving up, retry would land past the notification's usefulness",
-			"endpoint", endpoint, "wait", wait, "budget", pushRetryBudget)
+			"tag", tag, "wait", wait, "budget", pushRetryBudget)
 		return false
 	}
 	t := time.NewTimer(wait)
@@ -422,13 +495,19 @@ const (
 // invalid kind, so reaching the default means the wire grew a kind this build
 // does not know, and delivering that late is a smaller harm than dropping it.
 func ttlFor(kind vibekit.PushKind) string {
+	return ttlSeconds(ttlDuration(kind))
+}
+
+// ttlDuration is the window ttlFor renders, as a duration: how long a
+// notification of this kind is still worth showing.
+func ttlDuration(kind vibekit.PushKind) time.Duration {
 	switch kind {
 	case vibekit.PushKindPermission:
-		return ttlSeconds(ttlPermission)
+		return ttlPermission
 	case vibekit.PushKindAgentFinished:
-		return ttlSeconds(ttlAgentFinished)
+		return ttlAgentFinished
 	default:
-		return ttlSeconds(ttlPRStatus)
+		return ttlPRStatus
 	}
 }
 

@@ -12,6 +12,8 @@
 import { el, bindList, effect } from "@cplieger/reactive";
 
 import { $, setControlBusy } from "./dom.js";
+import { reconcile } from "./reconcile.js";
+import { sigChanged, wireSignature } from "./paint-sig.js";
 import { isSafeURL } from "./url-safety.js";
 import { onSSE } from "./bus.js";
 import { onGovernanceChange } from "./governance.js";
@@ -217,12 +219,32 @@ function bindForeignList(): void {
   registerCleanup(
     effect(() => {
       const names = unconfiguredNames.value;
-      const rows = names.map((name) => mountForeignRow(name));
-      host.replaceChildren(...rows);
-      host.hidden = rows.length === 0;
+      // Keyed by name: a row carries a `<details>` the reader can open, and this
+      // effect re-runs whenever any unconfigured server's status moves. `onRemove`
+      // is what disposes a departing row's own effect.
+      reconcile(host, names, {
+        key: (name: string) => name,
+        mount: (name: string) => mountForeignRow(name),
+        onRemove: (_el: HTMLElement, name: string) => {
+          foreignRowCleanups.get(name)?.();
+          foreignRowCleanups.delete(name);
+        },
+      });
+      host.hidden = names.length === 0;
     }),
   );
 }
+
+/** One disposer per foreign row, so a row leaving the list takes its effect with it.
+ *  Its own map rather than a namespaced key in `rowCleanups`, which is keyed by
+ *  server ID where this is keyed by NAME. */
+const foreignRowCleanups = new Map<string, () => void>();
+registerCleanup(() => {
+  for (const stop of foreignRowCleanups.values()) {
+    stop();
+  }
+  foreignRowCleanups.clear();
+});
 
 /** One read-only row: status dot, name, provenance chip, and the discovery
  *  disclosure when the server advertises anything.
@@ -246,15 +268,20 @@ function mountForeignRow(name: string): HTMLElement {
   );
   const row = el("div", { className: "mcp-row mcp-row-readonly" }, body) as HTMLDivElement;
 
-  // The row is rebuilt whenever the name list changes, so its subscription dies
-  // with it; the enclosing list effect disposes nested effects on re-run.
-  effect(() => {
-    const st = statusSignalFor(name).value;
-    applyStatusDotForeign(dot, name, st);
-    applyOriginChip(originChip, st.origin);
-    metaText.textContent = renderForeignMeta(st);
-    renderDiscovery(discoveryBox, name, discoverySignalFor(name).value, true);
-  });
+  // A nested effect's only disposer is its own stop function — the enclosing effect
+  // disposes nothing (`web.md` "A NESTED `effect` IS NOT OWNED BY THE EFFECT THAT
+  // CREATED IT"), so the list holds this one and `onRemove` calls it.
+  foreignRowCleanups.get(name)?.();
+  foreignRowCleanups.set(
+    name,
+    effect(() => {
+      const st = statusSignalFor(name).value;
+      applyStatusDotForeign(dot, name, st);
+      applyOriginChip(originChip, st.origin);
+      metaText.textContent = renderForeignMeta(st);
+      renderDiscovery(discoveryBox, name, discoverySignalFor(name).value, true);
+    }),
+  );
   return row;
 }
 
@@ -713,13 +740,21 @@ function orFallback(primary: string, fallback: string): string {
 }
 
 /** (Re)render the per-server prompts/resources disclosure. Hidden when the
- *  server is disabled or advertises nothing. */
+ *  server is disabled or advertises nothing.
+ *
+ *  Guarded: the box IS a `<details>`, both call sites run on state that moves
+ *  without the advertised set moving, and nothing else records that the reader
+ *  opened it. `enabled` is in the signature because it decides whether the box
+ *  renders at all. */
 function renderDiscovery(
   box: HTMLDivElement,
   serverName: string,
   disc: ServerDiscovery,
   enabled: boolean,
 ): void {
+  if (!sigChanged(box, [serverName, enabled ? "1" : "", wireSignature(disc)])) {
+    return;
+  }
   box.replaceChildren();
   const count = disc.prompts.length + disc.resources.length;
   if (!enabled || count === 0) {

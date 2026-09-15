@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/sse"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/vibekit"
-	"github.com/cplieger/webhttp/v2/sse"
 )
 
 // --- Runtime construction helpers ---
@@ -91,12 +91,12 @@ func postCmd(t *testing.T, h *Runtime, cmd vibekit.ClientCommand) *httptest.Resp
 
 // --- Event inspection helpers ---
 
-// bufferedSince is the test-side ID filter over sse.Buffered, whose own inspection
+// bufferedSince is the test-side offset filter over the hub Snapshot, whose own inspection
 // surface is a parameterless snapshot.
 func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	var out []sse.ReplayEvent
-	for _, e := range h.bus.fanout.Buffered() {
-		if e.ID > sinceID {
+	for _, e := range h.bus.fanout.Snapshot() {
+		if e.Offset > sinceID {
 			out = append(out, e)
 		}
 	}

@@ -42,7 +42,7 @@ func TestKiroDocs_OrdinaryFilesCarryNoRestriction(t *testing.T) {
 			`"action":{"type":"command","command":"echo"}}]}`)
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 	if len(docs) == 0 {
 		t.Fatal("no rows scanned; the fixture is wrong")
 	}
@@ -77,7 +77,7 @@ func TestKiroDocs_SymlinkedEntryKeepsItsEditAndLosesItsDelete(t *testing.T) {
 		filepath.Join(kiro, "steering", "alias.md"))
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 
 	// The link resolves to the same file, so its row carries the TARGET's
 	// front-matter name. What matters is that the row exists and which bit it has.
@@ -123,7 +123,7 @@ func TestKiroDocs_FileUnderASymlinkedDirectoryIsUnrestricted(t *testing.T) {
 	symlinkOr(t, filepath.Join(kiro, "elsewhere"), filepath.Join(kiro, "steering"))
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 	row, ok := findDocByPath(docs, "steering/inner.md")
 	if !ok {
 		t.Fatalf("a file under a symlinked category directory is absent: %+v", docs)
@@ -171,7 +171,7 @@ func TestKiroDocs_SymlinkedFlatCategoryEntryIsDeleteProtected(t *testing.T) {
 			symlinkOr(t, filepath.Join(kiro, tc.target), filepath.Join(kiro, tc.linkRel))
 
 			srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-			docs := srv.collectKiroDocs(t.Context())
+			docs := srv.collectKiroDocs(t.Context()).Docs
 			row, ok := findDocByPath(docs, tc.linkRel)
 			if !ok {
 				t.Fatalf("the symlinked %s is absent: %+v", tc.name, docs)
@@ -199,7 +199,7 @@ func TestKiroDocs_RestrictionsAreOmittedWhenFalse(t *testing.T) {
 	writeFile(t, kiro, "steering/plain.md", "---\nname: plain\n---\n")
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 	if len(docs) != 1 {
 		t.Fatalf("got %d rows, want 1: %+v", len(docs), docs)
 	}
@@ -217,11 +217,11 @@ func TestKiroDocs_RestrictionsAreOmittedWhenFalse(t *testing.T) {
 // findDocByPath locates a row by the tail of its path. The provenance cases need
 // this rather than findDoc: a symlink's row carries its TARGET's front-matter
 // name, so the name is not the handle.
-func findDocByPath(docs []kiroDoc, suffix string) (kiroDoc, bool) {
+func findDocByPath(docs []KiroDoc, suffix string) (KiroDoc, bool) {
 	for _, d := range docs {
 		if strings.HasSuffix(d.Path, suffix) {
 			return d, true
 		}
 	}
-	return kiroDoc{}, false
+	return KiroDoc{}, false
 }

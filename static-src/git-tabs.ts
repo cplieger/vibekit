@@ -6,12 +6,12 @@
 import { signal, subscribe } from "@cplieger/reactive";
 import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { pushRoute } from "./router.js";
-import type { GitTab } from "./router.js";
+import type { GitTab } from "./route-path.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
 import { fitTabBar } from "./tab-bar-fit.js";
 import { setPageSubtitle } from "./page-title.js";
 
-// GitTab lives in router.ts (the URL source of truth, alongside SettingsTab);
+// GitTab lives in route-path.ts (the URL source of truth, alongside SettingsTab);
 // re-exported here so existing `import { GitTab } from "./git-tabs.js"` callers
 // keep working.
 export type { GitTab };

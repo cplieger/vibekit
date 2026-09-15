@@ -13,7 +13,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type * as BootModule from "./boot.js";
-import type { Route, RouteOrigin } from "./router.js";
+import type * as RoutePath from "./route-path.js";
+import type { Route } from "./route-path.js";
+import type { RouteOrigin } from "./router.js";
 import type { BootSnapshot } from "./boot-snapshot.js";
 import type { IdentityVerdict } from "./identity.js";
 import type { EffectiveSettings } from "./persist.js";
@@ -93,7 +95,7 @@ const m = vi.hoisted(() => {
     getActiveTabRoute: vi.fn(),
     setStatus: vi.fn(),
     // Records the claim standing when the route is applied: the two lazily-imported
-    // arms of app.ts's `applyRoute` open their view after the call returns, so the
+    // arms of route-apply.ts's `applyRoute` open their view after the call returns, so the
     // claim has to outlive the promise rather than the call. TYPED, because the
     // origin cases below read the second argument back off `mock.calls`.
     applyRoute: vi.fn<(route: Route, origin?: RouteOrigin) => Promise<void>>(() => {
@@ -179,7 +181,7 @@ vi.mock("./session-context.js", () => ({
 }));
 vi.mock("./identity.js", () => ({ resolveIdentity: m.resolveIdentity }));
 vi.mock("./session-catalog.js", () => ({ fetchCatalog: m.fetchCatalog }));
-vi.mock("./transport.js", () => ({ markHydrated: m.markHydrated }));
+vi.mock("./sse-adapter.js", () => ({ markHydrated: m.markHydrated }));
 vi.mock("./modals.js", () => ({ showLoginModal: m.showLoginModal }));
 vi.mock("./tabs.js", () => ({
   activateRestoredTab: m.activateRestoredTab,
@@ -189,11 +191,17 @@ vi.mock("./tabs.js", () => ({
 vi.mock("./tabs-sync.js", () => ({ listTabs: m.listTabs }));
 vi.mock("./router.js", () => ({
   navigationOrigin: m.navigationOrigin,
-  parseRoute: m.parseRoute,
   replaceRoute: m.replaceRoute,
   suppressPush: m.suppressPush,
   claimLocation: m.claimLocation,
   releaseLocation: m.releaseLocation,
+}));
+// `parseRoute` moved to the DOM-free half, so the stub follows it there. Spread the
+// original: this module carries `buildPath` too, and Browser Mode links for real, so a
+// partial factory would break every importer of the name it left out.
+vi.mock("./route-path.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutePath>()),
+  parseRoute: m.parseRoute,
 }));
 vi.mock("./chat.js", () => ({ createSession: m.createSession }));
 vi.mock("./governance.js", () => ({ initGovernance: m.initGovernance }));
@@ -926,11 +934,12 @@ describe("the tab strip's pending state", () => {
   });
 });
 
-// The tab set's own boot read. The boot CONNECTION raises no gap by design
-// (transport.ts: nothing can have been missed on the first connection of a page
-// load), and `app.ts` answers a gap with `listTabs` — so a boot read that never
-// landed is the one hole neither mechanism covers, and it left the stale IndexedDB
-// paint standing with every tab that had been closed elsewhere still on screen.
+// The tab set's own boot read. The boot CONNECTION runs no reconcile by design
+// (sse-adapter.ts: the first hello of a page load holds nothing to digest and
+// clears nothing), and `app.ts` answers a reconcile with `listTabs` — so a boot read
+// that never landed is the one hole neither mechanism covers, and it left the stale
+// IndexedDB paint standing with every tab that had been closed elsewhere still on
+// screen.
 //
 // Asserted by CALL COUNT throughout: a "nothing broke" assertion passes with the
 // recovery deleted.

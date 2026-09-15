@@ -15,10 +15,10 @@ import (
 //
 // Three goroutines touch a live buffer: this package's handlers on the per-chat
 // dispatch loop, the prompt handler latching the turn's model at dispatch, and
-// the SSE connect handler calling SnapshotCapped for a client joining mid-turn
-// (agent/sse.go replayTurnState). It holds the buffer's mutex; a field
+// the transcript GET calling SnapshotCapped for a client reading a chat mid-turn
+// (agent/bridge_coord.go LiveTurn). It holds the buffer's mutex; a field
 // write here does not, so the pair raced. Measured with -race on go1.27.0 before
-// the fix: Buffer.MessageID written by ensureTurnStarted against Snapshot's read
+// the fix: Buffer.MessageID written by ensureTurnStarted against SnapshotCapped's read
 // of it.
 //
 // The assertion is the race detector itself, which is why there is no t.Errorf
@@ -57,7 +57,7 @@ func TestHandlersDoNotRaceBufferSnapshot(t *testing.T) {
 	// makes: the connect replay caps every snapshot it sends.
 	wg.Go(func() {
 		for range iterations {
-			_, _, _, _ = buf.SnapshotCapped(buffer.SnapshotCaps{})
+			_, _ = buf.SnapshotCapped(buffer.SnapshotCaps{})
 		}
 	})
 	wg.Wait()

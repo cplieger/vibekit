@@ -1,7 +1,7 @@
 // Package filebrowse serves the browser's file surface: browsing, reading,
 // editing, uploading, and downloading. The browsable surface is
-// an ALLOW-LIST of granted roots (the /workspace and /config mounts by
-// default, plus any VIBEKIT_BROWSE_ROOTS grants), each kernel-confined
+// an ALLOW-LIST of granted roots (the /workspace, /config and uploads
+// mounts by default, plus any VIBEKIT_BROWSE_ROOTS grants), each kernel-confined
 // through its own os.Root; everything outside the grants is denied by
 // default. A sensitive-path list additionally blocks the credential
 // and state files living inside /config. The URL namespace is the
@@ -47,14 +47,6 @@ const (
 	// respPath is the response-body key echoing the request path back
 	// to the client (listing and read responses).
 	respPath = "path"
-
-	// defaultUploadDir is the upload target when the client sends no "dir".
-	// A literal rather than a value derived from KIRO_WORK_DIR: the handler
-	// holds a longest-first sorted mount list with no notion of which mount
-	// is "the workspace". The client sends the same string for the
-	// composer's drop and paste uploads; TestUploadPolicyMatchesClient pins
-	// the two spellings together.
-	defaultUploadDir = "/workspace/uploads"
 )
 
 // Handler serves /api/file/* and /api/files/*.

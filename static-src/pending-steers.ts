@@ -79,7 +79,6 @@
 // ---------------------------------------------------------------------------
 
 import { el, computed, effect, touch } from "@cplieger/reactive";
-import { attachClamp, releaseClampsIn } from "./clamp-text.js";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
@@ -92,13 +91,6 @@ import { ICON_ARROW_UP, ICON_HOURGLASS, ICON_EDIT, ICON_TRASH } from "./icons.js
 import { iconEl } from "./icon-el.js";
 import type { PendingSteer } from "./types.js";
 
-/** Lines a dock row shows before its opener appears. Four, matching the
- *  transcript note: the bar grows upward into the transcript, so an unbounded row
- *  here costs the reader the conversation, and four plus an opener is the
- *  compromise — the row already carries the whole text in its tooltip and in its
- *  accessible name. */
-const DOCK_CLAMP_LINES = 4;
-
 let bound = false;
 let prevWaiting = 0;
 let prevId = "";
@@ -110,18 +102,27 @@ export function initPendingSteers(): void {
   }
   bound = true;
   const stack = $.steerStack;
-  // Re-render only when the active chat, the steer texts or their SENDING state
-  // change. The computed returns a string so it dedups by value — an unrelated
-  // session write (usage, thinking, a streaming chunk) must not re-render the
-  // stack — and `pending` has to be in the key or a row gaining its controls when
-  // `steer_queued` confirms it would repaint nothing.
+  // Re-render only when the active chat, the steer texts, their SENDING state or
+  // their ORIGIN change. The computed returns a string so it dedups by value — an
+  // unrelated session write (usage, thinking, a streaming chunk) must not re-render
+  // the stack — so every term `render` goes on to branch on has to be in the key.
+  // `pending` is here or a row gaining its controls on `steer_queued` would repaint
+  // nothing; `origin` is here for the same reason one rung down, because it gates
+  // the send-now arrow and a row receives TWO confirmations from two channels (the
+  // POST reply, hardcoded `user`, and the SSE frame, resolved server-side). Whichever
+  // lands second changes origin ALONE, and without this term that write produces no
+  // render at all — so `syncActions` is never asked to rebuild and a corrected row
+  // stays wrong until something else forces a full render, which is what made a
+  // tab switch look like the fix.
   const sig = computed(() => {
     const s = activeSession.value;
     const steers = s?.steers ?? [];
     return (
       (s?.id ?? "") +
       "\u0001" +
-      steers.map((e) => (e.pending === true ? "1" : "0") + "\u0002" + e.text).join("\u0000")
+      steers
+        .map((e) => (e.pending === true ? "1" : "0") + "\u0002" + e.origin + "\u0002" + e.text)
+        .join("\u0000")
     );
   });
   effect(() => {
@@ -183,11 +184,6 @@ function render(stack: HTMLUListElement): void {
  *  node makes the second render an attribute write, which `@starting-style`
  *  cannot re-fire.
  *
- *  Two things ride along. The clamp keys its state to the text element
- *  (`clamp-text.ts`), so a message the reader opened stays open through the
- *  confirmation instead of re-collapsing, and its measured verdict is not thrown
- *  away and re-guessed on a detached node.
- *
  *  `waiting` is stack-wide rather than per-entry, so the spec is built per render
  *  rather than held as a module constant. */
 function rowSpec(waiting: number): ReconcileSpec<PendingSteer> {
@@ -196,13 +192,6 @@ function rowSpec(waiting: number): ReconcileSpec<PendingSteer> {
     mount: (steer) => buildRow(steer, waiting),
     update: (row, steer) => {
       updateRow(row, steer, waiting);
-    },
-    // The row's message clamp goes with the row. A dock row leaves on a promote
-    // or a clear, and this is the whole of that teardown — the release has to be
-    // explicit, because the observer's own zero-size callback may never arrive
-    // (`clamp-text.ts` `releaseClamp`).
-    onRemove: (row) => {
-      releaseClampsIn(row);
     },
   };
 }
@@ -226,13 +215,10 @@ function updateRow(row: HTMLElement, steer: PendingSteer, waiting: number): void
 }
 
 /** No path in the store rewrites the text of an id it already holds, so this is
- *  the update being TOTAL over the item rather than a live case. It goes through
- *  the clamp's own handle because new content invalidates both an expansion and
- *  the opener's verdict. */
+ *  the update being TOTAL over the item rather than a live case. */
 function syncText(row: HTMLElement, text: string): void {
   const textEl = row.querySelector<HTMLElement>(".steer-text");
-  const more = row.querySelector<HTMLButtonElement>(".steer-more");
-  if (textEl === null || more === null) {
+  if (textEl === null) {
     return;
   }
   const body = oneLine(text);
@@ -240,23 +226,28 @@ function syncText(row: HTMLElement, text: string): void {
     return;
   }
   textEl.textContent = body;
-  attachClamp(textEl, more, { lines: DOCK_CLAMP_LINES }).collapse();
 }
 
 /** The signature the row's controls were last built for. */
 const actionSig = new WeakMap<HTMLElement, string>();
 
-/** Build, replace or remove the controls, and leave them alone when neither input
- *  moved. Leaving them alone is the point: replacing a button takes focus off one
- *  a keyboard reader is on, and a second message arriving is a render where every
- *  earlier row's controls are unchanged. */
+/** Build, replace or remove the controls, and leave them alone when none of the
+ *  inputs moved. Leaving them alone is the point: replacing a button takes focus off
+ *  one a keyboard reader is on, and a second message arriving is a render where every
+ *  earlier row's controls are unchanged.
+ *
+ *  The signature enumerates EVERY input `fillActions` branches on, `origin` included:
+ *  a second `steer_queued` for a row whose `sending` and `waiting` are unchanged
+ *  rewrites the entry's origin (`store.ts` recordSteerQueued, "the frame's origin wins
+ *  in every branch"), and a key missing that term reports no change and leaves the
+ *  send-now arrow standing for a row that no longer earns one. */
 function syncActions(
   row: HTMLElement,
   steer: PendingSteer,
   sending: boolean,
   waiting: number,
 ): void {
-  const sig = `${sending ? "1" : "0"}\u0001${String(waiting)}`;
+  const sig = `${sending ? "1" : "0"}\u0001${steer.origin}\u0001${String(waiting)}`;
   if (actionSig.get(row) === sig) {
     return;
   }
@@ -281,18 +272,10 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
     el("span", { className: "steer-state-label" }, sending ? "Sending" : "Sent"),
   );
 
-  // No truncation here: the text clamps to four lines in CSS and the button
-  // below OPENS it, so the whole message is in the DOM and reachable rather than
-  // cut at an ellipsis. Still collapsed to one line, unlike the transcript note:
-  // this is composer furniture and the bar grows upward into the transcript, so
-  // an unbounded row here costs the reader the conversation.
+  // Collapsed to one line and clipped to four in CSS, never truncated here: the
+  // whole message stays in the DOM, and it stays reachable through the row's
+  // tooltip, its accessible name and Edit.
   const text = el("span", { className: "steer-text" }, oneLine(steer.text));
-  const more = el("button", {
-    className: "steer-more",
-    type: "button",
-  }) as HTMLButtonElement;
-  // A SIBLING of the clamped element, or the clamp would hide its own opener.
-  const body = el("span", { className: "steer-body" }, text, more);
 
   // Built empty and kept for the row's life: it is what reserves the height a
   // control needs, so the confirmation reveals buttons into a box that was always
@@ -313,14 +296,13 @@ function buildRow(steer: PendingSteer, waiting: number): HTMLElement {
       "aria-label": accessibleName(steer.text, sending),
     },
     state,
-    body,
+    text,
     actions,
   );
 
   // Through the same helper the update path uses, so the signature it compares
   // against is recorded for the row's first paint too.
   syncActions(row, steer, sending, waiting);
-  attachClamp(text, more, { lines: DOCK_CLAMP_LINES });
   return row;
 }
 

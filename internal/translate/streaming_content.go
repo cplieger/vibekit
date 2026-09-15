@@ -3,6 +3,7 @@ package translate
 // Content streaming handlers: text chunks, plans, mode updates.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/durable"
+	"github.com/cplieger/vibekit/internal/subject"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
@@ -46,6 +48,17 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	buf := t.buffers.TurnFoldTarget(ctx, chatID, foldSource(workflowSubtask != ""))
 	t.ensureTurnStarted(ctx, chatID, buf)
 
+	// After the fold target, because the id belongs to THAT turn's buffer and a
+	// revision may already have rebound; before the steer filter's empty-text return,
+	// because a marker-only first delta still names the record. Both spellings are read
+	// because they are one fact: a build that moves it back to `messageId` keeps working.
+	// The step gate rests on structure, not on an absence: a workflow step's record lives
+	// in the STEP's own session log, so its id is no key for this chat's replay and
+	// latching it would name a record this chat's session/load never reports.
+	if workflowSubtask == "" {
+		buf.SetKASMessageID(cmp.Or(chunk.Meta.Kiro.ReplayID, chunk.Meta.Kiro.MessageID))
+	}
+
 	// kiro-cli's security filter cancelled a tool call: this chunk is the whole
 	// notice and no session/prompt response is coming. Detected before the steer
 	// filter so the two never eat each other's text. Skipped for a step frame,
@@ -77,26 +90,29 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		t.announceTruncation(ctx, chatID, buf, subtask, totalLen)
 		return
 	}
-	// Mirror the delta into the block array, which also accumulates it into the
-	// turn's builder. A run of same-kind chunks extends this subtask's newest
-	// block; a text/thinking switch, or an intervening tool call, starts a new one.
-	var blockIndex int
-	var seq int64
-	if isReasoning {
-		blockIndex, seq = buf.AppendThinkingDelta(text, subtask)
-	} else {
-		blockIndex, seq = buf.AppendTextDelta(text, subtask)
-	}
 	// A refusal's explanation is this chunk's text and _meta.kiro.refusal
 	// classifies it. Stamp the buffer so it persists, forward it so the callout
 	// styles live. Gated on !isReasoning so a stray tagged thought cannot mark it.
+	// BEFORE the append, so the append is the last write and its version is the
+	// one the frame carries.
 	refusal := refusalInfo(&chunk)
 	if refusal != nil && !isReasoning {
 		buf.SetRefusal(refusal)
 	} else {
 		refusal = nil
 	}
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	// Mirror the delta into the block array, which also accumulates it into the
+	// turn's builder. A run of same-kind chunks extends this subtask's newest
+	// block; a text/thinking switch, or an intervening tool call, starts a new one.
+	var blockIndex int
+	var seq int64
+	var version string
+	if isReasoning {
+		blockIndex, seq, version = buf.AppendThinkingDelta(text, subtask)
+	} else {
+		blockIndex, seq, version = buf.AppendTextDelta(text, subtask)
+	}
+	frame := vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
@@ -105,7 +121,9 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 			Seq:            seq,
 			AgentSubtaskID: subtask,
 			Refusal:        refusal,
-		}))
+		})
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	t.bus.Broadcast(ctx, frame)
 
 	// Last, and the ordering is the contract: the host's teardown takes the
 	// buffer, so the notice must be in it and on the wire before the turn ends.
@@ -146,27 +164,35 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.Chat
 func (t *Translator) announceTruncation(
 	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, subtask string, buffered int,
 ) {
-	if !buf.MarkOverCap() {
+	if first, _ := buf.MarkOverCap(); !first {
 		return
 	}
 	const notice = "\n\n[Reply truncated: this turn exceeded vibekit's 32 MiB buffer.]"
-	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
+	blockIndex, seq, version := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	frame := vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
 			BlockIndex: blockIndex,
 			Seq:        seq,
-		}))
+		})
+	frame.Subject = vibekit.NewSubjectStamp(string(subject.KindLiveTurn), string(chatID), version)
+	t.bus.Broadcast(ctx, frame)
 }
 
-// refusalInfo maps a chunk's _meta.kiro.refusal block to the domain shape. The
-// explanation field is dropped as a duplicate of the chunk text; a block with no
-// category and no recommended model still marks the turn (every field optional).
+// refusalInfo maps a chunk's _meta.kiro.refusal block to the domain shape.
 func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
-	r := chunk.Meta.Kiro.Refusal
+	return refusalFrom(chunk.Meta.Kiro.Refusal)
+}
+
+// refusalFrom maps KAS's refusal block onto the domain type, so the session/load
+// replay projection reads it the same way rather than reaching into the wire struct
+// itself. The explanation field is dropped as a duplicate of the chunk text; a block
+// with no category and no recommended model still marks the turn (every field
+// optional).
+func refusalFrom(r *ACPRefusalMeta) *vibekit.RefusalInfo {
 	if r == nil {
 		return nil
 	}
@@ -206,7 +232,7 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID
 		return
 	}
 	changed := false
-	err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	_, err := t.chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}

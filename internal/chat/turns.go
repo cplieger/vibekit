@@ -33,16 +33,16 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 		// A prompt opens a turn; a steer joins the one already running.
 		if opensTurn(m, len(out) == 0, closed) {
 			var body []vibekit.Message
-			if !isPrompt(m) {
+			if !m.IsPrompt() {
 				body = append(body, *m)
 			}
 			summary := vibekit.TurnSummary{
 				ID:             m.ID,
 				N:              len(out) + 1,
 				Ts:             m.Ts,
-				AgentInitiated: !isPrompt(m),
+				AgentInitiated: !m.IsPrompt(),
 			}
-			if isPrompt(m) {
+			if m.IsPrompt() {
 				summary.FirstLine = firstLine(m.Content, turnFirstLineMax)
 			}
 			out = append(out, summary)
@@ -67,7 +67,7 @@ func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnS
 // boundary rule has exactly one home and a window's ordinals cannot disagree with
 // the summaries the rail draws from.
 func opensTurn(m *vibekit.Message, first, prevClosed bool) bool {
-	return isPrompt(m) || first || opensHeaderlessTurn(m, prevClosed)
+	return m.IsPrompt() || first || opensHeaderlessTurn(m, prevClosed)
 }
 
 // turnWindowBase reports the segmentation state at a WINDOW'S LEFT EDGE: how many
@@ -119,12 +119,6 @@ func turnWindowBase(msgs []vibekit.Message, start int) (offset int, segmentClose
 // it interrupted, and deriveTurnOutcome lets the reply's outcome supersede it.
 func closesTurn(outcome vibekit.TurnOutcome) bool {
 	return outcome != "" && outcome != vibekit.TurnOutcomeUnknown
-}
-
-// isPrompt reports whether m is a user PROMPT rather than a steer. Unexported; the
-// TypeScript twin is static-src/turns.ts.
-func isPrompt(m *vibekit.Message) bool {
-	return m.Role == vibekit.RoleUser && m.UserKind != vibekit.UserKindSteer
 }
 
 // isStepMessage reports whether every one of m's blocks is workflow-step content.

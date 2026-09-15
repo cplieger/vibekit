@@ -128,7 +128,7 @@ export default [
         { allowNumber: true, allowBoolean: true, allowNullish: false },
       ],
       // Console policy.
-      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-console": ["warn", { allow: ["warn", "error", "debug"] }],
       // Equality: enforce strict ===.
       eqeqeq: ["error", "always", { null: "ignore" }],
       curly: ["error", "all"],

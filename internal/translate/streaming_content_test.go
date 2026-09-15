@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,12 +39,15 @@ func (s *recStore) UpsertTurnPlan(_ context.Context, _ vibekit.ChatID, _ *vibeki
 	return s.upsertErr
 }
 
-func (s *recStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+func (s *recStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) (string, error) {
 	s.mutateCalls++
 	if fn != nil {
 		_ = fn(&vibekit.Chat{}, true)
 	}
-	return s.mutateErr
+	if s.mutateErr != nil {
+		return "", s.mutateErr
+	}
+	return strconv.Itoa(s.mutateCalls), nil
 }
 
 var _ ChatRecords = (*recStore)(nil)
@@ -250,7 +254,7 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	deps.store = store
 	chatID := vibekit.ChatID("c1")
 	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
-	_ = store.Mutate(t.Context(), chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
+	_, _ = store.Mutate(t.Context(), chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
 
 	tr := New(rolesOf(deps), withIDGenerator(func() string { return "id" }))
 	tr.HandleModeUpdate(t.Context(), chatID, mustJSON(t, map[string]any{

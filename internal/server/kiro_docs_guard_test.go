@@ -73,7 +73,7 @@ func TestScanKiroDocs_SymlinkedCategoryContributesNothing(t *testing.T) {
 	writeFile(t, kiro, "agents/real.md", "---\nname: real\ndescription: a genuine agent\n---\n")
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 
 	if _, ok := findDoc(docs, "real"); !ok {
 		t.Errorf("the genuine row is missing, so the guard refused too much: %+v", docs)
@@ -142,7 +142,7 @@ func TestScanKiroDocs_SymlinkedFlatCategoryIsNotEnumerated(t *testing.T) {
 			writeFile(t, kiro, "steering/real.md", "---\nname: real\ndescription: a genuine doc\n---\n")
 
 			srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-			docs := srv.collectKiroDocs(t.Context())
+			docs := srv.collectKiroDocs(t.Context()).Docs
 
 			if _, ok := findDoc(docs, "real"); !ok {
 				t.Errorf("the genuine row is missing, so the guard refused too much: %+v", docs)
@@ -201,7 +201,7 @@ func TestKiroDocsGuard_RefusesASymlinkedFileOutOfTheTree(t *testing.T) {
 	writeFile(t, kiro, "steering/ordinary.md", "---\ndescription: fine\n---\n")
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 
 	if len(docs) != 1 {
 		t.Fatalf("got %d rows, want 1 (the symlink refused, the real file kept): %+v", len(docs), docs)
@@ -225,7 +225,7 @@ func TestKiroDocsGuard_AdmitsALinkThatStaysInsideTheTree(t *testing.T) {
 	symlinkOr(t, filepath.Join(kiro, "shared", "canonical.md"), filepath.Join(kiro, "steering", "alias.md"))
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(t.Context())
+	docs := srv.collectKiroDocs(t.Context()).Docs
 
 	if _, ok := findDoc(docs, "canonical"); !ok {
 		t.Errorf("an in-tree symlink was refused: %+v", docs)
@@ -252,7 +252,7 @@ func TestKiroDocsGuard_ASymlinkedRootIsItsOwnBoundary(t *testing.T) {
 	symlinkOr(t, real, filepath.Join(work, ".kiro"))
 
 	srv := &Server{workDir: work, kiroDocs: &docsCache{}}
-	if docs := srv.collectKiroDocs(t.Context()); len(docs) != 1 {
+	if docs := srv.collectKiroDocs(t.Context()).Docs; len(docs) != 1 {
 		t.Errorf("got %d rows from a symlinked .kiro, want 1: %+v", len(docs), docs)
 	}
 }
