@@ -1,12 +1,12 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1789570116631,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/vibekit",
   "entries": {
     "Benchmark": [
       {
         "commit": {
           "author": {
-            "name": "Christopher Plieger",
+            "name": "cplieger",
             "username": "cplieger",
             "email": "917744+cplieger@users.noreply.github.com"
           },
@@ -15,10 +15,10 @@ window.BENCHMARK_DATA = {
             "username": "cplieger",
             "email": "917744+cplieger@users.noreply.github.com"
           },
-          "id": "09cc4b840ea4287151c69cae879cdb185cc1b4da",
-          "message": "ci: correct the weekly-bench vibekit budget figure\n\nThe max-parallel comment claimed vibekit measured 36.5 minutes at\n-count=10. It never did: the shard needed about 77 minutes and was\ncancelled at the 60-minute job wall every week since enrolment, because\none benchmark's per-op cost grew with b.N. That benchmark is fixed and\nthe suite measures 25 minutes locally, so the comment now names the\nfigure it is and tells the reader to re-read it off the next run.",
-          "timestamp": "2026-09-16T12:01:07Z",
-          "url": "https://github.com/cplieger/ci/commit/09cc4b840ea4287151c69cae879cdb185cc1b4da"
+          "id": "c3e91b6911fde478a90e1d1cf52e684fa491618e",
+          "message": "test: silence per-iteration logging in benchmarks\n\nThree benchmarks logged once per operation through slog.Default(), which\nat benchmark iteration counts produced 4,498,652 of the weekly-bench\njob's 4,511,067 log lines, a 707 MB job log and a 265 MB uploaded\nartifact.\n\nquietLogs(b) swaps the default logger to slog.DiscardHandler for the\nbenchmark's duration, sharing the swap-and-restore with each package's\nexisting capture helper. The whole suite now emits 31 lines and 126 KB.",
+          "timestamp": "2026-09-16T12:00:11Z",
+          "url": "https://github.com/cplieger/vibekit/commit/c3e91b6911fde478a90e1d1cf52e684fa491618e"
         },
         "date": 1789570116076,
         "tool": "customSmallerIsBetter",
