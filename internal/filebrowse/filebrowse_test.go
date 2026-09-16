@@ -2299,6 +2299,7 @@ func FuzzIsSensitive(f *testing.F) {
 // --- BenchmarkFileAction_Copy (IO-intensive copy path) ---
 
 func BenchmarkFileAction_Copy(b *testing.B) {
+	quietLogs(b)
 	sizes := []struct {
 		name string
 		size int
@@ -2967,14 +2968,28 @@ func TestListFiles_Root_MountEntriesCarryStattedMetadata(t *testing.T) {
 func captureFilebrowseLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	buf := &bytes.Buffer{}
+	swapDefaultLogger(t, slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return buf
+}
+
+// swapDefaultLogger installs h as the slog default for the duration of tb; see
+// captureFilebrowseLogs for why the log package's writer is restored with it.
+func swapDefaultLogger(tb testing.TB, h slog.Handler) {
+	tb.Helper()
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		slog.SetDefault(prevLogger)
 		log.SetOutput(prevWriter)
 		log.SetFlags(prevFlags)
 	})
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	return buf
+	slog.SetDefault(slog.New(h))
+}
+
+// quietLogs silences the default handler for a benchmark whose subject logs once
+// per iteration: at a real -benchtime that is millions of lines of package output.
+func quietLogs(b *testing.B) {
+	b.Helper()
+	swapDefaultLogger(b, slog.DiscardHandler)
 }
 
 // A writability probe that works says nothing. Every directory listing runs one,

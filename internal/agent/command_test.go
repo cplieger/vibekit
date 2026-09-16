@@ -767,6 +767,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 // validation and table lookup. There is no idempotency work in it any more —
 // dedup is the header middleware's, outside this handler.
 func BenchmarkHandleCommand(b *testing.B) {
+	quietLogs(b)
 	payloads := map[string]vibekit.ClientCommand{
 		"prompt": {
 			Type: vibekit.CmdPrompt, ChatID: "c-bench",
