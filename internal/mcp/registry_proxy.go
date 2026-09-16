@@ -105,7 +105,7 @@ func NewRegistryProxy() *RegistryProxy {
 				return nil
 			},
 		},
-		cache: newRegistryCache(maxCacheEntries),
+		cache: newRegistryCache(),
 	}
 }
 
@@ -379,11 +379,11 @@ type registryCache struct {
 	mu      sync.Mutex
 }
 
-func newRegistryCache(maxSize int) *registryCache {
+func newRegistryCache() *registryCache {
 	return &registryCache{
 		entries: make(map[string]registryCacheEntry),
 		ttl:     registryCacheTTL,
-		maxSize: maxSize,
+		maxSize: maxCacheEntries,
 	}
 }
 

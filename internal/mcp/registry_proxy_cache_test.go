@@ -8,6 +8,7 @@ package mcp
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -107,7 +108,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 	payload := RegistrySearchResult{Servers: []RegistryEntry{{Name: "test"}}}
 
 	b.Run("hit_same_key", func(b *testing.B) {
-		cache := newRegistryCache(maxCacheEntries)
+		cache := newRegistryCache()
 		// Pre-seed.
 		cache.mu.Lock()
 		cache.entries["bench-key"] = registryCacheEntry{insertedAt: time.Now(), result: payload}
@@ -124,7 +125,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 	})
 
 	b.Run("miss_same_key_singleflight", func(b *testing.B) {
-		cache := newRegistryCache(maxCacheEntries)
+		cache := newRegistryCache()
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
@@ -136,13 +137,16 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 	})
 
 	b.Run("miss_different_keys", func(b *testing.B) {
-		cache := newRegistryCache(10000)
+		// The cap is maxCacheEntries, so past the first few dozen ops every
+		// insert also pays one evictLocked scan: a miss against a full cache.
+		cache := newRegistryCache()
+		// Shared across workers: a per-worker counter makes every worker walk
+		// the same keys, which is the singleflight case next door.
+		var keys atomic.Uint64
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
-			i := 0
 			for pb.Next() {
-				key := fmt.Sprintf("key-%d", i)
-				i++
+				key := fmt.Sprintf("key-%d", keys.Add(1))
 				_, _, _ = cache.GetOrFetch(b.Context(), key, func() (RegistrySearchResult, error) {
 					return payload, nil
 				})
