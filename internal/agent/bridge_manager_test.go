@@ -68,6 +68,7 @@ func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 }
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
+	quietLogs(b)
 	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 

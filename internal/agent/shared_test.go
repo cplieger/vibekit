@@ -248,24 +248,38 @@ func (b *logCapture) String() string {
 	return b.buf.String()
 }
 
-// captureLogs mutates the global slog default, so a test using it must NOT call
-// t.Parallel. The previous logger is restored at test end.
+// swapDefaultLogger installs h as the slog default for the duration of tb, so a
+// caller must NOT call Parallel.
 //
 // The log package's writer and flags are restored too: slog.SetDefault also points
 // log at the new handler, and it skips pointing it back when the restored handler
 // is the stock one (which reaches log.Output), so every later line in the package
 // would land in this buffer.
-func captureLogs(t *testing.T) *logCapture {
-	t.Helper()
-	out := &logCapture{}
+func swapDefaultLogger(tb testing.TB, h slog.Handler) {
+	tb.Helper()
 	prevLogger, prevWriter, prevFlags := slog.Default(), log.Writer(), log.Flags()
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		slog.SetDefault(prevLogger)
 		log.SetOutput(prevWriter)
 		log.SetFlags(prevFlags)
 	})
-	slog.SetDefault(slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(h))
+}
+
+// captureLogs mutates the global slog default, so a test using it must NOT call
+// t.Parallel. The previous logger is restored at test end.
+func captureLogs(t *testing.T) *logCapture {
+	t.Helper()
+	out := &logCapture{}
+	swapDefaultLogger(t, slog.NewJSONHandler(out, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return out
+}
+
+// quietLogs silences the default handler for a benchmark whose subject logs once
+// per iteration: at a real -benchtime that is millions of lines of package output.
+func quietLogs(b *testing.B) {
+	b.Helper()
+	swapDefaultLogger(b, slog.DiscardHandler)
 }
 
 // --- Turn buffer helpers ---
