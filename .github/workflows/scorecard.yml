@@ -24,7 +24,7 @@ jobs:
     name: Scorecard analysis
     # Publishing + code-scanning upload only work on public repos.
     if: github.event.repository.private == false
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       security-events: write # upload the SARIF result to the Security tab
