@@ -161,7 +161,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
 # client that sse-adapter.ts composes. This ARG and static-src/package.json's
 # @cplieger/sse pin track the same exact version.
 # renovate: datasource=npm depName=@cplieger/sse
-ARG CPLIEGER_SSE_VERSION=1.0.0
+ARG CPLIEGER_SSE_VERSION=1.1.1
 RUN mkdir -p static-src/node_modules/@cplieger/sse && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/sse/-/sse-${CPLIEGER_SSE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/sse --strip-components=1
