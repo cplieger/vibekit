@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
   "lastUpdate": 1790125899973,
-  "repoUrl": "https://github.com/cplieger/ci",
+  "repoUrl": "https://github.com/cplieger/vibekit",
   "entries": {
     "Benchmark": [
       {
@@ -1840,10 +1840,10 @@ window.BENCHMARK_DATA = {
             "username": "web-flow",
             "email": "noreply@github.com"
           },
-          "id": "f9577db6c2f2096d9cc325c89450a48686d66346",
-          "message": "chore(deps): update cplieger/ci digest to aa0a018 (#649)",
-          "timestamp": "2026-09-20T08:02:03Z",
-          "url": "https://github.com/cplieger/ci/commit/f9577db6c2f2096d9cc325c89450a48686d66346"
+          "id": "e649f74b9994c77ff30ed24a704810d9cdba8693",
+          "message": "chore(devdeps): update dependency @types/node to v25.9.8 (#1319)",
+          "timestamp": "2026-09-22T01:25:37Z",
+          "url": "https://github.com/cplieger/vibekit/commit/e649f74b9994c77ff30ed24a704810d9cdba8693"
         },
         "date": 1790125899637,
         "tool": "customSmallerIsBetter",
