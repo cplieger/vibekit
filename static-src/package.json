@@ -45,8 +45,8 @@
     "@cplieger/reactive": "2.1.2",
     "@cplieger/sse": "1.1.1",
     "@cplieger/ui-primitives": "3.1.1",
-    "@cplieger/web-terminal-engine": "5.2.0",
-    "@cplieger/web-terminal-ui": "7.3.2"
+    "@cplieger/web-terminal-engine": "6.0.1",
+    "@cplieger/web-terminal-ui": "8.0.1"
   },
   "overrides": {
     "qs": "^6.15.2"
