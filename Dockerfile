@@ -104,7 +104,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # package builds on; bundled into app.js by cmd/bundle.
 # 5.2.0 is the floor web-terminal-ui 7.2.2 declares as its peer (^5.2.0).
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=5.2.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=6.0.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
@@ -123,7 +123,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # rules, which WebKit treats as preview and ignores, so every row boundary shows
 # an unpainted stripe on iOS and a solid column of background renders as dashes.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=7.3.2
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=8.0.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
